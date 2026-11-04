@@ -3,7 +3,7 @@
 Offline-first AgentCAD-style runtime for CATIA, Ansys, Adams and VI-grade workflows.
 
 The project can be used without any commercial solver installed. It provides a
-canonical engineering object model, STEP/CSV/JSON/DXF/SVG/PDF local formats,
+canonical engineering object model, STEP/CSV/JSON/DXF/OBJ/SVG/PDF local formats,
 independent validators, transaction journals, snapshots and diffs, MCP tools,
 a Web API/viewer, and a Windows bridge for later vendor integration.
 

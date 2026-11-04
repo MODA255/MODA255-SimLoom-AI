@@ -60,8 +60,17 @@ class RunTransaction:
         self._write_state()
         return str(checkpoint)
 
-    def commit(self, generated: dict[str, str]) -> dict[str, str]:
-        final_root = self.project_dir / "artifacts" / "generated"
+    def commit(self, generated: dict[str, str], destination_root: str | Path | None = None) -> dict[str, str]:
+        """Commit staged files atomically into a destination directory.
+
+        The default destination is ``artifacts/generated``. Callers that own a
+        different project-managed directory (for example version metadata) can
+        pass ``destination_root`` while retaining the same journal, lock and
+        rollback semantics.
+        """
+        final_root = Path(destination_root).resolve() if destination_root is not None else self.project_dir / "artifacts" / "generated"
+        if self.project_dir not in final_root.parents and final_root != self.project_dir:
+            raise ValueError("TRANSACTION_DESTINATION_OUTSIDE_PROJECT")
         backup_root = self.run_dir / "backup"
         committed: dict[str, str] = {}
         try:

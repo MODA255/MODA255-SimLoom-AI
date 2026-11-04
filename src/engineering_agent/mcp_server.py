@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import sys
+import base64
+import hashlib
 from urllib.parse import parse_qs, urlparse
 from typing import Any
 
@@ -19,25 +21,60 @@ class MCPServer:
         self.agent = agent
         self.operations = OperationRegistry()
         self.profile = profile if profile in {"safe", "full"} else "safe"
+        self.schema_version = "engineering-agent/mcp/v1"
+        self._subscriptions: set[str] = set()
 
     def handle(self, request: dict[str, Any]) -> dict[str, Any]:
         method = request.get("method")
         request_id = request.get("id")
         if method == "initialize":
-            return {"jsonrpc": "2.0", "id": request_id, "result": {"protocolVersion": "2024-11-05", "serverInfo": {"name": "engineering-agent", "version": "0.3.0"}, "capabilities": {"tools": {"listChanged": False}, "resources": {"subscribe": False, "listChanged": False}, "prompts": {"listChanged": False}}, "profile": self.profile}}
+            params = request.get("params") or {}
+            requested = params.get("protocolVersion")
+            if requested and requested not in {"2024-11-05", "2025-03-26"}:
+                return self._error(request_id, ProtocolError(ErrorCode.INVALID_ARGUMENTS, f"UNSUPPORTED_PROTOCOL_VERSION:{requested}"))
+            return {"jsonrpc": "2.0", "id": request_id, "result": {"protocolVersion": "2024-11-05", "serverInfo": {"name": "engineering-agent", "version": "0.4.0", "schemaVersion": self.schema_version, "supportedSchemaVersions": [self.schema_version]}, "capabilities": {"tools": {"listChanged": False}, "resources": {"subscribe": True, "listChanged": False}, "prompts": {"listChanged": False}}, "profile": self.profile}}
         if method == "tools/list":
-            return {"jsonrpc": "2.0", "id": request_id, "result": {"tools": self._tools()}}
+            try:
+                return {"jsonrpc": "2.0", "id": request_id, "result": self._paged(self._tools(), request.get("params") or {}, "tools")}
+            except Exception as exc:
+                return self._error(request_id, exc)
         if method == "resources/list":
-            return {"jsonrpc": "2.0", "id": request_id, "result": {"resources": self._resources(request.get("params", {}))}}
+            params = request.get("params") or {}
+            try:
+                return {"jsonrpc": "2.0", "id": request_id, "result": self._paged(self._resources(params), params, "resources")}
+            except Exception as exc:
+                return self._error(request_id, exc)
         if method == "resources/templates/list":
-            return {"jsonrpc": "2.0", "id": request_id, "result": {"resourceTemplates": self._resource_templates()}}
+            params = request.get("params") or {}
+            try:
+                return {"jsonrpc": "2.0", "id": request_id, "result": self._paged(self._resource_templates(), params, "resourceTemplates")}
+            except Exception as exc:
+                return self._error(request_id, exc)
+        if method == "resources/subscribe":
+            try:
+                uri = str((request.get("params") or {}).get("uri", ""))
+                if not uri:
+                    raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "resource URI is required")
+                self._read_resource(uri)
+                self._subscriptions.add(uri)
+                return {"jsonrpc": "2.0", "id": request_id, "result": {"uri": uri, "subscribed": True, "schemaVersion": self.schema_version}}
+            except Exception as exc:
+                return self._error(request_id, exc)
+        if method == "resources/unsubscribe":
+            uri = str((request.get("params") or {}).get("uri", ""))
+            self._subscriptions.discard(uri)
+            return {"jsonrpc": "2.0", "id": request_id, "result": {"uri": uri, "subscribed": False}}
         if method == "resources/read":
             try:
                 return {"jsonrpc": "2.0", "id": request_id, "result": {"contents": [self._read_resource(request.get("params", {}).get("uri", ""))]}}
             except Exception as exc:
                 return self._error(request_id, exc)
         if method == "prompts/list":
-            return {"jsonrpc": "2.0", "id": request_id, "result": {"prompts": self._prompts()}}
+            params = request.get("params") or {}
+            try:
+                return {"jsonrpc": "2.0", "id": request_id, "result": self._paged(self._prompts(), params, "prompts")}
+            except Exception as exc:
+                return self._error(request_id, exc)
         if method == "prompts/get":
             try:
                 return {"jsonrpc": "2.0", "id": request_id, "result": self._get_prompt(request.get("params", {}))}
@@ -83,8 +120,34 @@ class MCPServer:
         for operation in self.operations.list():
             if self.profile == "safe" and operation["safety"] in {"write", "execute"}:
                 continue
-            tools.append({"name": "operation." + operation["name"], "description": operation["description"], "inputSchema": {"type": "object", "properties": operation.get("parameters_schema", {}), "required": operation.get("required_parameters", [])}})
+            tools.append({"name": "operation." + operation["name"], "description": operation["description"], "inputSchema": {"type": "object", "properties": operation.get("parameters_schema", {}), "required": operation.get("required_parameters", []), "x-engineering-schema-version": operation.get("version", "1.0")}})
         return tools
+
+    @staticmethod
+    def _encode_cursor(index: int) -> str:
+        return base64.urlsafe_b64encode(str(index).encode("ascii")).decode("ascii").rstrip("=")
+
+    @staticmethod
+    def _decode_cursor(cursor: str) -> int:
+        try:
+            padded = cursor + "=" * (-len(cursor) % 4)
+            value = int(base64.urlsafe_b64decode(padded.encode("ascii")).decode("ascii"))
+            if value < 0:
+                raise ValueError
+            return value
+        except (ValueError, UnicodeDecodeError, base64.binascii.Error) as exc:
+            raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "invalid pagination cursor") from exc
+
+    def _paged(self, items: list[dict[str, Any]], params: dict[str, Any], key: str) -> dict[str, Any]:
+        limit = int(params.get("limit", 50))
+        if limit < 1 or limit > 500:
+            raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "limit must be between 1 and 500")
+        start = self._decode_cursor(str(params["cursor"])) if params.get("cursor") else 0
+        page = items[start:start + limit]
+        result = {key: page, "schemaVersion": self.schema_version}
+        if start + limit < len(items):
+            result["nextCursor"] = self._encode_cursor(start + limit)
+        return result
 
     def _resources(self, params: dict[str, Any]) -> list[dict[str, Any]]:
         root = params.get("root", ".")
@@ -109,14 +172,15 @@ class MCPServer:
         query = parse_qs(parsed.query)
         root = query.get("root", ["."])[0]
         if parsed.netloc == "operations":
-            value = {"operations": self.operations.list()}
+            value = {"operations": self.operations.list(), "schemaVersion": self.schema_version}
         elif parsed.netloc == "versions":
-            value = {"versions": VersionStore(root).list(), "timeline": VersionStore(root).timeline()}
+            value = {"versions": VersionStore(root).list(), "timeline": VersionStore(root).timeline(), "schemaVersion": self.schema_version}
         elif parsed.netloc == "project":
             value = self.agent.inspect_project(root)
         else:
             raise ProtocolError(ErrorCode.RESOURCE_NOT_FOUND, f"unknown resource: {uri}")
-        return {"uri": uri, "mimeType": "application/json", "text": json.dumps(value, ensure_ascii=False)}
+        serialized = json.dumps(value, ensure_ascii=False)
+        return {"uri": uri, "mimeType": "application/json", "text": serialized, "textHash": hashlib.sha256(serialized.encode("utf-8")).hexdigest(), "schemaVersion": self.schema_version}
 
     @staticmethod
     def _prompts() -> list[dict[str, Any]]:
@@ -135,6 +199,9 @@ class MCPServer:
         raise ProtocolError(ErrorCode.RESOURCE_NOT_FOUND, f"unknown prompt: {name}")
 
     def call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        requested_schema = arguments.get("schema_version") or arguments.get("schemaVersion")
+        if requested_schema and requested_schema not in {self.schema_version, "1.0"}:
+            raise ProtocolError(ErrorCode.SCHEMA_VERSION_UNSUPPORTED, f"unsupported schema version: {requested_schema}")
         if name == "engineering_plan":
             plan = self.agent.plan(arguments.get("prompt", ""), project_dir=arguments.get("project_dir", "."))
             return {"plan": plan.to_dict(), "validation": validate_plan(plan)}

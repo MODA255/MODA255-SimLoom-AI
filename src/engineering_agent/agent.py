@@ -7,6 +7,7 @@ from typing import Any
 from .adapters import AdapterContext, ToolAdapter, build_adapters
 from .ingest import ArtifactReader
 from .formats import write_csv, write_dxf, write_json, write_pdf, write_step, write_svg
+from .mesh import write_obj
 from .dxf import diff_documents, read_dxf, transform_document
 from .models import AgentRequest, ExecutionPlan, PlanStep, RunReport, ToolResult
 from .llm_planner import AutonomousPlanner
@@ -93,13 +94,23 @@ class EngineeringAgent:
         else:
             txn.record("commit", {"files": {}})
             txn.state = "committed"
+            txn._write_state()
+            txn.release_lock()
         report.status = "committed"
         report.timeline = txn.events()
         report.validation = {"plan": plan_validation, "report": validate_report(report), "artifacts": validate_artifacts(report.generated_files)}
         return report
 
     def generate(self, project_dir: str = ".", model_spec: dict[str, Any] | None = None) -> dict[str, str]:
-        return ScriptGenerator(project_dir).generate(ModelSpec(**(model_spec or {})))
+        """Generate vendor inputs through the same staged transaction path as runs."""
+        txn = RunTransaction(project_dir)
+        txn.begin({"operation": "engineering_generate", "model_spec": model_spec or {}})
+        try:
+            staged = ScriptGenerator(project_dir, txn.stage_dir / "generated").generate(ModelSpec(**(model_spec or {})))
+            return txn.commit(staged)
+        except Exception as exc:
+            txn.fail(str(exc))
+            raise
 
     def ingest(self, path: str, kind: str | None = None) -> dict[str, Any]:
         return self.reader.read(path, kind).to_dict()
@@ -107,7 +118,25 @@ class EngineeringAgent:
     def validate_asset(self, path: str, required_metrics: list[str] | None = None) -> dict[str, Any]:
         return validate_asset(self.ingest(path), required_metrics)
 
-    def write_asset(self, path: str, format_name: str, payload: dict[str, Any]) -> str:
+    def write_asset(self, path: str, format_name: str, payload: dict[str, Any], *, project_dir: str | Path | None = None) -> str:
+        destination = Path(path)
+        project_root = Path(project_dir or (destination.parent if destination.is_absolute() else ".")).resolve()
+        destination = (project_root / destination if not destination.is_absolute() else destination).resolve()
+        if project_root not in destination.parents and destination != project_root:
+            raise ValueError("PATH_OUTSIDE_PROJECT")
+        txn = RunTransaction(project_root)
+        txn.begin({"operation": "artifact.write", "path": str(destination), "format": format_name})
+        try:
+            staged = txn.stage_dir / "asset" / destination.name
+            self._write_asset_file(staged, format_name, payload)
+            relative = str(destination.relative_to(project_root))
+            committed = txn.commit({relative: str(staged)}, destination_root=project_root)
+            return committed[relative]
+        except Exception as exc:
+            txn.fail(str(exc))
+            raise
+
+    def _write_asset_file(self, path: str, format_name: str, payload: dict[str, Any]) -> str:
         format_name = format_name.lower()
         if format_name == "json":
             return write_json(path, payload)
@@ -115,6 +144,8 @@ class EngineeringAgent:
             return write_csv(path, payload.get("rows", []), payload.get("columns"))
         if format_name == "step":
             return write_step(path, payload.get("points", []), payload.get("name", "engineering_agent"))
+        if format_name == "obj":
+            return write_obj(path, payload.get("vertices", []), payload.get("faces", []), name=payload.get("name", "engineering_agent"))
         if format_name == "dxf":
             return write_dxf(
                 path,
@@ -125,7 +156,11 @@ class EngineeringAgent:
                 arcs=payload.get("arcs", []),
                 texts=payload.get("texts", []),
                 dimensions=payload.get("dimensions", []),
+                hatches=payload.get("hatches", []),
+                inserts=payload.get("inserts", []),
                 entities=payload.get("entities", []),
+                blocks=payload.get("blocks", []),
+                coordinate_systems=payload.get("coordinate_systems", []),
             )
         if format_name == "svg":
             return write_svg(path, lines=payload.get("lines", []), circles=payload.get("circles", []), title=payload.get("title", "Engineering Agent"))
@@ -166,7 +201,7 @@ class EngineeringAgent:
         if name == "project.diff":
             return self.diff_versions(arguments.get("project_dir", "."), arguments["left"], arguments["right"])
         if name == "artifact.write":
-            return {"path": self.write_asset(arguments["path"], arguments["format"], arguments["payload"])}
+            return {"path": self.write_asset(arguments["path"], arguments["format"], arguments["payload"], project_dir=arguments.get("project_dir"))}
         if name == "geometry.dxf_inspect":
             document = read_dxf(arguments["input_file"])
             return {"geometry": document}
@@ -174,6 +209,10 @@ class EngineeringAgent:
             return diff_documents(read_dxf(arguments["left_file"]), read_dxf(arguments["right_file"]))
         if name == "geometry.validate":
             return {"validation": self.validate_asset(arguments["path"])}
+        if name == "geometry.mesh_inspect":
+            return {"mesh": self.ingest(arguments["input_file"], "geometry")["geometry"]}
+        if name == "geometry.mesh_validate":
+            return {"validation": self.validate_asset(arguments["input_file"])}
         if name == "geometry.dxf_transform":
             project_root = Path(arguments.get("project_dir", ".")).resolve()
             input_path = Path(arguments["input_file"]).resolve()

@@ -28,24 +28,102 @@ def _point(groups: dict[str, list[str]], x_code: str = "10", y_code: str = "20",
 
 def _entity(entity_type: str, groups: dict[str, list[str]]) -> dict[str, Any]:
     layer = str(_value(groups, "8", "0"))
+    common: dict[str, Any] = {"type": entity_type, "layer": layer}
+    if _value(groups, "5") is not None:
+        common["handle"] = str(_value(groups, "5"))
+    if _value(groups, "330") is not None:
+        common["owner"] = str(_value(groups, "330"))
     if entity_type == "LINE":
-        return {"type": "LINE", "layer": layer, "start": _point(groups), "end": _point(groups, "11", "21", "31")}
+        return common | {"start": _point(groups), "end": _point(groups, "11", "21", "31")}
     if entity_type == "CIRCLE":
-        return {"type": "CIRCLE", "layer": layer, "center": _point(groups), "radius": _number(_value(groups, "40"))}
+        return common | {"center": _point(groups), "radius": _number(_value(groups, "40"))}
     if entity_type == "ARC":
-        return {"type": "ARC", "layer": layer, "center": _point(groups), "radius": _number(_value(groups, "40")), "start_angle": _number(_value(groups, "50")), "end_angle": _number(_value(groups, "51"))}
+        return common | {"center": _point(groups), "radius": _number(_value(groups, "40")), "start_angle": _number(_value(groups, "50")), "end_angle": _number(_value(groups, "51"))}
     if entity_type == "POINT":
-        return {"type": "POINT", "layer": layer, "point": _point(groups)}
+        return common | {"point": _point(groups)}
     if entity_type == "TEXT":
-        return {"type": "TEXT", "layer": layer, "insert": _point(groups), "text": str(_value(groups, "1", "")), "height": _number(_value(groups, "40", 1.0), 1.0), "rotation": _number(_value(groups, "50"))}
+        return common | {"insert": _point(groups), "text": str(_value(groups, "1", "")), "height": _number(_value(groups, "40", 1.0), 1.0), "rotation": _number(_value(groups, "50"))}
     if entity_type == "DIMENSION":
-        return {"type": "DIMENSION", "layer": layer, "definition": _point(groups), "text": str(_value(groups, "1", "")), "measurement": _number(_value(groups, "42"), 0.0)}
+        return common | {"definition": _point(groups), "text": str(_value(groups, "1", "")), "measurement": _number(_value(groups, "42"), 0.0), "block_name": _value(groups, "2")}
     if entity_type in {"LWPOLYLINE", "POLYLINE"}:
         xs, ys = groups.get("10", []), groups.get("20", [])
         vertices = [{"x": _number(x), "y": _number(ys[index] if index < len(ys) else 0.0), "z": 0.0} for index, x in enumerate(xs)]
         flags = int(_number(_value(groups, "70", 0)))
-        return {"type": entity_type, "layer": layer, "vertices": vertices, "closed": bool(flags & 1)}
-    return {"type": entity_type, "layer": layer, "data": {code: values[0] if len(values) == 1 else values for code, values in groups.items()}}
+        return common | {"vertices": vertices, "closed": bool(flags & 1)}
+    if entity_type == "INSERT":
+        return common | {"block_name": str(_value(groups, "2", "")), "insert": _point(groups), "scale": {"x": _number(_value(groups, "41", 1.0), 1.0), "y": _number(_value(groups, "42", 1.0), 1.0), "z": _number(_value(groups, "43", 1.0), 1.0)}, "rotation": _number(_value(groups, "50"))}
+    if entity_type == "HATCH":
+        xs, ys = groups.get("10", []), groups.get("20", [])
+        boundary = [{"x": _number(x), "y": _number(ys[index] if index < len(ys) else 0.0), "z": 0.0} for index, x in enumerate(xs)]
+        return common | {"pattern": str(_value(groups, "2", "SOLID")), "solid": bool(int(_number(_value(groups, "70", 0)))), "boundary_path_count": int(_number(_value(groups, "91", 0))), "boundary_vertices": boundary, "boundary_refs": [str(value) for value in groups.get("330", [])]}
+    return common | {"data": {code: values[0] if len(values) == 1 else values for code, values in groups.items()}}
+
+
+def _records(pairs: list[tuple[str, str]]) -> list[tuple[str, dict[str, list[str]]]]:
+    records: list[tuple[str, dict[str, list[str]]]] = []
+    current_type: str | None = None
+    groups: dict[str, list[str]] = {}
+    for code, value in pairs:
+        if code == "0":
+            if current_type is not None:
+                records.append((current_type, groups))
+            current_type, groups = value.upper(), {}
+        elif current_type is not None:
+            groups.setdefault(code, []).append(value)
+    if current_type is not None:
+        records.append((current_type, groups))
+    return records
+
+
+def _sections(pairs: list[tuple[str, str]]) -> dict[str, list[tuple[str, str]]]:
+    sections: dict[str, list[tuple[str, str]]] = {}
+    index = 0
+    while index < len(pairs):
+        if pairs[index] == ("0", "SECTION") and index + 1 < len(pairs) and pairs[index + 1][0] == "2":
+            name = pairs[index + 1][1].upper()
+            index += 2
+            start = index
+            while index < len(pairs) and pairs[index] != ("0", "ENDSEC"):
+                index += 1
+            sections[name] = pairs[start:index]
+        index += 1
+    return sections
+
+
+def _header_coordinate_systems(pairs: list[tuple[str, str]]) -> list[dict[str, Any]]:
+    values: dict[str, dict[str, float]] = {}
+    variable: str | None = None
+    for code, value in pairs:
+        if code == "9":
+            variable = value
+        elif variable in {"$UCSORG", "$UCSXDIR", "$UCSYDIR"} and code in {"10", "20", "30"}:
+            axis = {"10": "x", "20": "y", "30": "z"}[code]
+            values.setdefault(variable, {})[axis] = _number(value)
+    systems = [{"name": "WCS", "origin": {"x": 0.0, "y": 0.0, "z": 0.0}, "x_axis": {"x": 1.0, "y": 0.0, "z": 0.0}, "y_axis": {"x": 0.0, "y": 1.0, "z": 0.0}}]
+    if values:
+        systems.append({"name": "UCS", "origin": values.get("$UCSORG", {"x": 0.0, "y": 0.0, "z": 0.0}), "x_axis": values.get("$UCSXDIR", {"x": 1.0, "y": 0.0, "z": 0.0}), "y_axis": values.get("$UCSYDIR", {"x": 0.0, "y": 1.0, "z": 0.0})})
+    return systems
+
+
+def _blocks(pairs: list[tuple[str, str]]) -> dict[str, dict[str, Any]]:
+    blocks: dict[str, dict[str, Any]] = {}
+    active: dict[str, Any] | None = None
+    for entity_type, groups in _records(pairs):
+        if entity_type == "BLOCK":
+            if active:
+                blocks[str(active["name"])] = active
+            active = {"name": str(_value(groups, "2", "")), "handle": _value(groups, "5"), "base_point": _point(groups), "entities": []}
+        elif entity_type == "ENDBLK":
+            if active:
+                blocks[str(active["name"])] = active
+                active = None
+        elif active is not None:
+            active["entities"].append(_entity(entity_type, groups))
+    if active:
+        blocks[str(active["name"])] = active
+    for block in blocks.values():
+        block["entity_count"] = len(block["entities"])
+    return blocks
 
 
 def parse_dxf(text: str) -> dict[str, Any]:
@@ -54,57 +132,27 @@ def parse_dxf(text: str) -> dict[str, Any]:
     The parser deliberately preserves unknown entities and raw group values so
     unsupported vendor extensions remain inspectable instead of being dropped.
     """
-    entities: list[dict[str, Any]] = []
-    current_type: str | None = None
-    groups: dict[str, list[str]] = {}
-    in_entities = False
+    sections = _sections(_pairs(text))
+    entities = [_entity(entity_type, groups) for entity_type, groups in _records(sections.get("ENTITIES", [])) if entity_type not in {"ENDSEC", "EOF"}]
+    blocks = _blocks(sections.get("BLOCKS", []))
+    coordinate_systems = _header_coordinate_systems(sections.get("HEADER", []))
+    relations: list[dict[str, Any]] = []
+    nodes: list[dict[str, Any]] = []
+    for entity in entities:
+        handle = entity.get("handle")
+        if handle:
+            nodes.append({"id": handle, "type": entity.get("type"), "layer": entity.get("layer", "0")})
+        if entity.get("type") == "INSERT" and entity.get("block_name"):
+            relations.append({"from": handle, "to": f"block:{entity['block_name']}", "kind": "inserts"})
+        if entity.get("type") == "HATCH":
+            relations.extend({"from": handle, "to": ref, "kind": "boundary_ref"} for ref in entity.get("boundary_refs", []))
+    nodes.extend({"id": f"block:{name}", "type": "BLOCK", "entity_count": block.get("entity_count", 0)} for name, block in blocks.items())
 
-    def flush() -> None:
-        nonlocal current_type, groups
-        if current_type and in_entities:
-            entities.append(_entity(current_type, groups))
-        current_type, groups = None, {}
-
-    for code, value in _pairs(text):
-        if code == "0":
-            if value == "SECTION":
-                flush()
-                current_type = "SECTION"
-                groups = {}
-                continue
-            if value == "ENDSEC":
-                flush()
-                in_entities = False
-                continue
-            if value == "EOF":
-                flush()
-                break
-            if value == "ENTITIES":
-                in_entities = True
-                current_type = None
-                groups = {}
-                continue
-            if in_entities:
-                flush()
-                current_type = value.upper()
-                groups = {}
-                continue
-        if code == "2" and current_type == "SECTION" and value.upper() == "ENTITIES":
-            in_entities = True
-            current_type = None
-            groups = {}
-            continue
-        if current_type is not None and current_type != "SECTION":
-            groups.setdefault(code, []).append(value)
-        elif current_type == "SECTION" and code == "2" and value.upper() != "ENTITIES":
-            current_type = None
-
-    flush()
     layers: dict[str, int] = {}
     for item in entities:
         layer = str(item.get("layer", "0"))
         layers[layer] = layers.get(layer, 0) + 1
-    return {"format": "DXF", "entities": entities, "entity_count": len(entities), "entity_types": _counts(entities), "layers": layers, "bbox": bbox(entities)}
+    return {"format": "DXF", "entities": entities, "entity_count": len(entities), "entity_types": _counts(entities), "layers": layers, "bbox": bbox(entities), "blocks": blocks, "coordinate_systems": coordinate_systems, "topology": {"nodes": nodes, "relations": relations}}
 
 
 def read_dxf(path: str | Path) -> dict[str, Any]:
@@ -134,6 +182,10 @@ def _points(entity: dict[str, Any]) -> list[dict[str, float]]:
         return [entity.get("insert", {})]
     if kind == "DIMENSION":
         return [entity.get("definition", {})]
+    if kind == "INSERT":
+        return [entity.get("insert", {})]
+    if kind == "HATCH":
+        return list(entity.get("boundary_vertices", []))
     if kind in {"LWPOLYLINE", "POLYLINE"}:
         return list(entity.get("vertices", []))
     return []
@@ -172,19 +224,28 @@ def transform_document(document: dict[str, Any], *, translate: Iterable[float] =
             item["insert"] = transform_point(item.get("insert", {}))
         elif kind == "DIMENSION":
             item["definition"] = transform_point(item.get("definition", {}))
+        elif kind == "INSERT":
+            item["insert"] = transform_point(item.get("insert", {}))
+        elif kind == "HATCH":
+            item["boundary_vertices"] = [transform_point(point) for point in item.get("boundary_vertices", [])]
         elif kind in {"LWPOLYLINE", "POLYLINE"}:
             item["vertices"] = [transform_point(point) for point in item.get("vertices", [])]
         transformed.append(item)
-    return {"format": "DXF", "entities": transformed, "entity_count": len(transformed), "entity_types": _counts(transformed), "layers": {layer: sum(1 for item in transformed if item.get("layer", "0") == layer) for layer in sorted({str(item.get("layer", "0")) for item in transformed})}, "bbox": bbox(transformed)}
+    blocks = {}
+    for name, block in (document.get("blocks") or {}).items():
+        block_copy = {key: value for key, value in block.items()}
+        block_copy["base_point"] = transform_point(block.get("base_point", {}))
+        block_copy["entities"] = transform_document({"entities": block.get("entities", [])}, translate=translate, scale=scale, rotate_deg=rotate_deg)["entities"]
+        blocks[name] = block_copy
+    return {"format": "DXF", "entities": transformed, "entity_count": len(transformed), "entity_types": _counts(transformed), "layers": {layer: sum(1 for item in transformed if item.get("layer", "0") == layer) for layer in sorted({str(item.get("layer", "0")) for item in transformed})}, "bbox": bbox(transformed), "blocks": blocks, "coordinate_systems": document.get("coordinate_systems", []), "topology": document.get("topology", {})}
 
 
 def diff_documents(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
     left_entities, right_entities = left.get("entities", []), right.get("entities", [])
     changes: list[dict[str, Any]] = []
-    if left.get("layers") != right.get("layers"):
-        changes.append({"path": "layers", "kind": "changed", "before": left.get("layers", {}), "after": right.get("layers", {})})
-    if left.get("bbox") != right.get("bbox"):
-        changes.append({"path": "bbox", "kind": "changed", "before": left.get("bbox", {}), "after": right.get("bbox", {})})
+    for key in ("layers", "bbox", "blocks", "coordinate_systems", "topology"):
+        if left.get(key) != right.get(key):
+            changes.append({"path": key, "kind": "changed", "before": left.get(key, {}), "after": right.get(key, {})})
     count = max(len(left_entities), len(right_entities))
     for index in range(count):
         path = f"entities[{index}]"

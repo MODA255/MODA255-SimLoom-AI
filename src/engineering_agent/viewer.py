@@ -42,6 +42,8 @@ def render_asset_svg(asset: dict[str, Any]) -> str:
     geometry = asset.get("geometry", {})
     if geometry.get("format") == "DXF" and geometry.get("entities"):
         return render_dxf_svg(geometry)
+    if geometry.get("format") == "OBJ" and geometry.get("vertices"):
+        return render_mesh_svg(geometry)
     bbox = geometry.get("bbox") or {}
     if bbox:
         x0, x1 = float(bbox.get("x", {}).get("min", 0)), float(bbox.get("x", {}).get("max", 1))
@@ -100,6 +102,37 @@ def render_dxf_svg(geometry: dict[str, Any], width: int = 720, height: int = 460
             text = str(entity.get("text", ""))[:40].replace("&", "&amp;").replace("<", "&lt;")
             body.append(f"<text x='{x:.2f}' y='{y:.2f}' font-size='12' fill='{color}'>{text}</text>")
     body.append("</svg>")
+    return "".join(body)
+
+
+def render_mesh_svg(geometry: dict[str, Any], width: int = 720, height: int = 460) -> str:
+    """Render an OBJ mesh as an oblique wireframe preview without a 3D dependency."""
+    vertices = geometry.get("vertices") or []
+    bbox = geometry.get("bbox") or {}
+    x_axis, y_axis, z_axis = bbox.get("x", {}), bbox.get("y", {}), bbox.get("z", {})
+    x_min, x_max = float(x_axis.get("min", 0)), float(x_axis.get("max", 1))
+    y_min, y_max = float(y_axis.get("min", 0)), float(y_axis.get("max", 1))
+    z_min, z_max = float(z_axis.get("min", 0)), float(z_axis.get("max", 1))
+    span = max(x_max - x_min, y_max - y_min, z_max - z_min, 1.0)
+    scale = min((width - 80) / span, (height - 80) / span)
+
+    def project(index: int) -> tuple[float, float]:
+        point = vertices[index]
+        x = float(point.get("x", 0)) - x_min
+        y = float(point.get("y", 0)) - y_min
+        z = float(point.get("z", 0)) - z_min
+        return 40 + (x - 0.45 * y) * scale, height - 40 - (0.75 * y + 0.5 * z) * scale
+
+    body = [f"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 {width} {height}' role='img'><rect width='100%' height='100%' fill='#f7f9fc'/><text x='18' y='24' font-family='system-ui' font-size='14'>OBJ mesh wireframe</text>"]
+    for face in geometry.get("faces", []):
+        if len(face) < 2:
+            continue
+        points = [project(index) for index in face if 0 <= index < len(vertices)]
+        if len(points) < 2:
+            continue
+        points.append(points[0])
+        body.append("<polyline points='" + " ".join(f"{x:.2f},{y:.2f}" for x, y in points) + "' fill='none' stroke='#2855c5' stroke-width='1.3'/>")
+    body.append(f"<text x='18' y='{height-18}' font-family='system-ui' font-size='12'>{len(vertices)} vertices · {len(geometry.get('faces', []))} faces · area {float(geometry.get('surface_area', 0)):.3g}</text></svg>")
     return "".join(body)
 
 

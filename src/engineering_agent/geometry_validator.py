@@ -18,7 +18,24 @@ def validate_geometry_object(asset: dict[str, Any]) -> dict[str, Any]:
         errors.append("NOT_GEOMETRY_ASSET")
     geometry = asset.get("geometry") or {}
     fmt = geometry.get("format")
-    if fmt == "STEP":
+    if fmt == "OBJ":
+        vertices = geometry.get("vertices") or []
+        faces = geometry.get("faces") or []
+        if not vertices:
+            errors.append("OBJ_HAS_NO_VERTICES")
+        if not faces:
+            warnings.append("OBJ_HAS_NO_FACES")
+        for index, point in enumerate(vertices):
+            if not all(_finite(point.get(axis)) for axis in ("x", "y", "z")):
+                errors.append(f"OBJ_NON_FINITE_VERTEX:{index}")
+        for index, face in enumerate(faces):
+            if len(face) < 3:
+                errors.append(f"OBJ_FACE_TOO_SHORT:{index}")
+            if any(not isinstance(vertex, int) or vertex < 0 or vertex >= len(vertices) for vertex in face):
+                errors.append(f"OBJ_FACE_INDEX_OUT_OF_RANGE:{index}")
+            if len(set(face)) != len(face):
+                errors.append(f"OBJ_FACE_REPEATED_VERTEX:{index}")
+    elif fmt == "STEP":
         if geometry.get("entity_count", 0) <= 0:
             errors.append("STEP_HAS_NO_ENTITIES")
         if geometry.get("cartesian_point_count", 0) == 0:
@@ -54,6 +71,12 @@ def validate_geometry_object(asset: dict[str, Any]) -> dict[str, Any]:
                     errors.append(f"POLYLINE_TOO_SHORT:{index}")
                 if entity.get("closed") and len(vertices) < 3:
                     errors.append(f"CLOSED_POLYLINE_TOO_SHORT:{index}")
+            elif kind == "INSERT" and not str(entity.get("block_name", "")):
+                errors.append(f"INSERT_WITHOUT_BLOCK:{index}")
+            elif kind == "HATCH":
+                boundary = entity.get("boundary_vertices") or []
+                if len(boundary) < 3:
+                    errors.append(f"HATCH_BOUNDARY_TOO_SHORT:{index}")
             elif kind == "TEXT" and not str(entity.get("text", "")):
                 warnings.append(f"EMPTY_TEXT:{index}")
             elif kind == "DIMENSION" and entity.get("measurement") is None:

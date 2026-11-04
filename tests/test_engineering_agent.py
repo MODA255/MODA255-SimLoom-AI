@@ -63,6 +63,23 @@ def test_mcp_surface_lists_and_calls_tools():
     assert missing["error"]["code"] == "RESOURCE_NOT_FOUND"
 
 
+def test_mcp_pagination_subscription_and_schema_compatibility(tmp_path):
+    server = MCPServer(EngineeringAgent({"tools": {}}))
+    initialized = server.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05"}})
+    assert initialized["result"]["capabilities"]["resources"]["subscribe"] is True
+    page = server.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {"limit": 2}})
+    assert len(page["result"]["tools"]) == 2
+    assert page["result"]["nextCursor"]
+    next_page = server.handle({"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {"limit": 2, "cursor": page["result"]["nextCursor"]}})
+    assert next_page["result"]["tools"]
+    uri = f"engineering://project?root={tmp_path}"
+    subscribed = server.handle({"jsonrpc": "2.0", "id": 4, "method": "resources/subscribe", "params": {"uri": uri}})
+    assert subscribed["result"]["subscribed"] is True
+    server.handle({"jsonrpc": "2.0", "id": 5, "method": "resources/unsubscribe", "params": {"uri": uri}})
+    unsupported = server.handle({"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {"name": "engineering_plan", "arguments": {"prompt": "用Adams做动力学", "schema_version": "engineering-agent/mcp/v99"}}})
+    assert unsupported["error"]["code"] == "SCHEMA_VERSION_UNSUPPORTED"
+
+
 def test_ingest_step_csv_and_json(tmp_path):
     step = tmp_path / "part.step"
     step.write_text("#1=CARTESIAN_POINT('',(0.,0.,0.));#2=CARTESIAN_POINT('',(2.,3.,4.));", encoding="utf-8")
@@ -138,6 +155,63 @@ def test_dxf_semantic_entities_layers_transform_and_diff(tmp_path):
     write_dxf(target, entities=moved["entities"])
     inspected = EngineeringAgent({"tools": {}}).execute_operation("geometry.dxf_inspect", {"input_file": str(target)})
     assert inspected["geometry"]["entity_count"] == 4
+
+
+def test_dxf_blocks_hatches_coordinate_systems_and_topology(tmp_path):
+    path = tmp_path / "rich.dxf"
+    write_dxf(
+        path,
+        hatches=[{"layer": "FILL", "pattern": "ANSI31", "points": [(0, 0), (2, 0), (2, 2), (0, 2)]}],
+        inserts=[{"layer": "INST", "block_name": "BOLT", "x": 5, "y": 6}],
+        blocks=[{"name": "BOLT", "base_point": {"x": 0, "y": 0, "z": 0}, "entities": [{"type": "CIRCLE", "layer": "0", "center": {"x": 0, "y": 0, "z": 0}, "radius": 1}]}],
+        coordinate_systems=[{"name": "UCS", "origin": {"x": 10, "y": 20, "z": 0}, "x_axis": {"x": 0, "y": 1, "z": 0}, "y_axis": {"x": -1, "y": 0, "z": 0}}],
+    )
+    document = read_dxf(path)
+    assert "BOLT" in document["blocks"]
+    assert document["entities"][0]["type"] == "HATCH"
+    assert any(item["name"] == "UCS" for item in document["coordinate_systems"])
+    assert document["topology"]["relations"][0]["to"] == "block:BOLT"
+    asset = EngineeringAgent({"tools": {}}).ingest(str(path))
+    assert asset["geometry"]["blocks"]["BOLT"]["entity_count"] == 1
+
+
+def test_generate_and_write_asset_release_transaction_lock(tmp_path):
+    agent = EngineeringAgent({"tools": {}})
+    generated = agent.generate(str(tmp_path), {"name": "transactional"})
+    assert all(Path(path).is_file() for path in generated.values())
+    assert not (tmp_path / ".engineering-agent" / "project.lock").exists()
+    target = tmp_path / "nested" / "payload.json"
+    written = agent.write_asset(str(target), "json", {"ok": True})
+    assert Path(written) == target
+    assert json.loads(target.read_text(encoding="utf-8"))["ok"] is True
+    assert not (tmp_path / ".engineering-agent" / "project.lock").exists()
+
+
+def test_obj_mesh_ingest_validation_and_viewer(tmp_path):
+    mesh = tmp_path / "cube.obj"
+    mesh.write_text(
+        "\n".join([
+            "v 0 0 0", "v 1 0 0", "v 1 1 0", "v 0 1 0", "v 0 0 1", "v 1 0 1", "v 1 1 1", "v 0 1 1",
+            "f 1 2 3 4", "f 5 8 7 6", "f 1 5 6 2", "f 2 6 7 3", "f 3 7 8 4", "f 5 1 4 8",
+        ]) + "\n",
+        encoding="utf-8",
+    )
+    agent = EngineeringAgent({"tools": {}})
+    asset = agent.ingest(str(mesh))
+    assert asset["geometry"]["face_count"] == 6
+    assert agent.execute_operation("geometry.mesh_validate", {"input_file": str(mesh)})["validation"]["valid"]
+    from engineering_agent.viewer import asset_view
+    assert "OBJ mesh wireframe" in asset_view(str(tmp_path), "cube.obj")["svg"]
+
+
+def test_large_offline_fixture_roundtrip(tmp_path):
+    mesh = tmp_path / "large.obj"
+    vertices = [(index, index % 17, index % 5) for index in range(1200)]
+    faces = [(index, index + 1, index + 2) for index in range(0, 1197, 3)]
+    EngineeringAgent({"tools": {}}).write_asset(str(mesh), "obj", {"vertices": vertices, "faces": faces})
+    asset = EngineeringAgent({"tools": {}}).ingest(str(mesh))
+    assert asset["geometry"]["vertex_count"] == 1200
+    assert asset["geometry"]["face_count"] == 399
 
 
 def test_dxf_operation_transform_is_transactional(tmp_path):

@@ -117,6 +117,16 @@ agent.execute_operation("geometry.dxf_transform", {
 
 `geometry.validate` 会检查空实体、零长度线、非法半径、过短闭合折线、非有限坐标和包围盒；Web 的 `/api/asset-view` 对 DXF 返回 2D SVG 语义预览，对结果文件返回指标图。
 
+### 9. 离线网格读取和 Viewer
+
+OBJ 网格可以在没有商业 CAD 或渲染库的环境中读取、写入和校验。Agent 会提取顶点、面、三角形数、表面积和包围盒，并检查面索引、重复顶点和非有限坐标。Viewer 返回一个可嵌入 Web 页面中的等轴线框 SVG：
+
+```python
+agent.execute_operation("geometry.mesh_inspect", {"input_file": "mesh.obj"})
+agent.execute_operation("geometry.mesh_validate", {"input_file": "mesh.obj"})
+agent.write_asset("mesh-copy.obj", "obj", {"vertices": vertices, "faces": faces})
+```
+
 ## Runtime 保护层
 
 每次运行都会生成一个 `run_id`，并在 `artifacts/runs/<run_id>/` 保存执行 journal、checkpoint、staged 文件和 manifest。所有生成脚本先写入 staging，只有整条 dry-run/执行链成功才提交到 `artifacts/generated/`；提交中途失败会恢复已经写入的文件，异常退出留下的运行可被 `recover_stale` 标记为 abandoned 并清理 staging，过期的项目锁也会自动回收。
@@ -151,7 +161,7 @@ Windows bridge 默认使用 `shell=False`、项目根目录沙箱、命令白名
 PYTHONPATH=src python -m engineering_agent.cli mcp
 ```
 
-工具包括 `engineering_plan`、`engineering_run`、`engineering_generate`、`engineering_doctor`、`engineering_operations`、DXF 几何 operation 和项目版本 operation。MCP 还提供 `resources/templates/list`，资源读取失败、参数错误、锁冲突和未知 operation 都统一返回 error envelope。Web API 还提供 artifact 列表、文本/JSON 预览、DXF SVG 预览和任务事件时间线。
+工具包括 `engineering_plan`、`engineering_run`、`engineering_generate`、`engineering_doctor`、`engineering_operations`、DXF/OBJ 几何 operation 和项目版本 operation。MCP 支持 `tools/list`、`resources/list`、`resources/templates/list` 和 `prompts/list` 分页，支持资源订阅/取消订阅，并在 initialize、工具 schema 和资源读取中返回 schema version。资源读取失败、参数错误、锁冲突和未知 operation 都统一返回 error envelope。Web API 还提供 artifact 列表、文本/JSON 预览、DXF/OBJ SVG 预览和任务事件时间线。
 
 ## 当前边界
 
