@@ -1,0 +1,15 @@
+{
+  "suite_id": "daily-full-suite-v1",
+  "version": "1.0",
+  "mode": "plan-only",
+  "rotation": ["douyin_video", "douyin_live", "weibo_video"],
+  "default_feature_profiles": ["F0"],
+  "chains": [
+    {"chain_id":"manual_ecom","template_id":"manual-ecom-default-v1","feature_profiles":["F0"],"source_rotation":["douyin_video","weibo_video"],"execution_role":"manual","material_policy":"single-material"},
+    {"chain_id":"manual_auto_theme","template_id":"manual-auto-theme-default-v1","feature_profiles":["F0"],"source_rotation":["douyin_video","douyin_live","weibo_video"],"execution_role":"manual","material_policy":"single-material"},
+    {"chain_id":"manual_ip_promo","template_id":"manual-ip-promo-multi-material-v1","feature_profiles":["F0"],"source_rotation":["douyin_video","douyin_live","weibo_video"],"execution_role":"manual","material_policy":"multi-material","preconditions":["ip_evidence","min_asset_count:3","min_duration_seconds:60","min_clip_count:2"]},
+    {"chain_id":"auto_ecom","template_id":"auto-ecom-live-cut-v1","feature_profiles":["F0"],"source_rotation":["douyin_live"],"execution_role":"automation","material_policy":"single-material"},
+    {"chain_id":"auto_theme","template_id":"auto-theme-live-cut-v1","feature_profiles":["F0"],"source_rotation":["douyin_live"],"execution_role":"automation","material_policy":"single-material"},
+    {"chain_id":"auto_ip","template_id":"auto-ip-promo-multi-material-v1","feature_profiles":["F0"],"source_rotation":["douyin_video","douyin_live","weibo_video"],"execution_role":"automation","material_policy":"multi-material","preconditions":["ip_evidence","min_asset_count:9","min_duration_seconds:120","min_clip_count:30"]}
+  ]
+}

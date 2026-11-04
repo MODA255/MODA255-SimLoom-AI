@@ -1,0 +1,14 @@
+ISO-10303-21;
+HEADER;
+FILE_DESCRIPTION(('Engineering Agent demo'),'2;1');
+FILE_NAME('demo.step',('Engineering Agent'),('Engineering Agent'),'','Engineering Agent','','');
+FILE_SCHEMA(('CONFIG_CONTROL_DESIGN'));
+ENDSEC;
+DATA;
+#10=CARTESIAN_POINT('',(0.,0.,0.));
+#11=CARTESIAN_POINT('',(100.,0.,0.));
+#12=CARTESIAN_POINT('',(100.,50.,0.));
+#13=CARTESIAN_POINT('',(0.,50.,0.));
+#20=MANIFOLD_SOLID_BREP('',());
+ENDSEC;
+END-ISO-10303-21;

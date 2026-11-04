@@ -1,0 +1,10 @@
+{
+  "vehicle": {
+    "lap_time_s": 92.4,
+    "understeer_gradient_deg_g": 1.8,
+    "yaw_rate_gain": 0.42
+  },
+  "structure": {
+    "max_stress_mpa": 118.0
+  }
+}

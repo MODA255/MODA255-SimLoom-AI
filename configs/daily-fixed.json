@@ -1,0 +1,28 @@
+{
+  "mode": "simulation",
+  "state_db": "state/daily.db",
+  "required_sources": ["live", "link"],
+  "profiles": {
+    "fixed_config_version": "daily-fixed-v1",
+    "publish": false,
+    "delivery_enabled": false,
+    "folder_id": "",
+    "template_id": "",
+    "template_version": "",
+    "topic_template": "",
+    "num_versions": 1,
+    "bgm_mode": "none",
+    "subtitle_enabled": true,
+    "word_effect_enabled": false,
+    "smart_original_audio": false,
+    "smart_sound_effect": false,
+    "force_vertical": false,
+    "dynamic_crop": false
+  },
+  "providers": {"search": "simulation", "model": "simulation"},
+  "daily": {"topic": null},
+  "timeouts": {"material_ready_seconds": 60, "task_seconds": 60, "poll_interval_seconds": 2},
+  "remote_api": {"routes": {}},
+  "source_constraints": ["douyin_content", "douyin_live", "weibo_content"],
+  "notes": "Resource IDs and confirmed remote parameters must be supplied explicitly. No sample asset or source is a dynamic success."
+}

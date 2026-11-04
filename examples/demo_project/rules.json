@@ -1,0 +1,5 @@
+[
+  {"name": "lap_time", "path": "vehicle.lap_time_s", "operator": "<=", "target": 100, "unit": "s"},
+  {"name": "max_stress", "path": "structure.max_stress_mpa", "operator": "<=", "target": 180, "unit": "MPa"},
+  {"name": "yaw_rate_gain", "path": "vehicle.yaw_rate_gain", "operator": ">=", "target": 0.35, "unit": ""}
+]

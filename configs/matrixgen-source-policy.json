@@ -1,0 +1,56 @@
+{
+  "matrixgen_supported_sources_version": "v0.1",
+  "live": {
+    "allowed_platforms": [
+      "douyin",
+      "weibo"
+    ],
+    "rules": {
+      "douyin": [
+        {
+          "host": "live.douyin.com",
+          "path": "/",
+          "types": [
+            "live_url"
+          ]
+        }
+      ],
+      "weibo": [
+        {
+          "host": "live.weibo.com",
+          "path": "/",
+          "types": [
+            "live_url"
+          ]
+        }
+      ]
+    }
+  },
+  "content": {
+    "allowed_platforms": [],
+    "allowed_url_types": [
+      "direct_video",
+      "verified_ingest_platform"
+    ],
+    "unverified_platform_policy": "block_normal_scenario",
+    "rules": {
+      "douyin": [
+        {"host": "www.douyin.com", "path": "/video/", "types": ["verified_ingest_platform"]},
+        {"host": "v.douyin.com", "path": "/", "types": ["verified_ingest_platform"]}
+      ],
+      "weibo": [
+        {"host": "weibo.com", "path": "/", "types": ["verified_ingest_platform"]},
+        {"host": "www.weibo.com", "path": "/", "types": ["verified_ingest_platform"]},
+        {"host": "m.weibo.cn", "path": "/", "types": ["verified_ingest_platform"]}
+      ]
+    },
+    "known_unverified_platforms": [
+      "qq_video",
+      "tencent_video"
+    ],
+    "verification_mode": "probe_first",
+    "probe_success_url_type": "verified_ingest_platform",
+    "probe_failure_policy": "blocked"
+  },
+  "note": "普通内容先通过安全检查再调用只读 SourceProbeGateway；probe 成功仅验证来源可探测，不代表授权、入库或 ready。直播使用独立流程，不调用普通 probe。静态白名单不替代 probe。"
+}

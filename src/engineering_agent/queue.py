@@ -1,0 +1,91 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+import threading
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+class TaskQueue:
+    def __init__(self, path: str | Path = "engineering-agent.db"):
+        self.path = str(path)
+        self._lock = threading.Lock()
+        self._init()
+
+    def _connect(self):
+        connection = sqlite3.connect(self.path)
+        connection.row_factory = sqlite3.Row
+        return connection
+
+    def _init(self):
+        with self._connect() as db:
+            db.executescript("""
+            CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, project_id TEXT, prompt TEXT NOT NULL, project_dir TEXT NOT NULL, status TEXT NOT NULL, result_json TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS task_events (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, event TEXT NOT NULL, payload_json TEXT, created_at TEXT NOT NULL);
+            """)
+
+    def create_project(self, name: str) -> str:
+        project_id = str(uuid.uuid4())
+        with self._connect() as db:
+            db.execute("INSERT INTO projects VALUES (?, ?, ?)", (project_id, name, _now()))
+        return project_id
+
+    def list_projects(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM projects ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def submit(self, prompt: str, project_dir: str = ".", project_id: str | None = None) -> str:
+        task_id = str(uuid.uuid4())
+        now = _now()
+        with self._lock, self._connect() as db:
+            db.execute("INSERT INTO tasks VALUES (?, ?, ?, ?, 'queued', NULL, ?, ?)", (task_id, project_id, prompt, project_dir, now, now))
+            db.execute("INSERT INTO task_events(task_id,event,payload_json,created_at) VALUES (?, 'queued', '{}', ?)", (task_id, now))
+        return task_id
+
+    def update(self, task_id: str, status: str, result: dict[str, Any] | None = None):
+        with self._lock, self._connect() as db:
+            now = _now()
+            db.execute("UPDATE tasks SET status=?, result_json=?, updated_at=? WHERE id=?", (status, json.dumps(result, ensure_ascii=False) if result is not None else None, now, task_id))
+            db.execute("INSERT INTO task_events(task_id,event,payload_json,created_at) VALUES (?, ?, ?, ?)", (task_id, status, json.dumps(result or {}, ensure_ascii=False), now))
+
+    def get(self, task_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+        return self._row(row)
+
+    def list(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [self._row(row) for row in rows]
+
+    def next_queued(self) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM tasks WHERE status='queued' ORDER BY created_at LIMIT 1").fetchone()
+        return self._row(row)
+
+    def events(self, task_id: str) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT id, task_id, event, payload_json, created_at FROM task_events WHERE task_id=? ORDER BY id", (task_id,)).fetchall()
+        values = []
+        for row in rows:
+            item = dict(row)
+            item["payload"] = json.loads(item.pop("payload_json") or "{}")
+            values.append(item)
+        return values
+
+    @staticmethod
+    def _row(row) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        result = dict(row)
+        result["result"] = json.loads(result.pop("result_json")) if result.get("result_json") else None
+        return result

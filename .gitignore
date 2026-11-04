@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.engineering-agent/
+engineering-agent.db
+runs/*/artifacts/generated/
+runs/
+state/
+local/
+configs/*.local.json
+recent-evidence-files.txt
+.env
+.env.*
+.DS_Store

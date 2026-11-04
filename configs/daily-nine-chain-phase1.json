@@ -1,0 +1,288 @@
+{
+  "suite_id": "daily-nine-chain-phase1-v1",
+  "version": "1.0",
+  "release_mode": "limited_production",
+  "enabled_chains": [
+    "I-LINK",
+    "I-LIVE",
+    "I-UPLOAD",
+    "M-ECOM",
+    "M-IP",
+    "M-THEME",
+    "A-ECOM",
+    "A-IP",
+    "A-THEME"
+  ],
+  "mandatory_real_chains": [
+    "I-LINK",
+    "I-UPLOAD",
+    "M-ECOM",
+    "M-IP",
+    "M-THEME",
+    "A-IP"
+  ],
+  "conditional_chains": [
+    "I-LIVE",
+    "A-ECOM",
+    "A-THEME"
+  ],
+  "min_p0_cases": 10,
+  "daily_case_target": [
+    15,
+    25
+  ],
+  "inputs": {
+    "DAILY_DOUYIN_URL": "env:DAILY_DOUYIN_URL",
+    "DAILY_WEIBO_URL": "env:DAILY_WEIBO_URL",
+    "DAILY_DOUYIN_URL_ALT": "env:DAILY_DOUYIN_URL_ALT",
+    "DAILY_WEIBO_URL_ALT": "env:DAILY_WEIBO_URL_ALT",
+    "DAILY_LIVE_URL": "env:DAILY_LIVE_URL",
+    "DAILY_UPLOAD_FILE": "env:DAILY_UPLOAD_FILE"
+  },
+  "folder": "env:MATRIXGEN_FOLDER_ID",
+  "evidence_mapping": {
+    "non_live": [
+      "I-LINK",
+      "I-UPLOAD",
+      "M-ECOM",
+      "M-IP",
+      "M-THEME",
+      "A-IP"
+    ],
+    "live": {
+      "I-LIVE": {
+        "evidence": [
+          "source_probe",
+          "ingest",
+          "asset"
+        ]
+      },
+      "A-ECOM": {
+        "evidence": [
+          "live_source",
+          "parent_task",
+          "child_task"
+        ]
+      },
+      "A-THEME": {
+        "evidence": [
+          "live_source",
+          "parent_task",
+          "child_task"
+        ]
+      }
+    }
+  },
+  "delivery_enabled": false,
+  "auto_delivery_enabled": false,
+  "cleanup_mode": "register_and_protect",
+  "retention_days": 7,
+  "chains": [
+    {
+      "chain_id": "I-LINK",
+      "runner": "material_ingest",
+      "cases": [
+        {
+          "case_id": "I-LINK-DOUYIN-001",
+          "priority": "P0",
+          "source_type": "douyin_video",
+          "input_ref": "DAILY_DOUYIN_URL"
+        },
+        {
+          "case_id": "I-LINK-WEIBO-001",
+          "priority": "P0",
+          "source_type": "weibo_video",
+          "input_ref": "DAILY_WEIBO_URL"
+        },
+        {
+          "case_id": "I-LINK-DOUYIN-002",
+          "priority": "P1",
+          "source_type": "douyin_video",
+          "input_ref": "DAILY_DOUYIN_URL_ALT"
+        },
+        {
+          "case_id": "I-LINK-WEIBO-002",
+          "priority": "P1",
+          "source_type": "weibo_video",
+          "input_ref": "DAILY_WEIBO_URL_ALT"
+        }
+      ]
+    },
+    {
+      "chain_id": "I-LIVE",
+      "runner": "live_ingest",
+      "cases": [
+        {
+          "case_id": "I-LIVE-DOUYIN-001",
+          "priority": "P0",
+          "source_type": "douyin_live",
+          "input_ref": "DAILY_LIVE_URL"
+        }
+      ]
+    },
+    {
+      "chain_id": "I-UPLOAD",
+      "runner": "file_ingest",
+      "cases": [
+        {
+          "case_id": "I-UPLOAD-001",
+          "priority": "P0",
+          "source_type": "local_video",
+          "input_ref": "DAILY_UPLOAD_FILE"
+        }
+      ]
+    },
+    {
+      "chain_id": "M-ECOM",
+      "runner": "manual",
+      "cases": [
+        {
+          "case_id": "M-ECOM-001",
+          "priority": "P0",
+          "depends_on": [
+            {
+              "any_of": [
+                "I-LINK",
+                "I-UPLOAD"
+              ]
+            }
+          ],
+          "scene_type": "ecom_remix"
+        },
+        {
+          "case_id": "M-ECOM-002",
+          "priority": "P1",
+          "depends_on": [
+            {
+              "any_of": [
+                "I-LINK",
+                "I-UPLOAD"
+              ]
+            }
+          ],
+          "scene_type": "ecom_remix"
+        }
+      ]
+    },
+    {
+      "chain_id": "M-IP",
+      "runner": "manual",
+      "cases": [
+        {
+          "case_id": "M-IP-001",
+          "priority": "P0",
+          "depends_on": [
+            {
+              "any_of": [
+                "I-LINK",
+                "I-UPLOAD"
+              ]
+            }
+          ],
+          "scene_type": "ip_promo"
+        },
+        {
+          "case_id": "M-IP-002",
+          "priority": "P1",
+          "depends_on": [
+            {
+              "any_of": [
+                "I-LINK",
+                "I-UPLOAD"
+              ]
+            }
+          ],
+          "scene_type": "ip_promo"
+        }
+      ]
+    },
+    {
+      "chain_id": "M-THEME",
+      "runner": "manual",
+      "cases": [
+        {
+          "case_id": "M-THEME-001",
+          "priority": "P0",
+          "depends_on": [
+            {
+              "any_of": [
+                "I-LINK",
+                "I-UPLOAD"
+              ]
+            }
+          ],
+          "scene_type": "auto_theme_discovery"
+        },
+        {
+          "case_id": "M-THEME-002",
+          "priority": "P1",
+          "depends_on": [
+            {
+              "any_of": [
+                "I-LINK",
+                "I-UPLOAD"
+              ]
+            }
+          ],
+          "scene_type": "auto_theme_discovery"
+        }
+      ]
+    },
+    {
+      "chain_id": "A-ECOM",
+      "runner": "automation",
+      "cases": [
+        {
+          "case_id": "A-ECOM-001",
+          "priority": "P0",
+          "depends_on": [
+            "I-LIVE"
+          ],
+          "scene_type": "ecom_remix"
+        }
+      ]
+    },
+    {
+      "chain_id": "A-IP",
+      "runner": "automation",
+      "cases": [
+        {
+          "case_id": "A-IP-001",
+          "priority": "P0",
+          "depends_on": [
+            {
+              "any_of": [
+                "I-LINK",
+                "I-UPLOAD"
+              ]
+            }
+          ],
+          "scene_type": "ip_promo"
+        }
+      ]
+    },
+    {
+      "chain_id": "A-THEME",
+      "runner": "automation",
+      "cases": [
+        {
+          "case_id": "A-THEME-001",
+          "priority": "P0",
+          "depends_on": [
+            "I-LIVE"
+          ],
+          "scene_type": "auto_theme_discovery"
+        },
+        {
+          "case_id": "A-THEME-002",
+          "priority": "P1",
+          "depends_on": [
+            "I-LIVE"
+          ],
+          "scene_type": "auto_theme_discovery"
+        }
+      ]
+    }
+  ],
+  "safe_write": false
+}

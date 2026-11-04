@@ -1,0 +1,5 @@
+time_s,yaw_rate_deg_s,lateral_accel_m_s2
+0,0,0
+1,2.4,1.1
+2,3.1,1.7
+3,3.6,2.0

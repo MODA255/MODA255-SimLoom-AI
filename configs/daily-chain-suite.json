@@ -1,0 +1,13 @@
+{
+  "suite_id": "daily-chain-suite-v1",
+  "version": "1.0",
+  "delivery_required": false,
+  "chains": [
+    {"chain_id":"manual_ecom","execution_mode":"manual","scene_type":"ecom_remix","expected_recipe":"ecom_remix","task_id":"b3c0b0c8-ea77-4055-923a-e70d52588423","expected_video_count":1},
+    {"chain_id":"manual_ip","execution_mode":"manual","scene_type":"ip_promo","expected_recipe":"ip_promo","task_id":"7077342c-3649-413b-841e-760bf0ae5716","expected_video_count":1},
+    {"chain_id":"manual_theme","execution_mode":"manual","scene_type":"auto_theme_discovery","expected_recipe":"auto_theme_discovery","task_id":"341fd5b1-657f-4c1b-a4cb-e36f7e9138f0","expected_video_count":1},
+    {"chain_id":"auto_ecom","execution_mode":"automation","scene_type":"ecom_mix","expected_recipe":"ecom_remix_viral_learning","task_id":"0f57a3bb-a8a2-48e7-8d8c-3be73383ae54","parent_task_id":"be4c12b6-22e9-43e5-94b7-b92633bf728c","expected_video_count":1},
+    {"chain_id":"auto_theme","execution_mode":"automation","scene_type":"theme_discovery","expected_recipe":"auto_theme_discovery","task_id":"01d607c4-5f8f-47c9-a8b4-f8367093baef","parent_task_id":"0f3f48c9-9821-4d4e-89ff-7bc024a94549","expected_video_count":1},
+    {"chain_id":"auto_ip","execution_mode":"automation","scene_type":"ip_promo","expected_recipe":"ip_promo","task_id":"d0aa26b0-97ce-4509-9c55-c8b722df2b29","parent_task_id":"1d4e2295-f6d7-4ca6-8e44-516bf77fb63b","expected_video_count":1}
+  ]
+}

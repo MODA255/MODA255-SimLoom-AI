@@ -1,0 +1,243 @@
+{
+  "template_set_id": "matrixgen-daily-scene-templates-v1",
+  "version": "1.0",
+  "status": "draft",
+  "purpose": "仅定义每日剪辑场景模板，不包含执行结果、具体候选素材或远程任务 ID。",
+  "global_rules": {
+    "allowed_sources": ["douyin_video", "douyin_live", "weibo_video"],
+    "delivery_enabled": false,
+    "advertiser": null,
+    "awemes": [],
+    "promotion_goal": null,
+    "adlab_scene": null,
+    "business_entity_policy": "从远程固定集合中匹配，不允许 AI 编造实体 ID",
+    "dynamic_input_policy": "品牌、商品、IP、机制、标题、主题、brief、素材和 BGM 由 Agent 按业务事实动态生成或匹配",
+    "fixed_feature_policy": "功能开关、recipe、版本数、投放和验收规则由模板固定，不由 Agent 随机修改"
+  },
+  "templates": [
+    {
+      "template_id": "manual-ecom-default-v1",
+      "name": "后台手动电商混剪-默认基线",
+      "chain_type": "manual",
+      "scene_type": "ecom",
+      "purpose": "验证真实电商素材、业务语义和默认电商混剪链路",
+      "dynamic_business_input": {
+        "brand_name": {"source": "fixed_collection", "required": true},
+        "product_name": {"source": "brand_product_collection", "required": true},
+        "ip_name": {"source": "matched_collection_or_null", "required": false},
+        "mechanism": {"source": "material_fact_or_fixed_collection", "required": false},
+        "project_name": {"source": "agent_generated", "required": true},
+        "topic": {"source": "agent_generated_from_material_facts", "required": true},
+        "brief": {"source": "agent_generated_from_material_facts", "required": false},
+        "content_angle": {"source": "agent_generated", "required": true}
+      },
+      "material_selection": {
+        "source_types": ["douyin_video", "weibo_video"],
+        "main_assets": {"selection": "match_business_input_and_material_facts", "min": 1},
+        "opening_assets": {"selection": "optional_from_main_assets", "required": false},
+        "bgm": {"selection": "controlled_by_feature_profile"}
+      },
+      "fixed_feature_config": {
+        "recipe": "ecom_remix",
+        "use_default_matrixgen_template": true,
+        "num_versions": 1,
+        "enable_subtitle": true,
+        "enable_fancy_text": false,
+        "bgm_mode": "none",
+        "enable_smart_native_insertion": false,
+        "enable_sfx": false,
+        "force_portrait": false,
+        "enable_dynamic_crop": false,
+        "delivery_enabled": false
+      },
+      "acceptance_profile": "manual_vfc_standard"
+    },
+    {
+      "template_id": "manual-auto-theme-default-v1",
+      "name": "后台手动自动主题发现-空需求",
+      "chain_type": "manual",
+      "scene_type": "auto_theme_discovery",
+      "purpose": "验证素材进入自动主题发现后由系统自主发现主题并完成出片",
+      "dynamic_business_input": {
+        "brand_name": {"source": "matched_collection_or_null", "required": false},
+        "product_name": {"source": "matched_collection_or_null", "required": false},
+        "ip_name": {"source": "matched_collection_or_null", "required": false},
+        "mechanism": {"source": "material_fact_or_null", "required": false},
+        "project_name": {"source": "agent_generated", "required": true},
+        "topic": {"source": "post_material_observation", "required": false},
+        "brief": {"source": "fixed_empty", "value": "", "required": true},
+        "content_angle": {"source": "post_material_observation", "required": false}
+      },
+      "material_selection": {
+        "source_types": ["douyin_video", "douyin_live", "weibo_video"],
+        "main_assets": {"selection": "content_rich_material_for_theme_discovery", "min": 1},
+        "opening_assets": {"selection": "not_used_by_default", "required": false},
+        "bgm": {"selection": "controlled_by_feature_profile"}
+      },
+      "fixed_feature_config": {
+        "recipe": "auto_theme_discovery",
+        "use_default_matrixgen_template": true,
+        "num_versions": 1,
+        "brief": "",
+        "enable_subtitle": true,
+        "enable_fancy_text": false,
+        "bgm_mode": "none",
+        "force_portrait": false,
+        "enable_dynamic_crop": false,
+        "delivery_enabled": false
+      },
+      "acceptance_profile": "manual_auto_theme_standard"
+    },
+    {
+      "template_id": "manual-ip-promo-multi-material-v1",
+      "name": "后台手动IP宣发-多素材池",
+      "chain_type": "manual",
+      "scene_type": "ip_promo",
+      "purpose": "验证真实 IP 多素材、脚本、TTS、选片和合成链路",
+      "dynamic_business_input": {
+        "brand_name": {"source": "matched_collection_or_null", "required": false},
+        "product_name": {"source": "matched_collection_or_null", "required": false},
+        "ip_name": {"source": "fixed_collection", "required": true},
+        "mechanism": {"source": "material_fact_or_fixed_collection", "required": false},
+        "project_name": {"source": "agent_generated", "required": true},
+        "topic": {"source": "agent_generated_from_ip_material_facts", "required": true},
+        "brief": {"source": "agent_generated_from_ip_material_facts", "required": true},
+        "content_angle": {"source": "agent_generated", "required": true}
+      },
+      "material_selection": {
+        "source_types": ["douyin_video", "douyin_live", "weibo_video"],
+        "main_assets": {"selection": "same_ip_same_business_context_multi_asset_pool", "min": 3, "preferred_clip_count": 30},
+        "ip_material_requirements": {"min_duration_seconds": 60, "min_clip_count": 2, "require_asr": true, "require_active": true, "require_person_or_ip_evidence": true}
+      },
+      "fixed_feature_config": {
+        "recipe": "ip_promo",
+        "use_default_matrixgen_template": true,
+        "num_versions": 1,
+        "tts_engine": "indextts2",
+        "tts_volume": 2,
+        "enable_subtitle": true,
+        "subtitle_style_mode": "all",
+        "enable_smart_native_insertion": false,
+        "enable_fancy_text": false,
+        "enable_sfx": false,
+        "bgm_mode": "none",
+        "force_portrait": false,
+        "delivery_enabled": false
+      },
+      "acceptance_profile": "manual_ip_promo_standard"
+    },
+    {
+      "template_id": "auto-ecom-live-cut-v1",
+      "name": "自动化电商混剪-直播切片",
+      "chain_type": "automation",
+      "scene_type": "ecom_mix",
+      "purpose": "验证真实直播录制、切片、入库、自动子任务和电商成片链路",
+      "dynamic_business_input": {
+        "brand_name": {"source": "matched_collection_or_null", "required": false},
+        "product_name": {"source": "matched_collection_or_null", "required": false},
+        "ip_name": {"source": "matched_collection_or_null", "required": false},
+        "mechanism": {"source": "material_fact_or_fixed_collection", "required": false},
+        "project_name": {"source": "agent_generated", "required": true},
+        "topic": {"source": "agent_generated_or_material_fact", "required": false},
+        "brief": {"source": "agent_generated_or_empty", "required": false},
+        "content_angle": {"source": "agent_generated", "required": false}
+      },
+      "material_selection": {
+        "source_types": ["douyin_live"],
+        "live_source": {"selection": "current_real_ecommerce_live_room", "required": true},
+        "recording_duration_seconds": {"source": "fixed_test_profile", "default": 600},
+        "capture_interval_seconds": {"source": "fixed_test_profile", "default": 60},
+        "opening_assets": {"selection": "not_used_by_default", "required": false}
+      },
+      "fixed_feature_config": {
+        "automation_endpoint": "/automation/tasks",
+        "scene_type": "ecom_mix",
+        "strategy_id": "ecom_remix_viral_learning",
+        "output_count_per_segment": 1,
+        "subtitle": true,
+        "add_flower_text": false,
+        "bgm_mode": "none",
+        "delivery_enabled": false,
+        "delivery_config_snapshot": null
+      },
+      "acceptance_profile": "automation_parent_child_standard"
+    },
+    {
+      "template_id": "auto-theme-live-cut-v1",
+      "name": "自动化自动主题发现-直播切片",
+      "chain_type": "automation",
+      "scene_type": "theme_discovery",
+      "purpose": "验证真实直播录制、切片、素材就绪、自动主题子任务和成片链路",
+      "dynamic_business_input": {
+        "brand_name": {"source": "matched_collection_or_null", "required": false},
+        "product_name": {"source": "matched_collection_or_null", "required": false},
+        "ip_name": {"source": "matched_collection_or_null", "required": false},
+        "mechanism": {"source": "material_fact_or_null", "required": false},
+        "project_name": {"source": "agent_generated", "required": true},
+        "topic": {"source": "post_material_observation", "required": false},
+        "brief": {"source": "fixed_empty", "value": "", "required": true},
+        "content_angle": {"source": "post_material_observation", "required": false}
+      },
+      "material_selection": {
+        "source_types": ["douyin_live"],
+        "live_source": {"selection": "current_real_live_room_with_content", "required": true},
+        "recording_duration_seconds": {"source": "fixed_test_profile", "default": 600},
+        "capture_interval_seconds": {"source": "fixed_test_profile", "default": 60}
+      },
+      "fixed_feature_config": {
+        "automation_endpoint": "/automation/tasks",
+        "scene_type": "theme_discovery",
+        "strategy_id": "auto_theme_discovery",
+        "num_versions": 1,
+        "brief": "",
+        "enable_subtitle": true,
+        "enable_fancy_text": false,
+        "bgm_mode": "none",
+        "delivery_enabled": false,
+        "delivery_config_snapshot": null
+      },
+      "acceptance_profile": "automation_parent_child_standard"
+    },
+    {
+      "template_id": "auto-ip-promo-multi-material-v1",
+      "name": "自动化IP营销-多素材脚本确认",
+      "chain_type": "automation",
+      "scene_type": "ip_promo_automation",
+      "purpose": "验证 IP 脚本生成、自动确认、剪辑子任务和成片链路，不执行推广中心同步",
+      "dynamic_business_input": {
+        "brand_name": {"source": "matched_collection_or_null", "required": false},
+        "product_name": {"source": "matched_collection_or_null", "required": false},
+        "ip_name": {"source": "fixed_collection", "required": true},
+        "mechanism": {"source": "material_fact_or_fixed_collection", "required": false},
+        "project_name": {"source": "agent_generated", "required": true},
+        "topic": {"source": "agent_generated_from_ip_material_facts", "required": true},
+        "brief": {"source": "agent_generated_from_ip_material_facts", "required": true},
+        "content_angle": {"source": "agent_generated", "required": true}
+      },
+      "material_selection": {
+        "source_types": ["douyin_video", "douyin_live", "weibo_video"],
+        "main_assets": {"selection": "same_ip_same_business_context_multi_asset_pool", "min": 9, "preferred_clip_count": 30},
+        "ip_material_requirements": {"min_assets": 9, "min_duration_seconds": 120, "min_clip_count": 30, "require_asr": true, "require_active": true, "require_person_or_ip_evidence": true}
+      },
+      "fixed_feature_config": {
+        "automation_endpoint": "/ip-promo-automations",
+        "promotion_type": "KOL",
+        "num_scripts": 1,
+        "angle_count": 1,
+        "auto_confirm_scripts": true,
+        "out_count_per_script": 1,
+        "tts_engine": "indextts2",
+        "tts_volume": 2,
+        "enable_subtitle": true,
+        "enable_smart_native_insertion": false,
+        "enable_sfx": false,
+        "enable_fancy_text": false,
+        "bgm_mode": "none",
+        "delivery_enabled": false,
+        "delivery_config_snapshot": null,
+        "promotion_sync": false
+      },
+      "acceptance_profile": "ip_automation_clip_only_standard"
+    }
+  ]
+}

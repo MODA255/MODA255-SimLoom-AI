@@ -1,0 +1,85 @@
+{
+  "suite_id": "daily-chain-suite-executable-v2",
+  "version": "2.0",
+  "delivery_required": false,
+  "chains": [
+    {
+      "chain_id": "manual_ecom",
+      "execution_mode": "manual",
+      "scene_type": "ecom_remix",
+      "expected_recipe": "ecom_remix",
+      "expected_video_count": 1,
+      "timeout_seconds": 3600,
+      "poll_interval_seconds": 20,
+      "payload": {
+        "recipe": "ecom_remix",
+        "project_name": "每日巡检-手动电商混剪",
+        "master_asset_ids": ["4f50d198-9d6b-4453-bf96-bbd7517b4610"],
+        "master_asset_id": "4f50d198-9d6b-4453-bf96-bbd7517b4610",
+        "query": "百褶落地云灯的室内氛围照明与家居搭配",
+        "brief": "基于素材展示商品，不添加价格、促销和未经验证的功效承诺。",
+        "num_versions": 1,
+        "bgm_mode": "none",
+        "enable_subtitle": true,
+        "enable_fancy_text": false,
+        "enable_sfx": false,
+        "enable_smart_native_insertion": false,
+        "auto_delivery_enabled": false,
+        "auto_delivery_products": []
+      }
+    },
+    {
+      "chain_id": "manual_theme",
+      "execution_mode": "manual",
+      "scene_type": "auto_theme_discovery",
+      "expected_recipe": "auto_theme_discovery",
+      "expected_video_count": 1,
+      "timeout_seconds": 3600,
+      "poll_interval_seconds": 20,
+      "payload": {
+        "recipe": "auto_theme_discovery",
+        "project_name": "每日巡检-手动主题发现",
+        "master_asset_ids": ["4f50d198-9d6b-4453-bf96-bbd7517b4610"],
+        "master_asset_id": "4f50d198-9d6b-4453-bf96-bbd7517b4610",
+        "query": "",
+        "brief": "基于素材自动发现主题，不添加未经验证承诺。",
+        "num_versions": 1,
+        "bgm_mode": "none",
+        "enable_subtitle": true,
+        "enable_fancy_text": false,
+        "enable_sfx": false,
+        "enable_smart_native_insertion": false,
+        "auto_delivery_enabled": false,
+        "auto_delivery_products": []
+      }
+    },
+    {
+      "chain_id": "manual_ip",
+      "execution_mode": "manual",
+      "scene_type": "ip_promo",
+      "expected_recipe": "ip_promo",
+      "expected_video_count": 1,
+      "timeout_seconds": 3600,
+      "poll_interval_seconds": 20,
+      "payload": {
+        "recipe": "ip_promo",
+        "project_name": "每日巡检-手动IP宣发",
+        "master_asset_ids": ["434babbc-aae6-402a-a123-d3d887b13448", "1a29da2c-af41-43ec-9f1d-09efd71b553d", "3e554fc3-8408-47b6-b947-9a4bf1f9230f"],
+        "ip_name": "贾乃亮",
+        "brand_name": "苏茵茵",
+        "category": "小马德训鞋",
+        "query": "贾乃亮出镜展示苏茵茵小马德训鞋",
+        "brief": "仅根据真实人物出镜素材编排，不新增价格、销量、库存和功效承诺。",
+        "num_versions": 1,
+        "bgm_mode": "none",
+        "enable_subtitle": true,
+        "enable_fancy_text": false,
+        "enable_sfx": false,
+        "timbre_voice_id": "9fdbd3dd-acde-4559-9bf5-3cbe68ddc4a1",
+        "timbre_voice_ids": ["9fdbd3dd-acde-4559-9bf5-3cbe68ddc4a1"],
+        "auto_delivery_enabled": false,
+        "auto_delivery_products": []
+      }
+    }
+  ]
+}

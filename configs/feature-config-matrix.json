@@ -1,0 +1,19 @@
+{
+  "version": "1.0",
+  "delivery_enabled": false,
+  "profiles": {
+    "F0": {"name":"默认", "features": {"bgm_mode":"none","subtitle_style_mode":"all","portrait_style":"none","opening_mode":"none","force_portrait":false,"enable_dynamic_crop":false,"num_versions":1}},
+    "F1": {"name":"字幕花字", "features": {"enable_fancy_text":true,"subtitle_style_mode":"all"}},
+    "F2": {"name":"音频BGM", "features": {"bgm_mode":"library"}},
+    "F3": {"name":"画幅裁剪", "features": {"force_portrait":true,"enable_dynamic_crop":true}},
+    "F4": {"name":"开头素材", "features": {"opening_mode":"person"}},
+    "F5": {"name":"多版本", "features": {"num_versions":3}},
+    "F6": {"name":"全能力", "features": {"enable_fancy_text":true,"bgm_mode":"library","force_portrait":true,"enable_dynamic_crop":true,"opening_mode":"person","num_versions":3}},
+    "rules": {
+      "mutually_exclusive": [["bgm_mode:none","bgm_mode:library"],["opening_mode:none","opening_mode:person"]],
+      "dependencies": {"enable_dynamic_crop":["force_portrait"],"opening_mode:person":["opening_assets"],"bgm_mode:library":["bgm_asset_or_library"]},
+      "delivery": {"enabled":false,"keys":["publish","delivery","delivery_enabled","auto_delivery_enabled","advertiser","awemes","promotion_goal","adlab_scene"]},
+      "ip": {"min_asset_count":2,"min_clip_count":2,"require_asr":true,"require_ip_evidence":true}
+    }
+  }
+}

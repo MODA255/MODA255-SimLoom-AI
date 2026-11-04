@@ -1,0 +1,13 @@
+{
+  "mode": "simulation",
+  "state_db": "state/orchestrator.db",
+  "target": {"environment": "remote-matrixgen-test", "base_url": "https://bu-content-matrixgen-matrixgen-ai.hub-site.caryscloud.com", "allowed_hosts": ["bu-content-matrixgen-matrixgen-ai.hub-site.caryscloud.com"], "verify_tls": true},
+  "auth": {"type": "bearer", "token_env": "MATRIXGEN_TOKEN"},
+  "providers": {"search": "simulation", "model": "simulation"},
+  "required_sources": ["live", "link"],
+  "profiles": {"publish": false, "folder_id": "", "template_version": "unverified-example"},
+  "limits": {"max_retries": 2, "max_download_bytes": 104857600},
+  "timeouts": {"total_seconds": 10800},
+  "download": {"allowed_hosts": []},
+  "skills": {"versions": {"live-source-search": "0.1", "content-source-search": "0.1", "test-topic-generation": "0.1", "test-scenario-assembly": "0.1"}}
+}
