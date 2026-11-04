@@ -40,6 +40,8 @@ def asset_view(root: str | Path, relative: str) -> dict[str, Any]:
 
 def render_asset_svg(asset: dict[str, Any]) -> str:
     geometry = asset.get("geometry", {})
+    if geometry.get("format") == "DXF" and geometry.get("entities"):
+        return render_dxf_svg(geometry)
     bbox = geometry.get("bbox") or {}
     if bbox:
         x0, x1 = float(bbox.get("x", {}).get("min", 0)), float(bbox.get("x", {}).get("max", 1))
@@ -59,6 +61,46 @@ def render_asset_svg(asset: dict[str, Any]) -> str:
             bars.append(f"<text x='8' y='{y+14}' font-size='11'>{name[:28]}</text><rect x='190' y='{y}' width='{bar_width:.1f}' height='16' fill='#37a169'/><text x='{195+bar_width:.1f}' y='{y+13}' font-size='11'>{float(value):.3g}</text>")
         return "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 330' role='img'><rect width='600' height='330' fill='#f7f9fc'/>" + "".join(bars) + "</svg>"
     return "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 560 120'><text x='20' y='60' font-family='system-ui'>No visualizable geometry or metrics</text></svg>"
+
+
+def render_dxf_svg(geometry: dict[str, Any], width: int = 720, height: int = 460) -> str:
+    """Render semantic DXF entities as a lightweight, dependency-free 2D view."""
+    bbox = geometry.get("bbox") or {}
+    x_axis, y_axis = bbox.get("x", {}), bbox.get("y", {})
+    x_min, x_max = float(x_axis.get("min", 0)), float(x_axis.get("max", 1))
+    y_min, y_max = float(y_axis.get("min", 0)), float(y_axis.get("max", 1))
+    span_x, span_y = max(x_max - x_min, 1.0), max(y_max - y_min, 1.0)
+    scale = min((width - 80) / span_x, (height - 80) / span_y)
+
+    def point(value: dict[str, Any]) -> tuple[float, float]:
+        return 40 + (float(value.get("x", 0)) - x_min) * scale, height - 40 - (float(value.get("y", 0)) - y_min) * scale
+
+    body = [f"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 {width} {height}' role='img'><rect width='100%' height='100%' fill='#f7f9fc'/><text x='18' y='24' font-family='system-ui' font-size='14'>DXF semantic view</text>"]
+    colors = {"0": "#2855c5", "FRAME": "#2855c5", "WHEEL": "#37a169", "ANNOTATION": "#b35c00"}
+    for entity in geometry.get("entities", []):
+        kind, color = str(entity.get("type", "")), colors.get(str(entity.get("layer", "0")), "#6b7280")
+        if kind == "LINE":
+            start, end = point(entity.get("start", {})), point(entity.get("end", {}))
+            body.append(f"<line x1='{start[0]:.2f}' y1='{start[1]:.2f}' x2='{end[0]:.2f}' y2='{end[1]:.2f}' stroke='{color}' stroke-width='2'/>")
+        elif kind in {"CIRCLE", "ARC"}:
+            center = point(entity.get("center", {}))
+            radius = abs(float(entity.get("radius", 0))) * scale
+            body.append(f"<circle cx='{center[0]:.2f}' cy='{center[1]:.2f}' r='{radius:.2f}' fill='none' stroke='{color}' stroke-width='2'/>")
+        elif kind == "POINT":
+            x, y = point(entity.get("point", {}))
+            body.append(f"<circle cx='{x:.2f}' cy='{y:.2f}' r='3' fill='{color}'/>")
+        elif kind in {"LWPOLYLINE", "POLYLINE"}:
+            vertices = [point(item) for item in entity.get("vertices", [])]
+            if len(vertices) >= 2:
+                points = " ".join(f"{x:.2f},{y:.2f}" for x, y in vertices)
+                tag = "polygon" if entity.get("closed") else "polyline"
+                body.append(f"<{tag} points='{points}' fill='none' stroke='{color}' stroke-width='2'/>")
+        elif kind == "TEXT":
+            x, y = point(entity.get("insert", {}))
+            text = str(entity.get("text", ""))[:40].replace("&", "&amp;").replace("<", "&lt;")
+            body.append(f"<text x='{x:.2f}' y='{y:.2f}' font-size='12' fill='{color}'>{text}</text>")
+    body.append("</svg>")
+    return "".join(body)
 
 
 def render_timeline_svg(events: list[dict[str, Any]]) -> str:

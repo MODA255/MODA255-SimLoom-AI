@@ -81,9 +81,26 @@ class VersionStore:
             if before == after:
                 return []
             if len(before) == len(after) and all(isinstance(item, dict) for item in before + after):
+                left_keys = [self._asset_key(item, index) for index, item in enumerate(before)]
+                right_keys = [self._asset_key(item, index) for index, item in enumerate(after)]
+                if len(set(left_keys)) == len(left_keys) and len(set(right_keys)) == len(right_keys) and (set(left_keys) != set(range(len(before))) or set(right_keys) != set(range(len(after)))):
+                    changes = []
+                    for key in sorted(set(left_keys) | set(right_keys)):
+                        if key not in left_keys:
+                            changes.append({"path": f"{path}[{key}]", "kind": "added", "after": after[right_keys.index(key)]})
+                        elif key not in right_keys:
+                            changes.append({"path": f"{path}[{key}]", "kind": "removed", "before": before[left_keys.index(key)]})
+                        else:
+                            changes.extend(self._diff_value(before[left_keys.index(key)], after[right_keys.index(key)], f"{path}[{key}]"))
+                    return changes
                 changes = []
                 for index, (left_item, right_item) in enumerate(zip(before, after)):
                     changes.extend(self._diff_value(left_item, right_item, f"{path}[{index}]"))
                 return changes
             return [{"path": path, "kind": "changed", "before": before, "after": after}]
         return [] if before == after else [{"path": path, "kind": "changed", "before": before, "after": after}]
+
+    @staticmethod
+    def _asset_key(item: dict[str, Any], index: int) -> str | int:
+        source = item.get("source") or {}
+        return str(source.get("path") or item.get("name") or index)

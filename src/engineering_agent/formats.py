@@ -42,14 +42,55 @@ def write_step(path: str | Path, points: Iterable[Iterable[float]], name: str = 
     return str(path)
 
 
-def write_dxf(path: str | Path, lines: Iterable[dict[str, float]] = (), circles: Iterable[dict[str, float]] = ()) -> str:
+def write_dxf(
+    path: str | Path,
+    lines: Iterable[dict[str, float]] = (),
+    circles: Iterable[dict[str, float]] = (),
+    *,
+    polylines: Iterable[dict[str, Any]] = (),
+    points: Iterable[dict[str, float]] = (),
+    arcs: Iterable[dict[str, float]] = (),
+    texts: Iterable[dict[str, Any]] = (),
+    dimensions: Iterable[dict[str, Any]] = (),
+    entities: Iterable[dict[str, Any]] = (),
+) -> str:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     chunks = ["0", "SECTION", "2", "ENTITIES"]
-    for item in lines:
-        chunks += ["0", "LINE", "8", str(item.get("layer", "0")), "10", str(item["x1"]), "20", str(item["y1"]), "30", str(item.get("z1", 0)), "11", str(item["x2"]), "21", str(item["y2"]), "31", str(item.get("z2", 0))]
-    for item in circles:
-        chunks += ["0", "CIRCLE", "8", str(item.get("layer", "0")), "10", str(item["x"]), "20", str(item["y"]), "30", str(item.get("z", 0)), "40", str(item["radius"])]
+    all_entities: list[dict[str, Any]] = []
+    all_entities.extend({"type": "LINE", "layer": item.get("layer", "0"), "start": {"x": item["x1"], "y": item["y1"], "z": item.get("z1", 0)}, "end": {"x": item["x2"], "y": item["y2"], "z": item.get("z2", 0)}} for item in lines)
+    all_entities.extend({"type": "CIRCLE", "layer": item.get("layer", "0"), "center": {"x": item["x"], "y": item["y"], "z": item.get("z", 0)}, "radius": item["radius"]} for item in circles)
+    all_entities.extend({"type": "LWPOLYLINE", "layer": item.get("layer", "0"), "vertices": [{"x": point[0], "y": point[1], "z": point[2] if len(point) > 2 else 0} for point in item.get("points", item.get("vertices", []))], "closed": bool(item.get("closed", False))} for item in polylines)
+    all_entities.extend({"type": "POINT", "layer": item.get("layer", "0"), "point": {"x": item["x"], "y": item["y"], "z": item.get("z", 0)}} for item in points)
+    all_entities.extend({"type": "ARC", "layer": item.get("layer", "0"), "center": {"x": item["x"], "y": item["y"], "z": item.get("z", 0)}, "radius": item["radius"], "start_angle": item.get("start_angle", item.get("start", 0)), "end_angle": item.get("end_angle", item.get("end", 360))} for item in arcs)
+    all_entities.extend({"type": "TEXT", "layer": item.get("layer", "0"), "insert": {"x": item.get("x", item.get("insert", [0, 0])[0]), "y": item.get("y", item.get("insert", [0, 0])[1]), "z": item.get("z", 0)}, "text": item.get("text", ""), "height": item.get("height", 1), "rotation": item.get("rotation", 0)} for item in texts)
+    all_entities.extend({"type": "DIMENSION", "layer": item.get("layer", "0"), "definition": {"x": item.get("x", 0), "y": item.get("y", 0), "z": item.get("z", 0)}, "text": item.get("text", ""), "measurement": item.get("measurement", 0)} for item in dimensions)
+    all_entities.extend(entities)
+    for item in all_entities:
+        kind = str(item.get("type", "")).upper()
+        layer = str(item.get("layer", "0"))
+        if kind == "LINE":
+            start, end = item.get("start", {}), item.get("end", {})
+            chunks += ["0", "LINE", "8", layer, "10", str(start.get("x", 0)), "20", str(start.get("y", 0)), "30", str(start.get("z", 0)), "11", str(end.get("x", 0)), "21", str(end.get("y", 0)), "31", str(end.get("z", 0))]
+        elif kind == "CIRCLE":
+            center = item.get("center", {})
+            chunks += ["0", "CIRCLE", "8", layer, "10", str(center.get("x", 0)), "20", str(center.get("y", 0)), "30", str(center.get("z", 0)), "40", str(item.get("radius", 0))]
+        elif kind == "ARC":
+            center = item.get("center", {})
+            chunks += ["0", "ARC", "8", layer, "10", str(center.get("x", 0)), "20", str(center.get("y", 0)), "30", str(center.get("z", 0)), "40", str(item.get("radius", 0)), "50", str(item.get("start_angle", 0)), "51", str(item.get("end_angle", 360))]
+        elif kind == "POINT":
+            point = item.get("point", {})
+            chunks += ["0", "POINT", "8", layer, "10", str(point.get("x", 0)), "20", str(point.get("y", 0)), "30", str(point.get("z", 0))]
+        elif kind in {"LWPOLYLINE", "POLYLINE"}:
+            chunks += ["0", "LWPOLYLINE", "8", layer, "70", "1" if item.get("closed") else "0"]
+            for point in item.get("vertices", []):
+                chunks += ["10", str(point.get("x", 0)), "20", str(point.get("y", 0))]
+        elif kind == "TEXT":
+            insert = item.get("insert", {})
+            chunks += ["0", "TEXT", "8", layer, "10", str(insert.get("x", 0)), "20", str(insert.get("y", 0)), "30", str(insert.get("z", 0)), "40", str(item.get("height", 1)), "50", str(item.get("rotation", 0)), "1", str(item.get("text", ""))]
+        elif kind == "DIMENSION":
+            definition = item.get("definition", {})
+            chunks += ["0", "DIMENSION", "8", layer, "10", str(definition.get("x", 0)), "20", str(definition.get("y", 0)), "30", str(definition.get("z", 0)), "42", str(item.get("measurement", 0)), "1", str(item.get("text", ""))]
     chunks += ["0", "ENDSEC", "0", "EOF"]
     path.write_text("\n".join(chunks) + "\n", encoding="ascii")
     return str(path)

@@ -28,6 +28,17 @@ class RunTransaction:
         self.lock_fd: int | None = None
         self.committed_files: dict[str, str] = {}
         self.state = "created"
+        self.lock_stale_seconds = 3600
+
+    def __enter__(self) -> "RunTransaction":
+        return self
+
+    def __exit__(self, exc_type, _exc, _tb) -> bool:
+        if exc_type is not None and self.state in {"created", "running"}:
+            self.fail(str(_exc or exc_type.__name__))
+        elif self.state == "running":
+            self.fail("transaction exited before commit")
+        return False
 
     def begin(self, plan: dict[str, Any]):
         self._acquire_lock()
@@ -53,42 +64,66 @@ class RunTransaction:
         final_root = self.project_dir / "artifacts" / "generated"
         backup_root = self.run_dir / "backup"
         committed: dict[str, str] = {}
-        for relative, staged in generated.items():
-            source = Path(staged)
-            if not source.exists():
-                raise FileNotFoundError(source)
-            target = final_root / relative
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if target.exists():
-                backup = backup_root / relative
-                backup.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(target, backup)
-            shutil.copy2(source, target)
-            committed[relative] = str(target)
-        manifest = self.run_dir / "manifest.json"
-        manifest.write_text(json.dumps(committed, ensure_ascii=False, indent=2), encoding="utf-8")
-        self.record("commit", {"files": committed})
-        self.state = "committed"
-        self.committed_files = committed
-        self._write_state()
-        self.release_lock()
-        return committed
+        try:
+            for relative, staged in generated.items():
+                source = Path(staged)
+                if not source.exists():
+                    raise FileNotFoundError(source)
+                target = final_root / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if target.exists():
+                    backup = backup_root / relative
+                    backup.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(target, backup)
+                shutil.copy2(source, target)
+                committed[relative] = str(target)
+            manifest = self.run_dir / "manifest.json"
+            manifest.write_text(json.dumps(committed, ensure_ascii=False, indent=2), encoding="utf-8")
+            self.record("commit", {"files": committed})
+            self.state = "committed"
+            self.committed_files = committed
+            self._write_state()
+            self.release_lock()
+            return committed
+        except Exception as exc:
+            self.record("commit_failed", {"error": str(exc), "files": committed})
+            self._restore_targets(committed, backup_root, final_root)
+            self.state = "failed"
+            self._write_state()
+            self.release_lock()
+            raise
 
     def rollback(self, reason: str):
         self.record("rollback", {"reason": reason})
         backup_root = self.run_dir / "backup"
-        for relative, target_name in self.committed_files.items():
-            target = Path(target_name)
-            backup = backup_root / relative
-            if backup.exists():
-                shutil.copy2(backup, target)
-            elif target.exists():
-                target.unlink()
+        self._restore_targets(self.committed_files, backup_root, self.project_dir / "artifacts" / "generated")
         if self.stage_dir.exists():
             shutil.rmtree(self.stage_dir)
         self.state = "rolled_back"
         self._write_state()
         self.release_lock()
+
+    def fail(self, reason: str):
+        self.record("failed", {"reason": reason})
+        self.state = "failed"
+        self._write_state()
+        self.release_lock()
+
+    @staticmethod
+    def _restore_targets(committed: dict[str, str], backup_root: Path, final_root: Path):
+        for relative, target_name in committed.items():
+            target = Path(target_name)
+            backup = backup_root / relative
+            try:
+                if backup.exists():
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(backup, target)
+                elif target.exists():
+                    target.unlink()
+            except OSError:
+                # A best-effort restore is recorded by the caller; keep the
+                # original exception as the primary failure for the client.
+                continue
 
     def release_lock(self):
         if self.lock_fd is not None:
@@ -105,7 +140,35 @@ class RunTransaction:
             self.lock_fd = os.open(str(self.lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             os.write(self.lock_fd, json.dumps({"run_id": self.run_id, "pid": os.getpid(), "created_at": _now()}).encode())
         except FileExistsError as exc:
+            if self._lock_is_stale():
+                try:
+                    self.lock_path.unlink()
+                except FileNotFoundError:
+                    pass
+                self.lock_fd = os.open(str(self.lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.write(self.lock_fd, json.dumps({"run_id": self.run_id, "pid": os.getpid(), "created_at": _now()}).encode())
+                self.record("stale_lock_recovered", {})
+                return
             raise RuntimeError("PROJECT_LOCKED") from exc
+
+    def _lock_is_stale(self) -> bool:
+        try:
+            info = json.loads(self.lock_path.read_text(encoding="utf-8"))
+            pid = int(info.get("pid", 0))
+            age = time.time() - self.lock_path.stat().st_mtime
+            if age > self.lock_stale_seconds:
+                return True
+            if pid <= 0:
+                return True
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return True
+            except PermissionError:
+                return False
+            return False
+        except (OSError, ValueError, json.JSONDecodeError):
+            return True
 
     def _write_state(self):
         self.run_dir.mkdir(parents=True, exist_ok=True)
@@ -126,6 +189,9 @@ class RunTransaction:
                 state["state"] = "abandoned"
                 state["recovered_at"] = _now()
                 state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+                stage = state_path.parent / "stage"
+                if stage.exists():
+                    shutil.rmtree(stage, ignore_errors=True)
                 recovered.append(state.get("run_id", state_path.parent.name))
             except (OSError, json.JSONDecodeError):
                 continue

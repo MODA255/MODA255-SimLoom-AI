@@ -7,6 +7,7 @@ from typing import Any
 from .adapters import AdapterContext, ToolAdapter, build_adapters
 from .ingest import ArtifactReader
 from .formats import write_csv, write_dxf, write_json, write_pdf, write_step, write_svg
+from .dxf import diff_documents, read_dxf, transform_document
 from .models import AgentRequest, ExecutionPlan, PlanStep, RunReport, ToolResult
 from .llm_planner import AutonomousPlanner
 from .object_model import EngineeringProject
@@ -115,7 +116,17 @@ class EngineeringAgent:
         if format_name == "step":
             return write_step(path, payload.get("points", []), payload.get("name", "engineering_agent"))
         if format_name == "dxf":
-            return write_dxf(path, payload.get("lines", []), payload.get("circles", []))
+            return write_dxf(
+                path,
+                payload.get("lines", []),
+                payload.get("circles", []),
+                polylines=payload.get("polylines", []),
+                points=payload.get("points", []),
+                arcs=payload.get("arcs", []),
+                texts=payload.get("texts", []),
+                dimensions=payload.get("dimensions", []),
+                entities=payload.get("entities", []),
+            )
         if format_name == "svg":
             return write_svg(path, lines=payload.get("lines", []), circles=payload.get("circles", []), title=payload.get("title", "Engineering Agent"))
         if format_name == "pdf":
@@ -156,6 +167,27 @@ class EngineeringAgent:
             return self.diff_versions(arguments.get("project_dir", "."), arguments["left"], arguments["right"])
         if name == "artifact.write":
             return {"path": self.write_asset(arguments["path"], arguments["format"], arguments["payload"])}
+        if name == "geometry.dxf_inspect":
+            document = read_dxf(arguments["input_file"])
+            return {"geometry": document}
+        if name == "geometry.dxf_diff":
+            return diff_documents(read_dxf(arguments["left_file"]), read_dxf(arguments["right_file"]))
+        if name == "geometry.validate":
+            return {"validation": self.validate_asset(arguments["path"])}
+        if name == "geometry.dxf_transform":
+            project_root = Path(arguments.get("project_dir", ".")).resolve()
+            input_path = Path(arguments["input_file"]).resolve()
+            output_path = Path(arguments["output_file"]).resolve()
+            if project_root not in output_path.parents and output_path != project_root:
+                raise ValueError("PATH_OUTSIDE_PROJECT")
+            transformed = transform_document(read_dxf(input_path), translate=arguments.get("translate", (0, 0, 0)), scale=float(arguments.get("scale", 1.0)), rotate_deg=float(arguments.get("rotate_deg", 0.0)))
+            txn = RunTransaction(project_root)
+            txn.begin({"operation": name, "input_file": str(input_path), "output_file": str(output_path)})
+            staged = txn.stage_dir / output_path.name
+            write_dxf(staged, entities=transformed["entities"])
+            relative = str(output_path.relative_to(project_root))
+            committed = txn.commit({relative: str(staged)})
+            return {"path": committed[relative], "geometry": transformed}
         action_alias = {"catia.create_model": "create_or_update_model", "vi-grade.run_scenario": "run_vehicle_dynamics"}
         step = PlanStep("operation", spec.tool, action_alias.get(name, name.split(".", 1)[1]), spec.description, parameters=arguments)
         context = AdapterContext(project_dir=Path(arguments.get("project_dir", ".")).resolve(), dry_run=bool(arguments.get("dry_run", True)), timeout_seconds=int(self.config.get("timeouts", {}).get("step_seconds", 600)), environment=self.config.get("environment", {}))

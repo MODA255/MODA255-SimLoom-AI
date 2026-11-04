@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .object_model import ArtifactRef, AssetKind, EngineeringObject, EngineeringProject
+from .dxf import read_dxf
 
 
 def _sha256(path: Path) -> str:
@@ -102,19 +103,23 @@ class ArtifactReader:
         return EngineeringObject(object_id=str(uuid.uuid4()), name=path.stem, kind=AssetKind.RESULT, source=source, metrics=metrics, metadata={"format": "JSON", "top_level_keys": list(payload) if isinstance(payload, dict) else []})
 
     def _dxf(self, path: Path, source: ArtifactRef) -> EngineeringObject:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-        entities: dict[str, int] = {}
-        coordinates: list[tuple[float, float]] = []
-        for index, value in enumerate(lines):
-            if value.strip() in {"LINE", "CIRCLE", "ARC", "POINT", "LWPOLYLINE", "POLYLINE"}:
-                entity = value.strip()
-                entities[entity] = entities.get(entity, 0) + 1
-            if value.strip() in {"10", "20"} and index + 1 < len(lines):
-                try:
-                    coordinates.append((float(lines[index + 1]), 0.0))
-                except ValueError:
-                    pass
-        return EngineeringObject(object_id=str(uuid.uuid4()), name=path.stem, kind=AssetKind.GEOMETRY, source=source, geometry={"format": "DXF", "entity_types": entities, "coordinate_value_count": len(coordinates)}, metadata={"format": "DXF"})
+        document = read_dxf(path)
+        return EngineeringObject(
+            object_id=str(uuid.uuid4()),
+            name=path.stem,
+            kind=AssetKind.GEOMETRY,
+            source=source,
+            geometry={
+                "format": "DXF",
+                "entity_types": document["entity_types"],
+                "entity_count": len(document["entities"]),
+                "coordinate_value_count": sum(len(_entity_points(item)) for item in document["entities"]),
+                "layers": document["layers"],
+                "entities": document["entities"],
+                "bbox": document["bbox"],
+            },
+            metadata={"format": "DXF"},
+        )
 
     def _svg(self, path: Path, source: ArtifactRef) -> EngineeringObject:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -137,3 +142,20 @@ class ArtifactReader:
     @staticmethod
     def _media_type(suffix: str) -> str:
         return {".step": "model/step", ".stp": "model/step", ".dxf": "image/vnd.dxf", ".svg": "image/svg+xml", ".csv": "text/csv", ".json": "application/json", ".pdf": "application/pdf"}.get(suffix, "application/octet-stream")
+
+
+def _entity_points(entity: dict[str, Any]) -> list[dict[str, Any]]:
+    kind = entity.get("type")
+    if kind == "LINE":
+        return [entity.get("start", {}), entity.get("end", {})]
+    if kind in {"CIRCLE", "ARC"}:
+        return [entity.get("center", {})]
+    if kind == "POINT":
+        return [entity.get("point", {})]
+    if kind == "TEXT":
+        return [entity.get("insert", {})]
+    if kind == "DIMENSION":
+        return [entity.get("definition", {})]
+    if kind in {"LWPOLYLINE", "POLYLINE"}:
+        return list(entity.get("vertices", []))
+    return []

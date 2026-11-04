@@ -29,6 +29,8 @@ class MCPServer:
             return {"jsonrpc": "2.0", "id": request_id, "result": {"tools": self._tools()}}
         if method == "resources/list":
             return {"jsonrpc": "2.0", "id": request_id, "result": {"resources": self._resources(request.get("params", {}))}}
+        if method == "resources/templates/list":
+            return {"jsonrpc": "2.0", "id": request_id, "result": {"resourceTemplates": self._resource_templates()}}
         if method == "resources/read":
             try:
                 return {"jsonrpc": "2.0", "id": request_id, "result": {"contents": [self._read_resource(request.get("params", {}).get("uri", ""))]}}
@@ -54,6 +56,14 @@ class MCPServer:
     def _error(request_id: Any, exc: Exception) -> dict[str, Any]:
         if isinstance(exc, ProtocolError):
             envelope = failure(exc)
+        elif isinstance(exc, FileNotFoundError):
+            envelope = failure(ProtocolError(ErrorCode.RESOURCE_NOT_FOUND, str(exc), details={"path": str(exc)}))
+        elif isinstance(exc, ValueError):
+            text = str(exc)
+            code = ErrorCode.UNKNOWN_OPERATION if text.startswith("UNKNOWN_OPERATION:") else ErrorCode.INVALID_ARGUMENTS
+            envelope = failure(ProtocolError(code, text))
+        elif isinstance(exc, RuntimeError) and "LOCKED" in str(exc):
+            envelope = failure(ProtocolError(ErrorCode.LOCKED, str(exc), retryable=True))
         else:
             envelope = failure(ProtocolError(ErrorCode.INTERNAL_ERROR, str(exc)))
         return {"jsonrpc": "2.0", "id": request_id, "error": envelope["error"]}
@@ -84,6 +94,13 @@ class MCPServer:
             {"uri": f"engineering://project?root={root}", "name": "Canonical project object", "mimeType": "application/json"},
         ]
         return resources
+
+    @staticmethod
+    def _resource_templates() -> list[dict[str, Any]]:
+        return [
+            {"uriTemplate": "engineering://project?root={root}", "name": "Canonical project object", "mimeType": "application/json"},
+            {"uriTemplate": "engineering://versions?root={root}", "name": "Project versions and timeline", "mimeType": "application/json"},
+        ]
 
     def _read_resource(self, uri: str) -> dict[str, Any]:
         parsed = urlparse(uri)

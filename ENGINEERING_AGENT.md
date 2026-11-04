@@ -46,7 +46,7 @@ cp configs/engineering-agent.example.json configs/engineering-agent.local.json
 
 计划输出固定为 `ExecutionPlan`，以后接入 LLM planner 时仍可复用同一组适配器和执行审计。
 
-## 已接入的七项能力
+## 已接入的八项能力
 
 ### 1. 四软件脚本生成
 
@@ -95,9 +95,31 @@ PYTHONPATH=src python -m engineering_agent.cli project-create --db engineering-a
 PYTHONPATH=src python -m engineering_agent.cli projects --db engineering-agent.db
 ```
 
+### 8. DXF 语义读写、变换和 Viewer
+
+ASCII DXF 现在会归一为可操作的实体对象，保留 LINE、CIRCLE、ARC、POINT、LWPOLYLINE、TEXT、DIMENSION、图层、坐标和包围盒。写入接口也支持这些实体类型，因此可以在没有 CAD 软件的环境里完成几何检查和可重复的变换：
+
+```python
+from engineering_agent import EngineeringAgent
+
+agent = EngineeringAgent({"tools": {}})
+print(agent.execute_operation("geometry.dxf_inspect", {"input_file": "part.dxf"}))
+print(agent.execute_operation("geometry.dxf_diff", {"left_file": "a.dxf", "right_file": "b.dxf"}))
+agent.execute_operation("geometry.dxf_transform", {
+    "project_dir": ".",
+    "input_file": "part.dxf",
+    "output_file": "part-moved.dxf",
+    "translate": [100, 0, 0],
+    "scale": 1.0,
+    "rotate_deg": 0,
+})
+```
+
+`geometry.validate` 会检查空实体、零长度线、非法半径、过短闭合折线、非有限坐标和包围盒；Web 的 `/api/asset-view` 对 DXF 返回 2D SVG 语义预览，对结果文件返回指标图。
+
 ## Runtime 保护层
 
-每次运行都会生成一个 `run_id`，并在 `artifacts/runs/<run_id>/` 保存执行 journal、checkpoint、staged 文件和 manifest。所有生成脚本先写入 staging，只有整条 dry-run/执行链成功才提交到 `artifacts/generated/`；失败会回滚 staging，并把失败状态留在报告中。
+每次运行都会生成一个 `run_id`，并在 `artifacts/runs/<run_id>/` 保存执行 journal、checkpoint、staged 文件和 manifest。所有生成脚本先写入 staging，只有整条 dry-run/执行链成功才提交到 `artifacts/generated/`；提交中途失败会恢复已经写入的文件，异常退出留下的运行可被 `recover_stale` 标记为 abandoned 并清理 staging，过期的项目锁也会自动回收。
 
 类型化 operation registry 和独立 validator 位于 `operations.py`、`validation.py`。它们会检查工具白名单、步骤 ID、依赖关系、环依赖和结果状态。
 
@@ -129,7 +151,7 @@ Windows bridge 默认使用 `shell=False`、项目根目录沙箱、命令白名
 PYTHONPATH=src python -m engineering_agent.cli mcp
 ```
 
-工具包括 `engineering_plan`、`engineering_run`、`engineering_generate`、`engineering_doctor` 和 `engineering_operations`。Web API 还提供 artifact 列表、文本/JSON 预览和任务事件时间线。
+工具包括 `engineering_plan`、`engineering_run`、`engineering_generate`、`engineering_doctor`、`engineering_operations`、DXF 几何 operation 和项目版本 operation。MCP 还提供 `resources/templates/list`，资源读取失败、参数错误、锁冲突和未知 operation 都统一返回 error envelope。Web API 还提供 artifact 列表、文本/JSON 预览、DXF SVG 预览和任务事件时间线。
 
 ## 当前边界
 
