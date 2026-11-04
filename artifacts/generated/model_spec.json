@@ -1,0 +1,22 @@
+{
+  "name": "vehicle_model",
+  "part_type": "suspension",
+  "parameters": {
+    "wheelbase_mm": 2800,
+    "track_front_mm": 1600,
+    "track_rear_mm": 1580,
+    "spring_rate_n_per_mm": 35,
+    "damper_n_s_per_mm": 2.8
+  },
+  "material": "steel",
+  "load_cases": [
+    {
+      "name": "vertical_bump",
+      "force_n": 5000
+    },
+    {
+      "name": "braking",
+      "force_n": 3500
+    }
+  ]
+}

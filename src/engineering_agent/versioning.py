@@ -67,7 +67,7 @@ class VersionStore:
         if isinstance(before, dict) and isinstance(after, dict):
             changes = []
             for key in sorted(set(before) | set(after)):
-                if key in {"object_id"}:
+                if key in {"object_id", "id", "created_at", "parent"}:
                     continue
                 child = f"{path}.{key}" if path else key
                 if key not in before:
@@ -80,5 +80,10 @@ class VersionStore:
         if isinstance(before, list) and isinstance(after, list):
             if before == after:
                 return []
+            if len(before) == len(after) and all(isinstance(item, dict) for item in before + after):
+                changes = []
+                for index, (left_item, right_item) in enumerate(zip(before, after)):
+                    changes.extend(self._diff_value(left_item, right_item, f"{path}[{index}]"))
+                return changes
             return [{"path": path, "kind": "changed", "before": before, "after": after}]
         return [] if before == after else [{"path": path, "kind": "changed", "before": before, "after": after}]

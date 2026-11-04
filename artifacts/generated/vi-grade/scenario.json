@@ -1,0 +1,26 @@
+{
+  "schema": "engineering-agent/vi-grade-scenario/v1",
+  "vehicle_model": "vehicle_model",
+  "inputs": {
+    "adams_motion": "../adams/motion.csv",
+    "ansys_results": "../ansys/result.h5"
+  },
+  "events": [
+    {
+      "name": "step_steer",
+      "speed_kph": 80,
+      "steering_deg": 5
+    },
+    {
+      "name": "constant_radius",
+      "speed_kph": 60,
+      "radius_m": 50
+    }
+  ],
+  "requested_metrics": [
+    "yaw_rate_gain",
+    "understeer_gradient",
+    "lateral_acceleration",
+    "lap_time_s"
+  ]
+}
