@@ -1,4 +1,6 @@
 import json
+import threading
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -6,12 +8,14 @@ import pytest
 from engineering_agent import EngineeringAgent
 from engineering_agent.brep import get_brep_backend
 from engineering_agent.mcp_server import MCPServer
+from engineering_agent.web import create_server
 from engineering_agent.operations import OperationRegistry
 from engineering_agent.validation import validate_plan
 from engineering_agent.versioning import VersionStore
 from engineering_agent.formats import write_csv, write_dxf, write_json, write_pdf, write_step, write_svg
 from engineering_agent.dxf import diff_documents, read_dxf, transform_document
 from engineering_agent.protocol import ErrorCode, ProtocolError, failure
+from engineering_agent.queue import TaskQueue
 from engineering_agent.validation import validate_asset
 from engineering_agent.transactions import RunTransaction
 from engineering_agent.ingest import ArtifactReader
@@ -282,6 +286,38 @@ def test_mcp_exposes_offline_vehicle_chain(tmp_path):
     assert any(item["name"] == "engineering_offline_run" for item in listed["result"]["tools"])
     called = server.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "engineering_offline_run", "arguments": {"project_dir": str(tmp_path)}}})
     assert "offline_vehicle_chain" in called["result"]["content"][0]["text"]
+
+
+def test_web_workspace_shell_and_offline_endpoint(tmp_path):
+    server = create_server(EngineeringAgent({"tools": {}}), TaskQueue(tmp_path / "queue.db"), port=0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        with urllib.request.urlopen(base + "/", timeout=5) as response:
+            html = response.read().decode("utf-8")
+        assert "SimLoom AI" in html
+        assert "运行离线闭环" in html
+
+        with urllib.request.urlopen(base + "/api/templates", timeout=5) as response:
+            templates = json.loads(response.read())
+        assert templates["schemaVersion"] == "simloom-ai/web/v1"
+        assert any(item["id"] == "vehicle-handling" for item in templates["templates"])
+
+        request = urllib.request.Request(
+            base + "/api/offline-run",
+            data=json.dumps({"project_dir": str(tmp_path / "workspace"), "model_spec": {"name": "web_demo"}}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=15) as response:
+            result = json.loads(response.read())
+        assert result["status"] == "committed"
+        assert all(item["passed"] for item in result["verdicts"])
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def test_dxf_operation_transform_is_transactional(tmp_path):

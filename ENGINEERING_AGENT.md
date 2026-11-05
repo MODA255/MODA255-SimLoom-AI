@@ -96,7 +96,12 @@ PYTHONPATH=src python -m engineering_agent.cli evaluate result.json rules.json
 PYTHONPATH=src python -m engineering_agent.cli serve --port 8787
 ```
 
-浏览器访问 `/` 可生成计划和提交任务；API 包括 `/api/plan`、`/api/tasks`、`/api/projects`、`/api/doctor` 和 `/api/health`。
+浏览器访问 `/` 可进入工程工作台：选择悬架结构、悬架动力学、整车操稳或自定义
+模板，填写自然语言工程目标，生成 AI 计划，查看 CATIA → Ansys → Adams → VI-grade
+流程画布，并提交任务或直接运行离线闭环。工作台还包含验证指标卡片、任务时间线、
+工程资产扫描和后端诊断。API 包括 `/api/plan`、`/api/tasks`、`/api/projects`、
+`/api/templates`、`/api/offline-run`、`/api/artifacts`、`/api/asset-view`、
+`/api/timeline`、`/api/doctor` 和 `/api/health`。
 
 ### 6. 大模型自主规划
 

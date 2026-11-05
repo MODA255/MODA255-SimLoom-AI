@@ -236,6 +236,11 @@ PYTHONPATH=src python -m engineering_agent.cli serve --port 8787
 
 打开 `http://127.0.0.1:8787` 后，可以生成计划、提交任务并查看任务状态。主要接口包括：
 
+现在的首页已经按工程工作台组织：左侧是工程导航，中间是任务输入和 CATIA →
+Ansys → Adams → VI-grade 流程画布，右侧区域展示验证指标、任务时间线、资产
+扫描和工具诊断。模板卡片可以直接开始悬架结构、悬架动力学、整车操稳或自定义流程。
+“运行离线闭环”按钮会调用同一套 runtime，适合第一次试用和没有商业软件的机器。
+
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | `GET` | `/api/health` | 健康检查 |
@@ -246,6 +251,9 @@ PYTHONPATH=src python -m engineering_agent.cli serve --port 8787
 | `GET` | `/api/asset-view` | 获取 SVG/WebGL 资产预览 |
 | `GET` | `/api/timeline` | 获取版本时间线 |
 | `GET` | `/api/doctor` | 检查工具配置 |
+
+工作台也提供 `GET /api/templates` 和 `POST /api/offline-run`，方便桌面壳或其他
+前端复用模板与离线执行能力。
 
 也可以使用 SQLite 任务队列：
 
