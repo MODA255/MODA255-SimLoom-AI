@@ -35,7 +35,34 @@ def asset_view(root: str | Path, relative: str) -> dict[str, Any]:
     if root_path not in path.parents:
         raise ValueError("ARTIFACT_PATH_OUTSIDE_ROOT")
     asset = ArtifactReader().read(path)
-    return {"asset": asset.to_dict(), "svg": render_asset_svg(asset.to_dict())}
+    payload = asset.to_dict()
+    return {"asset": payload, "svg": render_asset_svg(payload), "viewer": render_interactive_viewer(payload)}
+
+
+def render_interactive_viewer(asset: dict[str, Any]) -> str:
+    """Return a self-contained WebGL mesh/result viewer.
+
+    It has no external JavaScript dependency: drag rotates, wheel zooms, and
+    optional per-vertex scalar values are mapped to a blue-yellow-red cloud.
+    """
+    geometry = asset.get("geometry", {})
+    vertices = geometry.get("vertices") or []
+    faces = geometry.get("faces") or []
+    values = geometry.get("scalars") or geometry.get("point_values") or []
+    if not vertices or not faces:
+        return "<div data-engineering-viewer='unavailable'>Interactive 3D viewer requires mesh vertices and faces.</div>"
+    points = [[float(item.get("x", 0)), float(item.get("y", 0)), float(item.get("z", 0))] for item in vertices]
+    indices: list[int] = []
+    for face in faces:
+        for i in range(1, len(face) - 1):
+            triangle = [face[0], face[i], face[i + 1]]
+            if all(0 <= index < len(points) for index in triangle):
+                indices.extend(triangle)
+    scalars = [float(value) for value in values] if values else []
+    payload = json.dumps({"points": points, "indices": indices, "scalars": scalars}, ensure_ascii=False)
+    return f"""<div class='engineering-3d-viewer' style='position:relative;background:#101827;color:#eef;width:100%;min-height:420px;border-radius:8px;overflow:hidden'>
+<canvas class='engineering-3d-canvas' style='width:100%;height:420px;display:block'></canvas><span style='position:absolute;left:12px;top:10px;font:13px system-ui'>Drag rotate · wheel zoom · mesh/result cloud</span>
+<script>(function(){{const root=document.currentScript.parentElement,c=root.querySelector('canvas'),gl=c.getContext('webgl');if(!gl){{root.insertAdjacentHTML('beforeend','<p>WebGL unavailable</p>');return}}const d={payload};let rx=.4,ry=-.6,zoom=2.8,drag=false,lx=0,ly=0;function resize(){{const r=c.getBoundingClientRect(),q=window.devicePixelRatio||1;c.width=r.width*q;c.height=r.height*q;gl.viewport(0,0,c.width,c.height)}}window.addEventListener('resize',resize);resize();const vs=`attribute vec3 p;attribute vec3 color;uniform mat4 m;varying vec3 v;void main(){{gl_Position=m*vec4(p,1.0);v=color;}}`,fs=`precision mediump float;varying vec3 v;void main(){{gl_FragColor=vec4(v,1.0);}}`;function shader(t,s){{const x=gl.createShader(t);gl.shaderSource(x,s);gl.compileShader(x);return x}}const pr=gl.createProgram();gl.attachShader(pr,shader(gl.VERTEX_SHADER,vs));gl.attachShader(pr,shader(gl.FRAGMENT_SHADER,fs));gl.linkProgram(pr);const pb=gl.createBuffer(),ib=gl.createBuffer(),cb=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,pb);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(d.points.flat()),gl.STATIC_DRAW);gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ib);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,new Uint16Array(d.indices),gl.STATIC_DRAW);let vals=d.scalars;let lo=vals.length?Math.min(...vals):0,hi=vals.length?Math.max(...vals):1;let colors=[];for(let i=0;i<d.points.length;i++){{let t=vals.length?(vals[i]??lo-lo)/(hi-lo||1):.35;colors.push(Math.min(1,2*t),Math.min(1,2*(1-Math.abs(t-.5))),Math.min(1,2*(1-t)))}}gl.bindBuffer(gl.ARRAY_BUFFER,cb);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(colors),gl.STATIC_DRAW);function mat(){{const cx=Math.cos(rx),sx=Math.sin(rx),cy=Math.cos(ry),sy=Math.sin(ry),z=zoom;return new Float32Array([cy,0,-sy,0,sx*sy,cx,sx*cy,0,cx*sy,-sx,cx*cy,0,0,0,-1/z,1])}}function draw(){{gl.enable(gl.DEPTH_TEST);gl.clearColor(.06,.09,.15,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.useProgram(pr);gl.uniformMatrix4fv(gl.getUniformLocation(pr,'m'),false,mat());gl.bindBuffer(gl.ARRAY_BUFFER,pb);let p=gl.getAttribLocation(pr,'p');gl.enableVertexAttribArray(p);gl.vertexAttribPointer(p,3,gl.FLOAT,false,0,0);gl.bindBuffer(gl.ARRAY_BUFFER,cb);let col=gl.getAttribLocation(pr,'color');gl.enableVertexAttribArray(col);gl.vertexAttribPointer(col,3,gl.FLOAT,false,0,0);gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ib);gl.drawElements(gl.TRIANGLES,d.indices.length,gl.UNSIGNED_SHORT,0);requestAnimationFrame(draw)}}c.addEventListener('pointerdown',e=>{{drag=true;lx=e.clientX;ly=e.clientY;c.setPointerCapture(e.pointerId)}});c.addEventListener('pointerup',()=>drag=false);c.addEventListener('pointermove',e=>{{if(!drag)return;ry+=(e.clientX-lx)*.01;rx+=(e.clientY-ly)*.01;lx=e.clientX;ly=e.clientY}});c.addEventListener('wheel',e=>{{e.preventDefault();zoom=Math.max(.6,Math.min(8,zoom+e.deltaY*.002))}},{{passive:false}});draw()}})();</script></div>"""
 
 
 def render_asset_svg(asset: dict[str, Any]) -> str:

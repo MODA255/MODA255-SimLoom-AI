@@ -16,6 +16,12 @@ dependencies = [
 dev = [
   "pytest>=8",
 ]
+brep = [
+  "OCP>=7.7",
+]
+windows = [
+  "pywin32>=306; sys_platform == 'win32'",
+]
 
 [project.scripts]
 orchestrator = "orchestrator.cli:main"

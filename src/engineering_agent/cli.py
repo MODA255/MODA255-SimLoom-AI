@@ -28,6 +28,8 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("prompt")
     run.add_argument("--execute", action="store_true", help="允许调用已配置的外部工具")
     sub.add_parser("doctor", help="检查四个工具的连接配置")
+    windows_validate = sub.add_parser("windows-validate", help="在 Windows 主机上验证四个软件的 COM 可用性")
+    windows_validate.add_argument("--smoke", action="store_true", help="显式执行 COM dispatch 探针")
     generate = sub.add_parser("generate", help="生成四个软件的模型规格和脚本")
     generate.add_argument("--name", default="vehicle_model")
     evaluate = sub.add_parser("evaluate", help="解析结果文件并判断工程指标")
@@ -83,6 +85,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "doctor":
         print(json.dumps(agent.doctor(), ensure_ascii=False, indent=2))
         return 0
+    if args.command == "windows-validate":
+        result = agent.validate_windows_backends(smoke=args.smoke)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["ready_count"] == 4 else 2
     if args.command == "mcp":
         serve_stdio(agent, args.profile)
         return 0

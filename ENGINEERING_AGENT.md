@@ -117,7 +117,25 @@ agent.execute_operation("geometry.dxf_transform", {
 
 `geometry.validate` 会检查空实体、零长度线、非法半径、过短闭合折线、非有限坐标和包围盒；Web 的 `/api/asset-view` 对 DXF 返回 2D SVG 语义预览，对结果文件返回指标图。
 
-### 9. 离线网格读取和 Viewer
+### 9. STEP B-Rep 后端和参数约束
+
+STEP 现在有可选的 OpenCascade/OCP B-Rep 后端。安装 `OCP` 或 `pythonocc-core` 后，Agent 可以读取 STEP solid、计算体积/表面积、创建 box/cylinder，并执行 fuse/cut/common；未安装内核时 operation 会返回 `OPENCASCADE_BACKEND_UNAVAILABLE`，不会把实体计数误报成 B-Rep 成功。
+
+```python
+agent.execute_operation("brep.inspect_step", {"input_file": "part.step"})
+agent.execute_operation("brep.boolean", {
+    "project_dir": ".", "operation": "fuse",
+    "left_file": "a.step", "right_file": "b.step", "output_file": "fused.step",
+})
+agent.execute_operation("brep.solve_constraints", {
+    "parameters": {"width": 20},
+    "constraints": [{"type": "min", "left": "width", "value": 10}],
+})
+```
+
+参数约束层目前支持 `equal`、`distance`、`min`、`max`、`range`，可作为后续 CATIA 参数化 feature graph 的输入。
+
+### 10. 离线网格读取和 Viewer
 
 OBJ 网格可以在没有商业 CAD 或渲染库的环境中读取、写入和校验。Agent 会提取顶点、面、三角形数、表面积和包围盒，并检查面索引、重复顶点和非有限坐标。Viewer 返回一个可嵌入 Web 页面中的等轴线框 SVG：
 
@@ -154,6 +172,17 @@ PYTHONPATH=src python -m engineering_agent.cli bridge --bridge-config configs/en
 `ingest.py` 把 STEP 的实体计数、Cartesian point 包围盒、CSV 数值列统计和 JSON 数值指标归一到 `EngineeringObject`。`versioning.py` 将这些对象保存为不可变快照并生成字段级 diff。Web API 的 `/api/asset-view` 会返回 STEP 包围盒或结果指标的 SVG 预览。
 
 Windows bridge 默认使用 `shell=False`、项目根目录沙箱、命令白名单和 COM 方法白名单。真实 Windows 机器上再把命令模板替换成已验证的 CATIA/Ansys/Adams/VI-grade 启动方式。
+
+Windows 验收探针：
+
+```bash
+PYTHONPATH=src python -m engineering_agent.cli windows-validate
+PYTHONPATH=src python -m engineering_agent.cli windows-validate --smoke
+```
+
+第一条只检查平台、pywin32、配置和可执行文件；第二条才会在 Windows 上对四个 ProgID 执行 COM dispatch。它不会启动求解，也不会修改工程文件。输出包含每个软件的 `configured`、`ready` 或 `unavailable` 状态及证据。
+
+`/api/asset-view` 现在除了 SVG 预览，还会返回自包含的 WebGL viewer。OBJ 网格支持拖拽旋转和滚轮缩放；如果资产提供 `geometry.scalars` 或 `geometry.point_values`，顶点会按蓝-黄-红映射显示结果云图。
 
 本地 MCP stdio 入口：
 

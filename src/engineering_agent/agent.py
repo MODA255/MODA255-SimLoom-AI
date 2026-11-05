@@ -9,6 +9,7 @@ from .ingest import ArtifactReader
 from .formats import write_csv, write_dxf, write_json, write_pdf, write_step, write_svg
 from .mesh import write_obj
 from .dxf import diff_documents, read_dxf, transform_document
+from .brep import brep_doctor, get_brep_backend, solve_constraints
 from .models import AgentRequest, ExecutionPlan, PlanStep, RunReport, ToolResult
 from .llm_planner import AutonomousPlanner
 from .object_model import EngineeringProject
@@ -213,6 +214,32 @@ class EngineeringAgent:
             return {"mesh": self.ingest(arguments["input_file"], "geometry")["geometry"]}
         if name == "geometry.mesh_validate":
             return {"validation": self.validate_asset(arguments["input_file"])}
+        if name == "brep.solve_constraints":
+            result = solve_constraints(arguments["parameters"], arguments["constraints"], tolerance=float(arguments.get("tolerance", 1e-8)), max_iterations=int(arguments.get("max_iterations", 100)))
+            return result.to_dict()
+        if name == "brep.inspect_step":
+            return {"brep": get_brep_backend().inspect_step(arguments["input_file"])}
+        if name in {"brep.boolean", "brep.create_primitive"}:
+            project_root = Path(arguments.get("project_dir", ".")).resolve()
+            output_path = Path(arguments["output_file"]).resolve()
+            if project_root not in output_path.parents and output_path != project_root:
+                raise ValueError("PATH_OUTSIDE_PROJECT")
+            txn = RunTransaction(project_root)
+            txn.begin({"operation": name, "arguments": arguments})
+            try:
+                staged = txn.stage_dir / output_path.name
+                backend = get_brep_backend()
+                if name == "brep.boolean":
+                    result = backend.boolean(arguments["operation"], arguments["left_file"], arguments["right_file"], staged)
+                else:
+                    result = backend.create_primitive(arguments["primitive"], arguments.get("parameters", {}), staged)
+                relative = str(output_path.relative_to(project_root))
+                committed = txn.commit({relative: str(staged)})
+                result["output"] = committed[relative]
+                return result
+            except Exception as exc:
+                txn.fail(str(exc))
+                raise
         if name == "geometry.dxf_transform":
             project_root = Path(arguments.get("project_dir", ".")).resolve()
             input_path = Path(arguments["input_file"]).resolve()
@@ -238,7 +265,10 @@ class EngineeringAgent:
         return [verdict.to_dict() for verdict in evaluate_metrics(data, rules)]
 
     def doctor(self) -> list[dict[str, Any]]:
-        return [self.adapters[name].doctor() for name in self.adapters] + [{"tool": "windows-com", **self.windows.doctor()}]
+        return [self.adapters[name].doctor() for name in self.adapters] + [{"tool": "windows-com", **self.windows.doctor()}, {"tool": "windows-backends", **self.windows.validate_backends(self.config.get("tools", {}))}, {"tool": "step-brep", **brep_doctor()}]
+
+    def validate_windows_backends(self, *, smoke: bool = False) -> dict[str, Any]:
+        return self.windows.validate_backends(self.config.get("tools", {}), smoke=smoke)
 
     @staticmethod
     def load_config(path: str | Path) -> dict[str, Any]:

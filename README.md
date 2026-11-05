@@ -19,3 +19,9 @@ PYTHONPATH=src python -m engineering_agent.cli serve --port 8787
 
 The commercial software adapters remain optional. Configure them only on a
 licensed Windows workstation; the offline runtime and tests do not require them.
+
+Optional geometry capabilities are also isolated: install an OpenCascade
+binding such as `OCP` or `pythonocc-core` to enable true STEP B-Rep inspection,
+primitive creation, and fuse/cut/common operations. Without that dependency,
+the agent reports the backend as unavailable and keeps the conservative STEP
+entity parser.

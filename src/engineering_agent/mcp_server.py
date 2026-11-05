@@ -101,6 +101,8 @@ class MCPServer:
             envelope = failure(ProtocolError(code, text))
         elif isinstance(exc, RuntimeError) and "LOCKED" in str(exc):
             envelope = failure(ProtocolError(ErrorCode.LOCKED, str(exc), retryable=True))
+        elif isinstance(exc, RuntimeError) and ("BACKEND_UNAVAILABLE" in str(exc) or "REQUIRES_WINDOWS" in str(exc)):
+            envelope = failure(ProtocolError(ErrorCode.BACKEND_UNAVAILABLE, str(exc), retryable=False))
         else:
             envelope = failure(ProtocolError(ErrorCode.INTERNAL_ERROR, str(exc)))
         return {"jsonrpc": "2.0", "id": request_id, "error": envelope["error"]}

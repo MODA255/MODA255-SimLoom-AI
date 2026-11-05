@@ -202,6 +202,7 @@ def test_obj_mesh_ingest_validation_and_viewer(tmp_path):
     assert agent.execute_operation("geometry.mesh_validate", {"input_file": str(mesh)})["validation"]["valid"]
     from engineering_agent.viewer import asset_view
     assert "OBJ mesh wireframe" in asset_view(str(tmp_path), "cube.obj")["svg"]
+    assert "engineering-3d-viewer" in asset_view(str(tmp_path), "cube.obj")["viewer"]
 
 
 def test_large_offline_fixture_roundtrip(tmp_path):
@@ -212,6 +213,34 @@ def test_large_offline_fixture_roundtrip(tmp_path):
     asset = EngineeringAgent({"tools": {}}).ingest(str(mesh))
     assert asset["geometry"]["vertex_count"] == 1200
     assert asset["geometry"]["face_count"] == 399
+
+
+def test_brep_constraint_solver_and_backend_status(tmp_path):
+    agent = EngineeringAgent({"tools": {}})
+    solved = agent.execute_operation(
+        "brep.solve_constraints",
+        {"parameters": {"width": 5, "height": 2}, "constraints": [{"type": "min", "left": "width", "value": 10}, {"type": "distance", "left": "length", "right": "width", "value": 3}]},
+    )
+    assert solved["converged"] is True
+    assert solved["parameters"]["width"] == 10
+    assert solved["parameters"]["length"] == 13
+    doctor = agent.doctor()
+    brep = next(item for item in doctor if item["tool"] == "step-brep")
+    assert "available" in brep
+    windows = agent.validate_windows_backends()
+    assert len(windows["tools"]) == 4
+    if windows["platform"].lower() != "windows":
+        assert windows["ready_count"] == 0
+
+
+def test_brep_operation_reports_backend_unavailable_without_kernel(tmp_path):
+    agent = EngineeringAgent({"tools": {}})
+    step = tmp_path / "part.step"
+    write_step(step, [(0, 0, 0), (1, 1, 1)])
+    try:
+        agent.execute_operation("brep.inspect_step", {"input_file": str(step)})
+    except RuntimeError as exc:
+        assert "OPENCASCADE_BACKEND_UNAVAILABLE" in str(exc)
 
 
 def test_dxf_operation_transform_is_transactional(tmp_path):
