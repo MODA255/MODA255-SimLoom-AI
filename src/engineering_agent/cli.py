@@ -11,6 +11,7 @@ from .web import serve
 from .mcp_server import serve_stdio
 from .validation import validate_plan
 from .windows_bridge import serve_bridge
+from .brep import brep_doctor
 
 
 def _default_config() -> Path:
@@ -30,6 +31,18 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("doctor", help="检查四个工具的连接配置")
     windows_validate = sub.add_parser("windows-validate", help="在 Windows 主机上验证四个软件的 COM 可用性")
     windows_validate.add_argument("--smoke", action="store_true", help="显式执行 COM dispatch 探针")
+    sub.add_parser("brep-doctor", help="检查 OpenCascade/OCP B-Rep 后端")
+    brep_inspect = sub.add_parser("brep-inspect", help="检查 STEP solid 的 B-Rep 属性")
+    brep_inspect.add_argument("input_file")
+    brep_primitive = sub.add_parser("brep-primitive", help="创建 OpenCascade box/cylinder STEP solid")
+    brep_primitive.add_argument("primitive", choices=["box", "cylinder"])
+    brep_primitive.add_argument("output_file")
+    brep_primitive.add_argument("--parameters", default="{}", help="JSON object")
+    brep_boolean = sub.add_parser("brep-boolean", help="对两个 STEP solid 执行 fuse/cut/common")
+    brep_boolean.add_argument("operation", choices=["fuse", "cut", "common"])
+    brep_boolean.add_argument("left_file")
+    brep_boolean.add_argument("right_file")
+    brep_boolean.add_argument("output_file")
     generate = sub.add_parser("generate", help="生成四个软件的模型规格和脚本")
     generate.add_argument("--name", default="vehicle_model")
     evaluate = sub.add_parser("evaluate", help="解析结果文件并判断工程指标")
@@ -89,6 +102,18 @@ def main(argv: list[str] | None = None) -> int:
         result = agent.validate_windows_backends(smoke=args.smoke)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result["ready_count"] == 4 else 2
+    if args.command == "brep-doctor":
+        print(json.dumps(brep_doctor(), ensure_ascii=False, indent=2))
+        return 0 if brep_doctor()["available"] else 2
+    if args.command == "brep-inspect":
+        print(json.dumps(agent.execute_operation("brep.inspect_step", {"input_file": args.input_file}), ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "brep-primitive":
+        print(json.dumps(agent.execute_operation("brep.create_primitive", {"primitive": args.primitive, "output_file": args.output_file, "project_dir": args.project_dir, "parameters": json.loads(args.parameters)}), ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "brep-boolean":
+        print(json.dumps(agent.execute_operation("brep.boolean", {"operation": args.operation, "left_file": args.left_file, "right_file": args.right_file, "output_file": args.output_file, "project_dir": args.project_dir}), ensure_ascii=False, indent=2))
+        return 0
     if args.command == "mcp":
         serve_stdio(agent, args.profile)
         return 0

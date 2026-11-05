@@ -156,22 +156,31 @@ class OpenCascadeBackend(BRepBackend):
 
     def _load_bindings(self):
         try:
-            from OCP.BRep import BRep_Tool  # type: ignore
+            from OCP.BRepCheck import BRepCheck_Analyzer  # type: ignore
             from OCP.BRepAlgoAPI import BRepAlgoAPI_Common, BRepAlgoAPI_Cut, BRepAlgoAPI_Fuse  # type: ignore
+            from OCP.BRepBndLib import BRepBndLib  # type: ignore
             from OCP.BRepGProp import brepgprop_SurfaceProperties, brepgprop_VolumeProperties  # type: ignore
             from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder  # type: ignore
+            from OCP.Bnd import Bnd_Box  # type: ignore
             from OCP.GProp import GProp_GProps  # type: ignore
             from OCP.STEPControl import STEPControl_AsIs, STEPControl_Reader, STEPControl_Writer  # type: ignore
+            from OCP.TopAbs import TopAbs_COMPSOLID, TopAbs_EDGE, TopAbs_FACE, TopAbs_SHELL, TopAbs_SOLID, TopAbs_VERTEX  # type: ignore
+            from OCP.TopExp import TopExp_Explorer  # type: ignore
             self._api = locals()
             return
         except ImportError:
             pass
         try:
+            from OCC.Core.BRepCheck import BRepCheck_Analyzer  # type: ignore
             from OCC.Core.BRepAlgoAPI import BRepAlgoAPI_Common, BRepAlgoAPI_Cut, BRepAlgoAPI_Fuse  # type: ignore
+            from OCC.Core.BRepBndLib import brepbndlib_Add  # type: ignore
             from OCC.Core.BRepGProp import brepgprop_SurfaceProperties, brepgprop_VolumeProperties  # type: ignore
             from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder  # type: ignore
+            from OCC.Core.Bnd import Bnd_Box  # type: ignore
             from OCC.Core.GProp import GProp_GProps  # type: ignore
             from OCC.Core.STEPControl import STEPControl_AsIs, STEPControl_Reader, STEPControl_Writer  # type: ignore
+            from OCC.Core.TopAbs import TopAbs_COMPSOLID, TopAbs_EDGE, TopAbs_FACE, TopAbs_SHELL, TopAbs_SOLID, TopAbs_VERTEX  # type: ignore
+            from OCC.Core.TopExp import TopExp_Explorer  # type: ignore
             self._api = locals()
             return
         except ImportError as exc:
@@ -199,7 +208,28 @@ class OpenCascadeBackend(BRepBackend):
         volume = float(props.Mass())
         surface = self._api["GProp_GProps"]()
         self._api["brepgprop_SurfaceProperties"](shape, surface)
-        return {"backend": self.name, "path": str(path), "is_null": bool(shape.IsNull()), "volume": volume, "surface_area": float(surface.Mass()), "shape_type": str(shape.ShapeType())}
+        topology = {}
+        for name in ("COMPSOLID", "SOLID", "SHELL", "FACE", "EDGE", "VERTEX"):
+            explorer = self._api["TopExp_Explorer"](shape, self._api[f"TopAbs_{name}"])
+            count = 0
+            while explorer.More():
+                count += 1
+                explorer.Next()
+            topology[name.lower()] = count
+        bounds = self._bbox(shape)
+        valid = bool(self._api["BRepCheck_Analyzer"](shape).IsValid())
+        return {"backend": self.name, "path": str(path), "is_null": bool(shape.IsNull()), "valid": valid, "volume": volume, "surface_area": float(surface.Mass()), "shape_type": str(shape.ShapeType()), "topology": topology, "bbox": bounds}
+
+    def _bbox(self, shape: Any) -> dict[str, dict[str, float]]:
+        box = self._api["Bnd_Box"]()
+        if "BRepBndLib" in self._api:
+            self._api["BRepBndLib"].Add(shape, box)
+        else:
+            self._api["brepbndlib_Add"](shape, box)
+        values = box.Get()
+        minimum = values[:3]
+        maximum = values[3:]
+        return {axis: {"min": float(minimum[index]), "max": float(maximum[index])} for index, axis in enumerate(("x", "y", "z"))}
 
     def boolean(self, operation: str, left: str | Path, right: str | Path, output: str | Path) -> dict[str, Any]:
         left_shape, right_shape = self._read(left), self._read(right)

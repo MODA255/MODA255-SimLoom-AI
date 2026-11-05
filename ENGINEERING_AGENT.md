@@ -135,6 +135,15 @@ agent.execute_operation("brep.solve_constraints", {
 
 参数约束层目前支持 `equal`、`distance`、`min`、`max`、`range`，可作为后续 CATIA 参数化 feature graph 的输入。
 
+也可以直接从 CLI 探测或调用 B-Rep 后端：
+
+```bash
+PYTHONPATH=src python -m engineering_agent.cli brep-doctor
+PYTHONPATH=src python -m engineering_agent.cli brep-inspect part.step
+PYTHONPATH=src python -m engineering_agent.cli --project-dir ./demo brep-primitive box artifacts/box.step --parameters '{"length":10,"width":20,"height":5}'
+PYTHONPATH=src python -m engineering_agent.cli --project-dir ./demo brep-boolean fuse a.step b.step artifacts/fused.step
+```
+
 ### 10. 离线网格读取和 Viewer
 
 OBJ 网格可以在没有商业 CAD 或渲染库的环境中读取、写入和校验。Agent 会提取顶点、面、三角形数、表面积和包围盒，并检查面索引、重复顶点和非有限坐标。Viewer 返回一个可嵌入 Web 页面中的等轴线框 SVG：
