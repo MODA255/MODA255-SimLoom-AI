@@ -119,7 +119,11 @@ agent.execute_operation("geometry.dxf_transform", {
 
 ### 9. STEP B-Rep 后端和参数约束
 
-STEP 现在有可选的 OpenCascade/OCP B-Rep 后端。安装 `OCP` 或 `pythonocc-core` 后，Agent 可以读取 STEP solid、计算体积/表面积、创建 box/cylinder，并执行 fuse/cut/common；未安装内核时 operation 会返回 `OPENCASCADE_BACKEND_UNAVAILABLE`，不会把实体计数误报成 B-Rep 成功。
+STEP 现在有可选的 OpenCascade/OCP B-Rep 后端。安装 `cadquery-ocp`（它提供 `OCP` Python 模块）或 `pythonocc-core` 后，Agent 可以读取 STEP solid、计算体积/表面积、创建 box/cylinder，并执行 fuse/cut/common；未安装内核时 operation 会返回 `OPENCASCADE_BACKEND_UNAVAILABLE`，不会把实体计数误报成 B-Rep 成功。
+
+```bash
+./.venv/bin/python -m pip install -e '.[brep]'
+```
 
 ```python
 agent.execute_operation("brep.inspect_step", {"input_file": "part.step"})

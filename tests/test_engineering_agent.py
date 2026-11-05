@@ -1,7 +1,10 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from engineering_agent import EngineeringAgent
+from engineering_agent.brep import get_brep_backend
 from engineering_agent.mcp_server import MCPServer
 from engineering_agent.operations import OperationRegistry
 from engineering_agent.validation import validate_plan
@@ -233,14 +236,30 @@ def test_brep_constraint_solver_and_backend_status(tmp_path):
         assert windows["ready_count"] == 0
 
 
-def test_brep_operation_reports_backend_unavailable_without_kernel(tmp_path):
+def test_brep_operation_reports_kernel_or_input_error(tmp_path):
     agent = EngineeringAgent({"tools": {}})
     step = tmp_path / "part.step"
     write_step(step, [(0, 0, 0), (1, 1, 1)])
     try:
         agent.execute_operation("brep.inspect_step", {"input_file": str(step)})
     except RuntimeError as exc:
-        assert "OPENCASCADE_BACKEND_UNAVAILABLE" in str(exc)
+        message = str(exc)
+        assert "OPENCASCADE_BACKEND_UNAVAILABLE" in message or "STEP_" in message
+
+
+def test_opencascade_brep_primitive_and_boolean_when_available(tmp_path):
+    backend = get_brep_backend()
+    if backend.name != "opencascade":
+        pytest.skip("OpenCascade binding is optional")
+    left = tmp_path / "left.step"
+    right = tmp_path / "right.step"
+    fused = tmp_path / "fused.step"
+    backend.create_primitive("box", {"length": 10, "width": 20, "height": 5}, left)
+    backend.create_primitive("box", {"length": 5, "width": 10, "height": 3}, right)
+    result = backend.boolean("fuse", left, right, fused)
+    assert result["inspection"]["valid"] is True
+    assert result["inspection"]["volume"] == pytest.approx(1000, rel=1e-6)
+    assert result["inspection"]["topology"]["solid"] == 1
 
 
 def test_dxf_operation_transform_is_transactional(tmp_path):

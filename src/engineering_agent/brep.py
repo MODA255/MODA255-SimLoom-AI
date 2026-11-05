@@ -147,7 +147,7 @@ class UnavailableBRepBackend(BRepBackend):
 
 
 class OpenCascadeBackend(BRepBackend):
-    """OpenCascade adapter supporting pythonocc-core or the newer OCP package."""
+    """OpenCascade adapter supporting pythonocc-core or cadquery-ocp's OCP package."""
 
     name = "opencascade"
 
@@ -158,15 +158,26 @@ class OpenCascadeBackend(BRepBackend):
         try:
             from OCP.BRepCheck import BRepCheck_Analyzer  # type: ignore
             from OCP.BRepAlgoAPI import BRepAlgoAPI_Common, BRepAlgoAPI_Cut, BRepAlgoAPI_Fuse  # type: ignore
-            from OCP.BRepBndLib import BRepBndLib  # type: ignore
-            from OCP.BRepGProp import brepgprop_SurfaceProperties, brepgprop_VolumeProperties  # type: ignore
+            from OCP import BRepBndLib as _BRepBndLibModule  # type: ignore
+            from OCP import BRepGProp as _BRepGPropModule  # type: ignore
             from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder  # type: ignore
             from OCP.Bnd import Bnd_Box  # type: ignore
             from OCP.GProp import GProp_GProps  # type: ignore
             from OCP.STEPControl import STEPControl_AsIs, STEPControl_Reader, STEPControl_Writer  # type: ignore
             from OCP.TopAbs import TopAbs_COMPSOLID, TopAbs_EDGE, TopAbs_FACE, TopAbs_SHELL, TopAbs_SOLID, TopAbs_VERTEX  # type: ignore
             from OCP.TopExp import TopExp_Explorer  # type: ignore
+            # cadquery-ocp 8.x exposes the global helpers as static methods on
+            # BRepGProp/BRepBndLib, while older OCP/pythonocc releases expose
+            # module-level functions. Keep one normalized adapter surface.
             self._api = locals()
+            gprop_class = getattr(_BRepGPropModule, "BRepGProp", None)
+            bnd_class = getattr(_BRepBndLibModule, "BRepBndLib", None)
+            self._api["brepgprop_SurfaceProperties"] = getattr(_BRepGPropModule, "brepgprop_SurfaceProperties", None) or getattr(gprop_class, "SurfaceProperties_s", None)
+            self._api["brepgprop_VolumeProperties"] = getattr(_BRepGPropModule, "brepgprop_VolumeProperties", None) or getattr(gprop_class, "VolumeProperties_s", None)
+            self._api["brepbndlib_Add"] = getattr(_BRepBndLibModule, "brepbndlib_Add", None) or getattr(bnd_class, "Add_s", None) or getattr(bnd_class, "Add", None)
+            self._api["BRepBndLib"] = bnd_class
+            if self._api["brepgprop_SurfaceProperties"] is None or self._api["brepgprop_VolumeProperties"] is None or self._api["brepbndlib_Add"] is None:
+                raise ImportError("unsupported OCP BRep helper API")
             return
         except ImportError:
             pass
@@ -192,7 +203,10 @@ class OpenCascadeBackend(BRepBackend):
         if int(status) != 1:
             raise RuntimeError(f"STEP_READ_FAILED:{status}")
         reader.TransferRoots()
-        return reader.OneShape()
+        shape = reader.OneShape()
+        if shape.IsNull():
+            raise RuntimeError("STEP_EMPTY_SHAPE")
+        return shape
 
     def _write(self, shape: Any, path: str | Path):
         writer = self._api["STEPControl_Writer"]()
@@ -222,13 +236,19 @@ class OpenCascadeBackend(BRepBackend):
 
     def _bbox(self, shape: Any) -> dict[str, dict[str, float]]:
         box = self._api["Bnd_Box"]()
-        if "BRepBndLib" in self._api:
+        if "BRepBndLib" in self._api and hasattr(self._api["BRepBndLib"], "Add"):
             self._api["BRepBndLib"].Add(shape, box)
         else:
             self._api["brepbndlib_Add"](shape, box)
-        values = box.Get()
-        minimum = values[:3]
-        maximum = values[3:]
+        # OCP 8.x binds ``Bnd_Box::Get`` to an opaque Limits return type;
+        # scalar accessors are available across both OCP and pythonocc.
+        try:
+            minimum = (box.GetXMin(), box.GetYMin(), box.GetZMin())
+            maximum = (box.GetXMax(), box.GetYMax(), box.GetZMax())
+        except (AttributeError, TypeError):
+            values = box.Get()
+            minimum = values[:3]
+            maximum = values[3:]
         return {axis: {"min": float(minimum[index]), "max": float(maximum[index])} for index, axis in enumerate(("x", "y", "z"))}
 
     def boolean(self, operation: str, left: str | Path, right: str | Path, output: str | Path) -> dict[str, Any]:
@@ -266,4 +286,4 @@ def get_brep_backend() -> BRepBackend:
 
 def brep_doctor() -> dict[str, Any]:
     backend = get_brep_backend()
-    return {"backend": backend.name, "available": backend.name == "opencascade", "platform": platform.system(), "pythonocc_or_ocp": backend.name == "opencascade", "message": "OpenCascade B-Rep operations available" if backend.name == "opencascade" else "Install pythonocc-core or OCP to enable true STEP B-Rep operations"}
+    return {"backend": backend.name, "available": backend.name == "opencascade", "platform": platform.system(), "pythonocc_or_ocp": backend.name == "opencascade", "message": "OpenCascade B-Rep operations available" if backend.name == "opencascade" else "Install cadquery-ocp or pythonocc-core to enable true STEP B-Rep operations"}
