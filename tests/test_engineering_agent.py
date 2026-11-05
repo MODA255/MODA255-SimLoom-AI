@@ -262,6 +262,28 @@ def test_opencascade_brep_primitive_and_boolean_when_available(tmp_path):
     assert result["inspection"]["topology"]["solid"] == 1
 
 
+def test_offline_vehicle_chain_commits_cross_tool_artifacts(tmp_path):
+    agent = EngineeringAgent({"tools": {}})
+    result = agent.run_offline_vehicle_chain(tmp_path, {"name": "offline_suspension"})
+    assert result["status"] == "committed"
+    assert result["simulation_backend"] == "offline-surrogate"
+    assert {stage["tool"] for stage in result["stages"]} == {"catia", "ansys", "adams", "vi-grade"}
+    assert all(item["passed"] for item in result["verdicts"])
+    assert Path(result["artifacts"]["offline/model.step"]).is_file()
+    assert Path(result["artifacts"]["offline/ansys_result.json"]).is_file()
+    assert Path(result["artifacts"]["offline/adams_motion.csv"]).is_file()
+    assert Path(result["artifacts"]["offline/vigrade_metrics.json"]).is_file()
+    assert Path(result["report"]).is_file()
+
+
+def test_mcp_exposes_offline_vehicle_chain(tmp_path):
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="full")
+    listed = server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    assert any(item["name"] == "engineering_offline_run" for item in listed["result"]["tools"])
+    called = server.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "engineering_offline_run", "arguments": {"project_dir": str(tmp_path)}}})
+    assert "offline_vehicle_chain" in called["result"]["content"][0]["text"]
+
+
 def test_dxf_operation_transform_is_transactional(tmp_path):
     source = tmp_path / "source.dxf"
     write_dxf(source, lines=[{"x1": 0, "y1": 0, "x2": 1, "y2": 0}])

@@ -13,6 +13,7 @@ from .brep import brep_doctor, get_brep_backend, solve_constraints
 from .models import AgentRequest, ExecutionPlan, PlanStep, RunReport, ToolResult
 from .llm_planner import AutonomousPlanner
 from .object_model import EngineeringProject
+from .offline_workflow import run_offline_vehicle_chain
 from .operations import OperationRegistry
 from .results import MetricRule, evaluate_metrics, parse_result_file
 from .script_gen import ModelSpec, ScriptGenerator
@@ -112,6 +113,10 @@ class EngineeringAgent:
         except Exception as exc:
             txn.fail(str(exc))
             raise
+
+    def run_offline_vehicle_chain(self, project_dir: str = ".", model_spec: dict[str, Any] | None = None, rules: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        """Run the deterministic four-tool fixture chain without vendor software."""
+        return run_offline_vehicle_chain(project_dir, model_spec, rules)
 
     def ingest(self, path: str, kind: str | None = None) -> dict[str, Any]:
         return self.reader.read(path, kind).to_dict()

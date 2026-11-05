@@ -112,6 +112,7 @@ class MCPServer:
             {"name": "engineering_plan", "description": "Create a validated four-tool execution plan", "inputSchema": {"type": "object", "required": ["prompt"], "properties": {"prompt": {"type": "string"}, "project_dir": {"type": "string"}}}},
             {"name": "engineering_run", "description": "Run a plan in dry-run or execution mode", "inputSchema": {"type": "object", "required": ["prompt"], "properties": {"prompt": {"type": "string"}, "project_dir": {"type": "string"}, "dry_run": {"type": "boolean"}}}},
             {"name": "engineering_generate", "description": "Generate vendor scripts and scenario files", "inputSchema": {"type": "object", "properties": {"project_dir": {"type": "string"}, "model_spec": {"type": "object"}}}},
+            {"name": "engineering_offline_run", "description": "Run the deterministic CATIA-to-VI-grade fixture chain without commercial software", "inputSchema": {"type": "object", "properties": {"project_dir": {"type": "string"}, "model_spec": {"type": "object"}, "rules": {"type": "array"}}}},
             {"name": "engineering_doctor", "description": "Inspect configured vendor backends and COM", "inputSchema": {"type": "object"}},
             {"name": "engineering_operations", "description": "List typed operations and schemas", "inputSchema": {"type": "object"}},
             {"name": "engineering_ingest", "description": "Read STEP/CSV/JSON into the canonical object model", "inputSchema": {"type": "object", "required": ["path"], "properties": {"path": {"type": "string"}, "kind": {"type": "string"}}}},
@@ -211,6 +212,8 @@ class MCPServer:
             return self.agent.run(arguments.get("prompt", ""), project_dir=arguments.get("project_dir", "."), dry_run=arguments.get("dry_run", True)).to_dict()
         if name == "engineering_generate":
             return self.agent.generate(arguments.get("project_dir", "."), arguments.get("model_spec") or {})
+        if name == "engineering_offline_run":
+            return self.agent.run_offline_vehicle_chain(arguments.get("project_dir", "."), arguments.get("model_spec") or {}, arguments.get("rules"))
         if name == "engineering_doctor":
             return {"tools": self.agent.doctor()}
         if name == "engineering_operations":

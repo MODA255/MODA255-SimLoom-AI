@@ -60,6 +60,24 @@ PYTHONPATH=src python -m engineering_agent.cli --project-dir ./demo generate --n
 
 模型参数由 `ModelSpec` 描述，可通过 Python API 传入 `wheelbase_mm`、悬架刚度、阻尼、载荷工况和材料。它让四个软件共享同一份输入，而不是各自维护互相漂移的参数。
 
+### 2.1 无商业软件的四软件闭环
+
+`offline-run` 把同一份 `ModelSpec` 依次送入 CATIA、Ansys、Adams、VI-grade
+的离线替身，生成本地 STEP 几何、Ansys 结构结果 JSON、Adams 运动 CSV 和
+VI-grade 指标 JSON：
+
+```bash
+PYTHONPATH=src python -m engineering_agent.cli \
+  --project-dir ./examples/offline_demo offline-run \
+  --model-spec '{"name":"offline_suspension"}'
+```
+
+该命令会把结构指标和车辆指标合并后交给独立规则验证器，并将报告、哈希和
+所有产物写入事务 staging，再一次性提交到 `artifacts/generated/`。离线替身
+用于验证跨软件对象、事务、版本和审计边界；它不等同于商业软件求解器，也不
+伪造 CATIA、Ansys、Adams 或 VI-grade 的真实结果。接入 Windows bridge 后，
+可以沿用同一报告和验证接口替换单个 stage。
+
 ### 3. Windows COM
 
 `WindowsAutomation` 在 Windows + pywin32 环境下提供 COM Dispatch/invoke；在 macOS/Linux 上会返回清晰的环境诊断。复杂的软件操作建议放在 Windows bridge 中，由 bridge 调用 COM、厂商脚本或命令行。

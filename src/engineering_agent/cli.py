@@ -45,6 +45,9 @@ def _parser() -> argparse.ArgumentParser:
     brep_boolean.add_argument("output_file")
     generate = sub.add_parser("generate", help="生成四个软件的模型规格和脚本")
     generate.add_argument("--name", default="vehicle_model")
+    offline = sub.add_parser("offline-run", help="运行无需商业软件的四软件离线工程链")
+    offline.add_argument("--model-spec", default="{}", help="JSON model spec overrides")
+    offline.add_argument("--rules", default="", help="Optional JSON metric rules file")
     evaluate = sub.add_parser("evaluate", help="解析结果文件并判断工程指标")
     evaluate.add_argument("result_file")
     evaluate.add_argument("rules_file", help="JSON 数组: name/path/operator/target/unit")
@@ -143,6 +146,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "generate":
         print(json.dumps(agent.generate(args.project_dir, {"name": args.name}), ensure_ascii=False, indent=2))
         return 0
+    if args.command == "offline-run":
+        rules = json.loads(Path(args.rules).read_text(encoding="utf-8")) if args.rules else None
+        result = agent.run_offline_vehicle_chain(args.project_dir, json.loads(args.model_spec), rules)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if all(item["passed"] for item in result["verdicts"]) else 2
     if args.command == "evaluate":
         rules = [MetricRule(**item) for item in json.loads(Path(args.rules_file).read_text(encoding="utf-8"))]
         verdicts = agent.evaluate(args.result_file, rules)

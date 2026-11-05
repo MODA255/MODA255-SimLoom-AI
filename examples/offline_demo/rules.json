@@ -1,0 +1,6 @@
+[
+  {"name": "max_stress", "path": "metrics.max_stress_mpa", "operator": "<=", "target": 250.0, "unit": "MPa"},
+  {"name": "max_displacement", "path": "metrics.max_displacement_mm", "operator": "<=", "target": 5.0, "unit": "mm"},
+  {"name": "mesh_quality", "path": "metrics.mesh_quality", "operator": ">=", "target": 0.85, "unit": "ratio"},
+  {"name": "understeer_gradient", "path": "metrics.understeer_gradient_deg_per_g", "operator": "<=", "target": 5.0, "unit": "deg/g"}
+]

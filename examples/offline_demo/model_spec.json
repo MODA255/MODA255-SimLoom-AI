@@ -1,0 +1,17 @@
+{
+  "name": "offline_suspension",
+  "part_type": "suspension",
+  "parameters": {
+    "wheelbase_mm": 2800,
+    "track_front_mm": 1600,
+    "track_rear_mm": 1580,
+    "chassis_height_mm": 120,
+    "simulation_end_time_s": 2.0,
+    "simulation_step_s": 0.05
+  },
+  "material": "steel",
+  "load_cases": [
+    {"name": "vertical_bump", "force_n": 5000},
+    {"name": "braking", "force_n": 3500}
+  ]
+}
