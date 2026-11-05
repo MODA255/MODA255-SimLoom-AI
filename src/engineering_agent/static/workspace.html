@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>SimLoom AI · 工程工作台</title>
+  <link rel="stylesheet" href="/static/workspace.css">
+  <script src="/static/workspace.js" defer></script>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand"><div class="brand-mark">✦</div><span>SimLoom AI</span></div>
+    <nav class="nav" aria-label="主导航">
+      <button class="active" data-panel="workspace" title="工程工作台"><span class="nav-icon">⌂</span><span>工程工作台</span></button>
+      <button data-panel="projects" title="项目历史"><span class="nav-icon">▣</span><span>项目历史</span></button>
+      <button data-panel="assets" title="模型与结果"><span class="nav-icon">◇</span><span>模型与结果</span></button>
+      <button data-panel="settings" title="环境检查"><span class="nav-icon">⚙</span><span>环境检查</span></button>
+    </nav>
+    <div class="side-note"><strong>本地工程空间</strong>项目和结果保存在本机。离线演示使用确定性替代数据，帮助你熟悉完整流程。</div>
+  </aside>
+  <main class="main">
+    <header class="topbar">
+      <div><div class="eyebrow">Engineering workspace</div><h1>让每一次工程探索都有据可循</h1></div>
+      <div class="health"><span id="healthText">正在连接…</span><span class="project-chip" id="currentProject">尚未选择项目</span><button class="btn btn-blue" data-action="new-project">＋ 新建项目</button></div>
+    </header>
+    <section class="hero">
+      <div class="hero-card"><div class="eyebrow">CATIA · ANSYS · ADAMS · VI-GRADE</div><h2>从工程想法，到看得见的模型与结果。</h2><p>创建项目、制定计划、体验离线流程。所有输入、产物和验证记录都在一个地方。</p><div class="hero-actions"><button class="btn btn-primary" data-action="new-project">创建第一个项目 →</button><button class="btn btn-ghost" data-action="demo">体验四软件演示</button></div></div>
+      <div class="hero-stats"><div class="stat"><span>运行模式</span><strong>离线体验</strong></div><div class="stat"><span>计划阶段</span><strong id="stageValue">—</strong></div><div class="stat"><span>指标检查</span><strong id="verdictValue">待运行</strong></div><div class="stat"><span>项目任务</span><strong id="taskValue">0</strong></div></div>
+    </section>
+    <section id="workspace" class="layout panel">
+      <div class="card"><div class="card-head"><div><h3>描述工程目标</h3><p id="projectHint">先创建项目，或从历史中继续。</p></div><span class="pill">01 · 计划</span></div>
+        <div class="templates" id="templates"></div>
+        <div class="field"><label for="prompt">你希望完成什么？</label><textarea id="prompt" placeholder="例如：为悬架建立模型，检查载荷下的应力和位移，再分析整车操稳。"></textarea></div>
+        <div class="action-row"><button class="btn btn-blue" id="planButton">生成工程计划</button><button class="btn btn-light" id="queueButton">保存排练任务</button><button class="btn btn-light" id="offlineButton">运行离线闭环</button></div>
+        <p class="support-note">模板用于规划。离线闭环始终演示四个阶段，采用项目尺寸和载荷参数；不执行商业软件求解。</p>
+        <p class="error run-error" id="runError" role="alert"></p>
+      </div>
+      <div class="card"><div class="card-head"><div><h3>工程流程</h3><p id="planHint">生成计划后显示执行顺序。</p></div><span class="pill" id="planStatus">待规划</span></div><div class="workflow" id="workflow"><div class="empty">还没有计划</div></div>
+        <div class="card-head"><div><h3>指标检查</h3><p id="resultHint">运行后显示数值、阈值与判定。</p></div></div><div class="result-grid" id="results"><div class="empty">还没有运行结果</div></div>
+        <button class="btn btn-light" id="viewResults" hidden>查看模型与结果 →</button>
+      </div>
+      <div class="card" style="grid-column:1/-1"><div class="card-head"><div><h3>任务历史</h3><p>离线运行和计划排练都会保留记录。排练只生成输入和检查流程。</p></div><button class="btn btn-light" id="refreshTasks">刷新</button></div><div id="tasks" class="table-wrap"></div></div>
+      <details class="card output-details"><summary>技术详情 · 计划、报告和诊断</summary><pre class="json" id="output">等待操作…</pre></details>
+    </section>
+    <section id="projects" class="panel" hidden><div class="card"><div class="card-head"><div><h3>继续你的项目</h3><p>名称、模板、参数和目录会持久保存。</p></div><button class="btn btn-blue" data-action="new-project">＋ 新建项目</button></div><div class="project-cards" id="projectsList"></div></div></section>
+    <section id="assets" class="panel" hidden><div class="asset-layout">
+      <div class="card"><div class="card-head"><div><h3>模型与结果</h3><p id="assetProject">选择项目后浏览产物。</p></div><button class="btn btn-light" id="refreshAssets">刷新</button></div><div class="asset-list" id="assetsList"></div></div>
+      <div class="card"><div class="preview-meta"><div class="eyebrow">Asset preview</div><h3 id="previewName">选择一个工程文件</h3><p class="muted" id="previewHint">STEP / OBJ 模型 · CSV 曲线 · JSON 指标</p></div><div class="file-actions"><a id="downloadAsset" class="btn btn-light btn-link" hidden>下载原始文件</a></div><div id="preview"><div class="empty">预览将在这里显示。</div></div><details><summary>文件信息与数据</summary><pre class="json" id="assetDetails">—</pre></details></div>
+    </div></section>
+    <section id="settings" class="panel" hidden><div class="card"><div class="card-head"><div><h3>环境检查</h3><p>离线体验不需要商业软件。真实执行需另行配置 Windows 工作站。</p></div><button class="btn btn-light" id="refreshDoctor">重新检测</button></div><div class="status-list" id="doctor"></div></div></section>
+  </main>
+</div>
+<dialog class="wizard" id="projectWizard" aria-labelledby="wizardTitle">
+  <form id="projectForm"><div class="eyebrow" id="wizardStep">01 / 02 · 项目</div><h2 id="wizardTitle">开始一次工程探索</h2><p class="muted">给项目命名，选择起点，其余交给工作台。</p>
+    <div id="wizardPage1"><div class="field"><label for="projectName">项目名称</label><input id="projectName" maxlength="100" required placeholder="例如：前悬架方案 A"></div><div class="field"><label for="projectTemplate">项目模板</label><select id="projectTemplate"></select></div><details class="field"><summary>高级：指定项目文件夹</summary><input id="projectDirectory" aria-label="项目文件夹" placeholder="留空，自动创建独立项目目录"><span class="muted" id="defaultRoot"></span></details></div>
+    <div id="wizardPage2" hidden><p class="muted">这些参数会保存到项目，并用于离线几何和结构示例。</p><div class="field-pair">
+      <div class="field"><label for="wheelbase">长度 / 轴距（mm）</label><input id="wheelbase" type="number" min="0.001" max="1000000" step="any" value="2800" required></div>
+      <div class="field"><label for="track">宽度 / 前轮距（mm）</label><input id="track" type="number" min="0.001" max="1000000" step="any" value="1600" required></div>
+      <div class="field"><label for="height">几何高度（mm）</label><input id="height" type="number" min="0.001" max="1000000" step="any" value="120" required></div>
+      <div class="field"><label for="force">载荷（N）</label><input id="force" type="number" min="0.001" max="1000000" step="any" value="8500" required></div>
+    </div></div><p id="wizardError" class="error" role="alert"></p><div class="wizard-actions"><button type="button" class="btn btn-light" id="cancelWizard">取消</button><button type="button" class="btn btn-light" id="backWizard" hidden>上一步</button><button type="button" class="btn btn-blue" id="nextWizard">下一步 →</button><button type="submit" class="btn btn-blue" id="createProject" hidden>创建并打开项目</button></div>
+  </form>
+</dialog>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

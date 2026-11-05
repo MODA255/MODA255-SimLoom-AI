@@ -31,17 +31,33 @@ class TaskQueue:
             CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, project_id TEXT, prompt TEXT NOT NULL, project_dir TEXT NOT NULL, status TEXT NOT NULL, result_json TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS task_events (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, event TEXT NOT NULL, payload_json TEXT, created_at TEXT NOT NULL);
             """)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(projects)")}
+            for name, declaration in (("project_dir", "TEXT"), ("metadata_json", "TEXT")):
+                if name not in columns:
+                    db.execute(f"ALTER TABLE projects ADD COLUMN {name} {declaration}")
 
-    def create_project(self, name: str) -> str:
+    def create_project(self, name: str, project_dir: str | None = None, metadata: dict[str, Any] | None = None) -> str:
         project_id = str(uuid.uuid4())
         with self._connect() as db:
-            db.execute("INSERT INTO projects VALUES (?, ?, ?)", (project_id, name, _now()))
+            db.execute("INSERT INTO projects(id,name,created_at,project_dir,metadata_json) VALUES (?, ?, ?, ?, ?)",
+                       (project_id, name, _now(), project_dir, json.dumps(metadata or {}, ensure_ascii=False)))
         return project_id
 
     def list_projects(self, limit: int = 50) -> list[dict[str, Any]]:
         with self._connect() as db:
             rows = db.execute("SELECT * FROM projects ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
-        return [dict(row) for row in rows]
+        return [self._project(row) for row in rows]
+
+    def get_project(self, project_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+        return self._project(row) if row else None
+
+    @staticmethod
+    def _project(row) -> dict[str, Any]:
+        value = dict(row)
+        value["metadata"] = json.loads(value.pop("metadata_json") or "{}")
+        return value
 
     def submit(self, prompt: str, project_dir: str = ".", project_id: str | None = None) -> str:
         task_id = str(uuid.uuid4())
@@ -71,6 +87,15 @@ class TaskQueue:
         with self._connect() as db:
             row = db.execute("SELECT * FROM tasks WHERE status='queued' ORDER BY created_at LIMIT 1").fetchone()
         return self._row(row)
+
+    def claim(self, task_id: str) -> bool:
+        """Atomically transition a queued task so two clients cannot execute it."""
+        with self._lock, self._connect() as db:
+            now = _now()
+            changed = db.execute("UPDATE tasks SET status='running',updated_at=? WHERE id=? AND status='queued'", (now, task_id)).rowcount
+            if changed:
+                db.execute("INSERT INTO task_events(task_id,event,payload_json,created_at) VALUES (?, 'running', '{}', ?)", (task_id, now))
+            return bool(changed)
 
     def events(self, task_id: str) -> list[dict[str, Any]]:
         with self._connect() as db:
