@@ -121,6 +121,8 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
                 return self._send(200, {"templates": TEMPLATES, "schemaVersion": WEB_SCHEMA_VERSION})
             if parsed.path == "/api/doctor":
                 return self._send(200, agent.doctor())
+            if parsed.path == "/api/capabilities":
+                return self._send(200, agent.capabilities())
             if parsed.path == "/api/tasks":
                 tasks = queue.list()
                 if query.get("project_id"):

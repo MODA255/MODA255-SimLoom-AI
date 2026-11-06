@@ -9,6 +9,8 @@
 
 [快速开始](#快速开始) · [离线四软件闭环](#离线四软件闭环) · [能力地图](#能力地图) · [项目定位](#项目定位)
 
+工程化路线见 [`docs/PRODUCT_ENGINEERING_ROADMAP.md`](docs/PRODUCT_ENGINEERING_ROADMAP.md)。
+
 </div>
 
 <div align="center">
@@ -24,7 +26,7 @@ SimLoom AI 是一个离线优先的工程 Agent 原型，面向车辆、底盘�
 机械零件研发。它把四个软件之间容易丢失的上下文统一起来：同一份工程对象、
 同一套事务边界、同一套验证规则、同一条版本与审计链。
 
-项目地址：[github.com/MODA255/SimLoom-AI](https://github.com/MODA255/SimLoom-AI)
+项目地址：[github.com/MODA255/MODA255-SimLoom-AI](https://github.com/MODA255/MODA255-SimLoom-AI)
 
 ## 项目定位
 
@@ -116,8 +118,8 @@ MCP ─┘                                      └──> transaction + audit
 ### 1. 安装
 
 ```bash
-git clone https://github.com/MODA255/SimLoom-AI.git
-cd SimLoom-AI
+git clone https://github.com/MODA255/MODA255-SimLoom-AI.git
+cd MODA255-SimLoom-AI
 
 ./install.sh
 . .venv/bin/activate
@@ -280,6 +282,7 @@ Ansys → Adams → VI-grade 流程画布，右侧区域展示验证指标、任
 | `GET` | `/api/asset-view` | 获取 SVG/WebGL 资产预览 |
 | `GET` | `/api/timeline` | 获取版本时间线 |
 | `GET` | `/api/doctor` | 检查工具配置 |
+| `GET` | `/api/capabilities` | 返回离线、排练、Windows 连接和真实执行的能力矩阵 |
 
 工作台也提供 `GET /api/templates` 和 `POST /api/offline-run`，方便桌面壳或其他
 前端复用模板与离线执行能力。
@@ -389,12 +392,12 @@ begin → lock → stage → checkpoint → validate → commit
 在项目根目录运行：
 
 ```bash
-PYTHONPATH=src ./.venv/bin/python -m pytest -q
+PYTHONPATH=src python -m pytest -q
 ```
 
-当前本地全量回归结果：**423 passed**。测试覆盖规划、脚本生成、事务恢复、格式读写、
-DXF 语义实体、OBJ 网格、STEP B-Rep、MCP、Web API、版本 diff、Windows 探针和离线
-四软件闭环。
+测试覆盖规划、脚本生成、事务恢复、格式读写、DXF 语义实体、OBJ 网格、STEP B-Rep、
+MCP、Web API、版本 diff、Windows 探针和离线四软件闭环。CI 会在 Python 3.10、3.11
+和 3.12 上执行完整回归；本地运行前请先执行 `./install.sh`。
 
 ## 项目结构
 
@@ -408,6 +411,7 @@ SimLoom-AI/
 ├── Start SimLoom AI.cmd     # Windows 启动入口
 ├── install-windows.cmd      # Windows 安装入口
 ├── ENGINEERING_AGENT.md     # 详细工程能力说明
+├── docs/                    # 产品和工程路线图
 └── install.sh               # 本地安装脚本
 ```
 

@@ -170,7 +170,8 @@ async function previewAsset(path) {
 }
 async function refreshDoctor() {
   $('#doctor').textContent='正在检测本地环境…';
-  const items=await request('/api/doctor');
+  const [capabilities,items]=await Promise.all([request('/api/capabilities'),request('/api/doctor')]);
+  $('#capabilities').innerHTML=(capabilities.modes||[]).map(mode=>`<div class="status-card mode-card"><strong>${escapeHTML(mode.label)}</strong><p class="muted">${escapeHTML(mode.reason)}</p><span class="pill ${mode.ready?'green':'amber'}">${mode.ready?'可用':'未就绪'}</span></div>`).join('');
   $('#doctor').innerHTML=items.map(item=>`<div class="status-card"><strong>${escapeHTML(item.tool||item.name||'环境')}</strong><p class="muted">${escapeHTML(item.message||item.reason||item.status||'查看详情')}</p><span class="pill ${item.available?'green':'amber'}">${item.available?'可用':'未就绪 / 需配置'}</span><details><summary>诊断详情</summary><pre class="json">${escapeHTML(JSON.stringify(item,null,2))}</pre></details></div>`).join('');
 }
 document.addEventListener('click',event=>{

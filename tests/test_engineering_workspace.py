@@ -99,6 +99,17 @@ def test_api_errors_do_not_disconnect_clients(service):
     assert call("/api/health")[1] == {"ok": True}
 
 
+def test_capabilities_explain_offline_and_connected_modes(service):
+    call, _, _ = service
+    status, capabilities = call("/api/capabilities")
+    assert status == 200
+    assert capabilities["schema_version"] == "simloom-ai/capabilities/v1"
+    modes = {item["id"]: item for item in capabilities["modes"]}
+    assert modes["offline"]["ready"] is True
+    assert modes["rehearsal"]["ready"] is True
+    assert "catia" in capabilities["tools"]
+
+
 def test_offline_failure_is_recorded_and_retry_works(service, monkeypatch):
     call, queue, agent = service
     _, project = call("/api/projects", {"name": "failure-demo"})

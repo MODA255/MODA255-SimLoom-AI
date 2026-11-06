@@ -3,9 +3,12 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "daily-test-orchestrator"
+name = "simloom-ai"
 version = "0.1.0"
-description = "MatrixGen daily regression test orchestrator"
+description = "Offline-first AI engineering agent runtime for CAD and vehicle simulation workflows"
+readme = "README.md"
+authors = [{ name = "MODA255" }]
+keywords = ["engineering", "CAD", "simulation", "CATIA", "Ansys", "Adams", "VI-grade", "MCP", "AI"]
 requires-python = ">=3.10"
 dependencies = [
   "pydantic>=2",
@@ -30,6 +33,11 @@ desktop = [
 orchestrator = "orchestrator.cli:main"
 engineering-agent = "engineering_agent.cli:main"
 simloom-ai = "engineering_agent.desktop:main"
+
+[project.urls]
+Homepage = "https://github.com/MODA255/MODA255-SimLoom-AI"
+Repository = "https://github.com/MODA255/MODA255-SimLoom-AI"
+Issues = "https://github.com/MODA255/MODA255-SimLoom-AI/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

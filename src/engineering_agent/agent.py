@@ -272,6 +272,32 @@ class EngineeringAgent:
     def doctor(self) -> list[dict[str, Any]]:
         return [self.adapters[name].doctor() for name in self.adapters] + [{"tool": "windows-com", **self.windows.doctor()}, {"tool": "windows-backends", **self.windows.validate_backends(self.config.get("tools", {}))}, {"tool": "step-brep", **brep_doctor()}]
 
+    def capabilities(self) -> dict[str, Any]:
+        """Return a user-facing readiness matrix without probing vendor solves."""
+        diagnostics = self.doctor()
+        by_tool = {item.get("tool"): item for item in diagnostics if item.get("tool")}
+        windows = by_tool.get("windows-com", {})
+        backends = by_tool.get("windows-backends", {})
+        brep = by_tool.get("step-brep", {})
+        llm = self.config.get("llm", {})
+        connected = bool(windows.get("windows") and windows.get("pywin32"))
+        executable_ready = int(backends.get("configured_count", 0)) == 4
+        return {
+            "schema_version": "simloom-ai/capabilities/v1",
+            "modes": [
+                {"id": "offline", "ready": True, "label": "离线体验", "reason": "不需要商业软件"},
+                {"id": "rehearsal", "ready": True, "label": "排练模式", "reason": "生成脚本并验证计划，不启动外部软件"},
+                {"id": "connected", "ready": connected, "label": "Windows 连接", "reason": "需要 Windows 和 pywin32"},
+                {"id": "execute", "ready": executable_ready and connected, "label": "真实执行", "reason": "需要四个软件的 worker 或可执行文件"},
+            ],
+            "components": {
+                "llm": {"enabled": bool(llm.get("enabled")), "provider": llm.get("provider", "deterministic")},
+                "step_brep": {"available": bool(brep.get("available")), "backend": brep.get("backend", brep.get("name", "unavailable"))},
+                "windows": {"available": connected, "platform": windows.get("platform")},
+            },
+            "tools": {name: by_tool.get(name, {}) for name in ("catia", "ansys", "adams", "vi-grade")},
+        }
+
     def validate_windows_backends(self, *, smoke: bool = False) -> dict[str, Any]:
         return self.windows.validate_backends(self.config.get("tools", {}), smoke=smoke)
 
