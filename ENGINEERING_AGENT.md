@@ -103,6 +103,22 @@ PYTHONPATH=src python -m engineering_agent.cli serve --port 8787
 `/api/templates`、`/api/offline-run`、`/api/artifacts`、`/api/asset-view`、
 `/api/timeline`、`/api/doctor` 和 `/api/health`。
 
+桌面/浏览器统一入口：
+
+```bash
+PYTHONPATH=src python -m engineering_agent.cli desktop --mode browser
+PYTHONPATH=src python -m engineering_agent.cli desktop --mode native
+```
+
+`native` 模式使用可选的 `pywebview`；没有安装时，`auto` 会自动回退到浏览器。工作台
+项目向导会把模板、模型参数、规则和项目目录保存为 `simloom.project.json`，SQLite
+只保存项目索引、任务状态和事件，因此应用重启后仍能打开同一个工程。
+
+“模型与结果”页面调用 `/api/asset-view`：STEP 在 OpenCascade 可用时先对实际 B-Rep
+面进行三角化，展示自动归一化的交互式网格；OBJ 使用相同的 WebGL viewer，CSV 显示
+数值曲线，JSON 结果显示指标图。预览位于 sandboxed iframe，原始文件通过 `/api/download`
+下载。
+
 ### 6. 大模型自主规划
 
 配置中设置 `llm.enabled=true` 后，Agent 会请求 OpenAI 兼容的 `/chat/completions` 接口，并对返回的工具白名单、步骤 ID、依赖关系进行校验。模型服务不可用或返回非法计划时，自动回退到确定性规划器。

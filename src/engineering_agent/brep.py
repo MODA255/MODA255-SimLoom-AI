@@ -129,6 +129,9 @@ class BRepBackend:
     def create_primitive(self, primitive: str, parameters: dict[str, Any], output: str | Path) -> dict[str, Any]:
         raise NotImplementedError
 
+    def tessellate_step(self, path: str | Path, deflection: float = 0.5) -> dict[str, Any]:
+        raise BRepUnavailable("OPENCASCADE_BACKEND_UNAVAILABLE")
+
 
 class UnavailableBRepBackend(BRepBackend):
     name = "unavailable"
@@ -250,6 +253,54 @@ class OpenCascadeBackend(BRepBackend):
             minimum = values[:3]
             maximum = values[3:]
         return {axis: {"min": float(minimum[index]), "max": float(maximum[index])} for index, axis in enumerate(("x", "y", "z"))}
+
+    def tessellate_step(self, path: str | Path, deflection: float = 0.5) -> dict[str, Any]:
+        """Triangulate actual B-Rep faces, applying face locations and orientation."""
+        if not math.isfinite(deflection) or deflection <= 0:
+            raise ValueError("INVALID_MESH_DEFLECTION")
+        if self._api["STEPControl_Reader"].__module__.startswith("OCP"):
+            from OCP.BRep import BRep_Tool
+            from OCP.BRepMesh import BRepMesh_IncrementalMesh
+            from OCP.TopLoc import TopLoc_Location
+            from OCP.TopoDS import TopoDS
+            from OCP.TopAbs import TopAbs_REVERSED
+            cast_face = getattr(TopoDS, "Face_s", None) or TopoDS.Face
+            triangulation = getattr(BRep_Tool, "Triangulation_s", None) or BRep_Tool.Triangulation
+        else:
+            from OCC.Core.BRep import BRep_Tool
+            from OCC.Core.BRepMesh import BRepMesh_IncrementalMesh
+            from OCC.Core.TopLoc import TopLoc_Location
+            from OCC.Core.TopoDS import topods
+            from OCC.Core.TopAbs import TopAbs_REVERSED
+            cast_face, triangulation = topods.Face, BRep_Tool.Triangulation
+        shape = self._read(path)
+        mesh = BRepMesh_IncrementalMesh(shape, deflection, False, 0.35, False)
+        if not mesh.IsDone():
+            raise RuntimeError("STEP_TESSELLATION_FAILED")
+        vertices, faces = [], []
+        explorer = self._api["TopExp_Explorer"](shape, self._api["TopAbs_FACE"])
+        while explorer.More():
+            face = cast_face(explorer.Current())
+            location = TopLoc_Location()
+            triangles = triangulation(face, location)
+            if triangles:
+                if len(faces) + triangles.NbTriangles() > 200_000 or len(vertices) + triangles.NbNodes() > 600_000:
+                    raise ValueError("模型超过预览网格上限，请先简化模型")
+                offset = len(vertices)
+                for i in range(1, triangles.NbNodes() + 1):
+                    point = triangles.Node(i).Transformed(location.Transformation())
+                    vertices.append({"x": point.X(), "y": point.Y(), "z": point.Z()})
+                for i in range(1, triangles.NbTriangles() + 1):
+                    indices = [offset + n - 1 for n in triangles.Triangle(i).Get()]
+                    if face.Orientation() == TopAbs_REVERSED:
+                        indices.reverse()
+                    faces.append(indices)
+            explorer.Next()
+        if not faces:
+            raise ValueError("STEP 文件没有可预览的曲面")
+        return {"format": "STEP", "backend": self.name, "vertices": vertices, "faces": faces,
+                "vertex_count": len(vertices), "triangle_count": len(faces), "bbox": self._bbox(shape),
+                "mesh_purpose": "display", "deflection": deflection}
 
     def boolean(self, operation: str, left: str | Path, right: str | Path, output: str | Path) -> dict[str, Any]:
         left_shape, right_shape = self._read(left), self._read(right)

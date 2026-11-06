@@ -55,6 +55,10 @@ def _parser() -> argparse.ArgumentParser:
     serve_cmd.add_argument("--host", default="127.0.0.1")
     serve_cmd.add_argument("--port", type=int, default=8787)
     serve_cmd.add_argument("--db", default="engineering-agent.db")
+    desktop = sub.add_parser("desktop", help="启动本地工作台；可选独立桌面窗口")
+    desktop.add_argument("--mode", choices=["auto", "browser", "native"], default="auto")
+    desktop.add_argument("--data-dir")
+    desktop.add_argument("--port", type=int, default=0)
     enqueue = sub.add_parser("enqueue", help="将任务写入 SQLite 队列")
     enqueue.add_argument("prompt")
     enqueue.add_argument("--db", default="engineering-agent.db")
@@ -98,6 +102,9 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     agent = EngineeringAgent(EngineeringAgent.load_config(args.config))
+    if args.command == "desktop":
+        from .desktop import launch
+        return launch(agent, data_dir=args.data_dir, mode=args.mode, port=args.port)
     if args.command == "doctor":
         print(json.dumps(agent.doctor(), ensure_ascii=False, indent=2))
         return 0

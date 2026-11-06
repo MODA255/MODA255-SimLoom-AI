@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import json
+import csv
+import math
+import os
+from html import escape
 from pathlib import Path
 from typing import Any
 
 from .ingest import ArtifactReader
+from .brep import get_brep_backend
 
 
 def artifact_listing(root: str | Path, limit: int = 500) -> list[dict[str, Any]]:
@@ -12,8 +17,15 @@ def artifact_listing(root: str | Path, limit: int = 500) -> list[dict[str, Any]]
     if not root.exists():
         return []
     items = []
-    for path in sorted(item for item in root.rglob("*") if item.is_file())[:limit]:
-        items.append({"path": str(path.relative_to(root)), "bytes": path.stat().st_size, "suffix": path.suffix.lower()})
+    for directory, folders, files in os.walk(root, followlinks=False):
+        folders[:] = sorted(name for name in folders if not name.startswith(".") and name not in {"runs", "__pycache__", "node_modules"} and not (Path(directory) / name).is_symlink())
+        for name in sorted(files):
+            path = Path(directory) / name
+            if name.startswith(".") or path.suffix in {".db", ".db-wal", ".db-shm"} or path.is_symlink():
+                continue
+            items.append({"path": path.relative_to(root).as_posix(), "bytes": path.stat().st_size, "suffix": path.suffix.lower()})
+            if len(items) >= limit:
+                return items
     return items
 
 
@@ -36,33 +48,110 @@ def asset_view(root: str | Path, relative: str) -> dict[str, Any]:
         raise ValueError("ARTIFACT_PATH_OUTSIDE_ROOT")
     asset = ArtifactReader().read(path)
     payload = asset.to_dict()
-    return {"asset": payload, "svg": render_asset_svg(payload), "viewer": render_interactive_viewer(payload)}
+    note = "工程数据预览"
+    if path.suffix.lower() in {".step", ".stp"}:
+        backend = get_brep_backend()
+        if backend.name == "opencascade":
+            try:
+                payload["geometry"].update(backend.tessellate_step(path))
+                note = "STEP 曲面网格 · 拖动旋转、滚轮缩放、双击重置；此网格仅用于显示。"
+            except (RuntimeError, ValueError) as exc:
+                note = f"STEP 曲面预览失败，显示包围盒：{exc}"
+        else:
+            note = "未安装 OpenCascade，仅显示 STEP 包围盒，不代表完整曲面。"
+    if path.suffix.lower() == ".json":
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        geometry = raw.get("geometry") if isinstance(raw, dict) else None
+        if isinstance(geometry, dict) and geometry.get("vertices") and geometry.get("faces"):
+            payload["geometry"] = geometry
+            note = "JSON 网格 / 顶点结果场 · 拖动旋转、滚轮缩放。"
+    svg = render_csv_svg(path) if path.suffix.lower() == ".csv" else render_asset_svg(payload)
+    return {"asset": payload, "svg": svg, "viewer": render_interactive_viewer(payload), "preview_note": note}
+
+
+def render_csv_svg(path: Path) -> str:
+    """Plot numeric series against the first column, with independent labeled scales."""
+    with path.open(newline="", encoding="utf-8-sig") as handle:
+        reader = csv.DictReader(handle)
+        columns = reader.fieldnames or []
+        rows = []
+        for row in reader:
+            if len(rows) >= 100_000:
+                raise ValueError("CSV 超过 100,000 行预览上限，请先抽样")
+            rows.append(row)
+    if len(columns) < 2 or not rows:
+        return "<svg xmlns='http://www.w3.org/2000/svg'><text x='20' y='40'>CSV 需要至少两列数值数据</text></svg>"
+    plots = []
+    for column in columns[1:5]:
+        points = []
+        for row in rows:
+            try:
+                x, y = float(row[columns[0]]), float(row[column])
+                if math.isfinite(x) and math.isfinite(y):
+                    points.append((x, y))
+            except (TypeError, ValueError):
+                continue
+        if not points:
+            continue
+        xmin, xmax = min(x for x, _ in points), max(x for x, _ in points)
+        ymin, ymax = min(y for _, y in points), max(y for _, y in points)
+        offset = len(plots) * 155
+        stride = max(1, math.ceil(len(points)/1800))
+        sampled = points[::stride]
+        if sampled[-1] != points[-1]:
+            sampled.append(points[-1])
+        line = " ".join(f"{80+(x-xmin)/(xmax-xmin or 1)*570:.2f},{offset+112-(y-ymin)/(ymax-ymin or 1)*75:.2f}" for x, y in sampled)
+        plots.append(f"<text x='80' y='{offset+22}' font-size='13'>{escape(column)}</text><text x='8' y='{offset+42}' font-size='10'>{ymax:.4g}</text><text x='8' y='{offset+112}' font-size='10'>{ymin:.4g}</text><path d='M80 {offset+35}V{offset+116}H650' fill='none' stroke='#c7d2e5'/><polyline points='{line}' fill='none' stroke='#3d62ff' stroke-width='2'/><text x='80' y='{offset+136}' font-size='10'>{xmin:.4g}</text><text x='610' y='{offset+136}' font-size='10'>{xmax:.4g}</text>")
+    height = max(160, 155*len(plots)+30)
+    return f"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 710 {height}'><rect width='100%' height='100%' fill='#f7f9fc'/>" + "".join(plots) + f"<text x='80' y='{height-10}' font-size='11'>横轴：{escape(columns[0])} · {len(rows)} 行 · 各曲线独立纵轴</text></svg>"
+
+
+def mesh_payload(asset: dict[str, Any]) -> dict[str, Any]:
+    """Prepare a centered, finite mesh with explicit scalar normalization."""
+    geometry = asset.get("geometry", {})
+    vertices, faces = geometry.get("vertices") or [], geometry.get("faces") or []
+    if not vertices or not faces:
+        return {}
+    if len(vertices) > 600_000:
+        raise ValueError("模型超过预览顶点上限")
+    points = [[float(item.get(axis, 0)) for axis in ("x", "y", "z")] for item in vertices]
+    if not all(math.isfinite(value) for point in points for value in point):
+        raise ValueError("模型包含非有限坐标")
+    lows = [min(p[i] for p in points) for i in range(3)]
+    highs = [max(p[i] for p in points) for i in range(3)]
+    center = [(lo + hi) / 2 for lo, hi in zip(lows, highs)]
+    radius = math.sqrt(sum(((hi-lo)/2)**2 for lo, hi in zip(lows, highs))) or 1.0
+    normalized = [[(point[i]-center[i]) * .8/radius for i in range(3)] for point in points]
+    indices = []
+    for face in faces:
+        if any(not isinstance(i, int) or i < 0 or i >= len(points) for i in face):
+            raise ValueError("模型面索引越界")
+        for j in range(1, len(face)-1):
+            indices.extend((face[0], face[j], face[j+1]))
+            if len(indices) > 600_000:
+                raise ValueError("模型超过预览三角形上限")
+    values = geometry.get("scalars") or geometry.get("point_values") or []
+    scalar_range = None
+    colors = [[.36, .62, .96] for _ in points]
+    if values:
+        scalars = [float(v) for v in values]
+        if len(scalars) != len(points) or not all(math.isfinite(v) for v in scalars):
+            raise ValueError("结果场必须为每个顶点提供一个有限数值")
+        low, high = min(scalars), max(scalars)
+        scalar_range = [low, high]
+        colors = []
+        for value in scalars:
+            t = (value-low)/(high-low) if high > low else .5
+            colors.append([min(1, 2*t), min(1, 2*(1-abs(t-.5))), min(1, 2*(1-t))])
+    return {"points": normalized, "indices": indices, "colors": colors, "scalar_range": scalar_range}
 
 
 def render_interactive_viewer(asset: dict[str, Any]) -> str:
-    """Return a self-contained WebGL mesh/result viewer.
-
-    It has no external JavaScript dependency: drag rotates, wheel zooms, and
-    optional per-vertex scalar values are mapped to a blue-yellow-red cloud.
-    """
-    geometry = asset.get("geometry", {})
-    vertices = geometry.get("vertices") or []
-    faces = geometry.get("faces") or []
-    values = geometry.get("scalars") or geometry.get("point_values") or []
-    if not vertices or not faces:
-        return "<div data-engineering-viewer='unavailable'>Interactive 3D viewer requires mesh vertices and faces.</div>"
-    points = [[float(item.get("x", 0)), float(item.get("y", 0)), float(item.get("z", 0))] for item in vertices]
-    indices: list[int] = []
-    for face in faces:
-        for i in range(1, len(face) - 1):
-            triangle = [face[0], face[i], face[i + 1]]
-            if all(0 <= index < len(points) for index in triangle):
-                indices.extend(triangle)
-    scalars = [float(value) for value in values] if values else []
-    payload = json.dumps({"points": points, "indices": indices, "scalars": scalars}, ensure_ascii=False)
-    return f"""<div class='engineering-3d-viewer' style='position:relative;background:#101827;color:#eef;width:100%;min-height:420px;border-radius:8px;overflow:hidden'>
-<canvas class='engineering-3d-canvas' style='width:100%;height:420px;display:block'></canvas><span style='position:absolute;left:12px;top:10px;font:13px system-ui'>Drag rotate · wheel zoom · mesh/result cloud</span>
-<script>(function(){{const root=document.currentScript.parentElement,c=root.querySelector('canvas'),gl=c.getContext('webgl');if(!gl){{root.insertAdjacentHTML('beforeend','<p>WebGL unavailable</p>');return}}const d={payload};let rx=.4,ry=-.6,zoom=2.8,drag=false,lx=0,ly=0;function resize(){{const r=c.getBoundingClientRect(),q=window.devicePixelRatio||1;c.width=r.width*q;c.height=r.height*q;gl.viewport(0,0,c.width,c.height)}}window.addEventListener('resize',resize);resize();const vs=`attribute vec3 p;attribute vec3 color;uniform mat4 m;varying vec3 v;void main(){{gl_Position=m*vec4(p,1.0);v=color;}}`,fs=`precision mediump float;varying vec3 v;void main(){{gl_FragColor=vec4(v,1.0);}}`;function shader(t,s){{const x=gl.createShader(t);gl.shaderSource(x,s);gl.compileShader(x);return x}}const pr=gl.createProgram();gl.attachShader(pr,shader(gl.VERTEX_SHADER,vs));gl.attachShader(pr,shader(gl.FRAGMENT_SHADER,fs));gl.linkProgram(pr);const pb=gl.createBuffer(),ib=gl.createBuffer(),cb=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,pb);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(d.points.flat()),gl.STATIC_DRAW);gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ib);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,new Uint16Array(d.indices),gl.STATIC_DRAW);let vals=d.scalars;let lo=vals.length?Math.min(...vals):0,hi=vals.length?Math.max(...vals):1;let colors=[];for(let i=0;i<d.points.length;i++){{let t=vals.length?(vals[i]??lo-lo)/(hi-lo||1):.35;colors.push(Math.min(1,2*t),Math.min(1,2*(1-Math.abs(t-.5))),Math.min(1,2*(1-t)))}}gl.bindBuffer(gl.ARRAY_BUFFER,cb);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(colors),gl.STATIC_DRAW);function mat(){{const cx=Math.cos(rx),sx=Math.sin(rx),cy=Math.cos(ry),sy=Math.sin(ry),z=zoom;return new Float32Array([cy,0,-sy,0,sx*sy,cx,sx*cy,0,cx*sy,-sx,cx*cy,0,0,0,-1/z,1])}}function draw(){{gl.enable(gl.DEPTH_TEST);gl.clearColor(.06,.09,.15,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.useProgram(pr);gl.uniformMatrix4fv(gl.getUniformLocation(pr,'m'),false,mat());gl.bindBuffer(gl.ARRAY_BUFFER,pb);let p=gl.getAttribLocation(pr,'p');gl.enableVertexAttribArray(p);gl.vertexAttribPointer(p,3,gl.FLOAT,false,0,0);gl.bindBuffer(gl.ARRAY_BUFFER,cb);let col=gl.getAttribLocation(pr,'color');gl.enableVertexAttribArray(col);gl.vertexAttribPointer(col,3,gl.FLOAT,false,0,0);gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ib);gl.drawElements(gl.TRIANGLES,d.indices.length,gl.UNSIGNED_SHORT,0);requestAnimationFrame(draw)}}c.addEventListener('pointerdown',e=>{{drag=true;lx=e.clientX;ly=e.clientY;c.setPointerCapture(e.pointerId)}});c.addEventListener('pointerup',()=>drag=false);c.addEventListener('pointermove',e=>{{if(!drag)return;ry+=(e.clientX-lx)*.01;rx+=(e.clientY-ly)*.01;lx=e.clientX;ly=e.clientY}});c.addEventListener('wheel',e=>{{e.preventDefault();zoom=Math.max(.6,Math.min(8,zoom+e.deltaY*.002))}},{{passive:false}});draw()}})();</script></div>"""
+    data = mesh_payload(asset)
+    if not data or not data["indices"]:
+        return "<div data-engineering-viewer='unavailable'>没有可用于交互式预览的网格曲面。</div>"
+    template = Path(__file__).with_name("static").joinpath("mesh_viewer.html").read_text(encoding="utf-8")
+    return template.replace("__MESH_DATA__", json.dumps(data, allow_nan=False))
 
 
 def render_asset_svg(asset: dict[str, Any]) -> str:
@@ -87,7 +176,7 @@ def render_asset_svg(asset: dict[str, Any]) -> str:
         for index, (name, value) in enumerate(pairs):
             bar_width = 360 * abs(float(value)) / max_value
             y = 28 + index * 24
-            bars.append(f"<text x='8' y='{y+14}' font-size='11'>{name[:28]}</text><rect x='190' y='{y}' width='{bar_width:.1f}' height='16' fill='#37a169'/><text x='{195+bar_width:.1f}' y='{y+13}' font-size='11'>{float(value):.3g}</text>")
+            bars.append(f"<text x='8' y='{y+14}' font-size='11'>{escape(name[:28])}</text><rect x='190' y='{y}' width='{bar_width:.1f}' height='16' fill='#37a169'/><text x='{195+bar_width:.1f}' y='{y+13}' font-size='11'>{float(value):.3g}</text>")
         return "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 330' role='img'><rect width='600' height='330' fill='#f7f9fc'/>" + "".join(bars) + "</svg>"
     return "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 560 120'><text x='20' y='60' font-family='system-ui'>No visualizable geometry or metrics</text></svg>"
 

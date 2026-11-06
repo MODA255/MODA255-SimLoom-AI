@@ -1,0 +1,59 @@
+<div class="engineering-3d-viewer" style="background:#101827;color:#dce5ff;position:relative;font:13px system-ui">
+  <div style="padding:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span>拖动旋转 · 滚轮缩放</span><button class="reset">重置视角</button><button class="wire">线框 / 实体</button><span class="legend" style="margin-left:auto"></span></div>
+  <canvas class="engineering-3d-canvas" aria-label="可旋转的三维工程模型" style="width:100%;height:370px;display:block;touch-action:none"></canvas>
+  <p class="viewer-status" role="status" style="margin:0;padding:10px 14px"></p>
+  <script>
+  (()=>{
+    const root=document.currentScript.parentElement, canvas=root.querySelector('canvas');
+    const data=__MESH_DATA__;
+    const status=root.querySelector('.viewer-status');
+    const gl=canvas.getContext('webgl',{antialias:true,preserveDrawingBuffer:true});
+    if(!gl){status.textContent='当前环境不支持 WebGL，请下载模型，或使用支持 WebGL 的浏览器。';return;}
+    const vertex='attribute vec3 p;attribute vec3 color;attribute vec3 normal;uniform mat3 rotation;uniform vec2 scale;varying vec3 v;void main(){vec3 q=rotation*p;gl_Position=vec4(q.xy*scale,q.z*.1,1.);float light=.5+.5*abs(dot(normalize(rotation*normal),normalize(vec3(.3,.7,1.))));v=color*light;}';
+    const fragment='precision mediump float;varying vec3 v;void main(){gl_FragColor=vec4(v,1.);}';
+    function shader(type,code){const value=gl.createShader(type);gl.shaderSource(value,code);gl.compileShader(value);if(!gl.getShaderParameter(value,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(value));return value;}
+    let program;
+    try{program=gl.createProgram();gl.attachShader(program,shader(gl.VERTEX_SHADER,vertex));gl.attachShader(program,shader(gl.FRAGMENT_SHADER,fragment));gl.linkProgram(program);if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw new Error('shader link failed');}
+    catch(error){status.textContent='图形初始化失败：'+error.message;return;}
+    gl.useProgram(program);
+    const packed=[], lines=[];
+    for(let i=0;i<data.indices.length;i+=3){
+      const ids=data.indices.slice(i,i+3), [a,b,c]=ids.map(id=>data.points[id]);
+      const u=b.map((x,j)=>x-a[j]), w=c.map((x,j)=>x-a[j]);
+      const cross=[u[1]*w[2]-u[2]*w[1],u[2]*w[0]-u[0]*w[2],u[0]*w[1]-u[1]*w[0]];
+      const length=Math.hypot(...cross)||1, normal=cross.map(x=>x/length);
+      const append=(array,id)=>array.push(...data.points[id],...data.colors[id],...normal);
+      for(const id of ids)append(packed,id);
+      for(const id of [ids[0],ids[1],ids[1],ids[2],ids[2],ids[0]])append(lines,id);
+    }
+    function buffer(values){const result=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,result);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(values),gl.STATIC_DRAW);return result;}
+    const solidBuffer=buffer(packed), lineBuffer=buffer(lines);
+    // Expanded vertices avoid the 65,535-index limit in WebGL 1.
+    let rx=.45, ry=-.6, zoom=1, wire=false, pointer=null;
+    function draw(){
+      const rect=canvas.getBoundingClientRect(), ratio=Math.min(devicePixelRatio||1,2);
+      const width=Math.max(1,Math.round(rect.width*ratio)),height=Math.max(1,Math.round(rect.height*ratio));
+      if(canvas.width!==width||canvas.height!==height){canvas.width=width;canvas.height=height;}
+      gl.viewport(0,0,width,height);gl.enable(gl.DEPTH_TEST);gl.clearColor(.063,.094,.153,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+      gl.bindBuffer(gl.ARRAY_BUFFER,wire?lineBuffer:solidBuffer);
+      ['p','color','normal'].forEach((name,index)=>{const location=gl.getAttribLocation(program,name);gl.enableVertexAttribArray(location);gl.vertexAttribPointer(location,3,gl.FLOAT,false,36,index*12);});
+      const cx=Math.cos(rx),sx=Math.sin(rx),cy=Math.cos(ry),sy=Math.sin(ry);
+      gl.uniformMatrix3fv(gl.getUniformLocation(program,'rotation'),false,new Float32Array([cy,0,-sy,sx*sy,cx,sx*cy,cx*sy,-sx,cx*cy]));
+      const aspect=width/height;
+      gl.uniform2f(gl.getUniformLocation(program,'scale'),zoom/Math.max(1,aspect),zoom*Math.min(1,aspect));
+      gl.drawArrays(wire?gl.LINES:gl.TRIANGLES,0,(wire?lines:packed).length/9);
+    }
+    function reset(){rx=.45;ry=-.6;zoom=1;draw();}
+    canvas.addEventListener('pointerdown',e=>{pointer={id:e.pointerId,x:e.clientX,y:e.clientY};canvas.setPointerCapture(e.pointerId);});
+    canvas.addEventListener('pointermove',e=>{if(!pointer||pointer.id!==e.pointerId)return;ry+=(e.clientX-pointer.x)*.01;rx+=(e.clientY-pointer.y)*.01;pointer.x=e.clientX;pointer.y=e.clientY;draw();});
+    for(const event of ['pointerup','pointercancel','lostpointercapture'])canvas.addEventListener(event,()=>pointer=null);
+    canvas.addEventListener('wheel',e=>{e.preventDefault();zoom=Math.max(.25,Math.min(10,zoom*Math.exp(-e.deltaY*.001)));draw();},{passive:false});
+    canvas.addEventListener('dblclick',reset);root.querySelector('.reset').onclick=reset;
+    root.querySelector('.wire').onclick=()=>{wire=!wire;draw();};
+    new ResizeObserver(draw).observe(canvas);
+    root.querySelector('.legend').textContent=data.scalar_range?'结果场：'+data.scalar_range.join(' → '):'几何视图 · 未加载结果场';
+    status.textContent=data.indices.length/3+' 个三角形 · 自动适配模型尺寸';
+    canvas.dataset.triangleCount=String(data.indices.length/3);draw();
+  })();
+  </script>
+</div>

@@ -123,6 +123,23 @@ cd SimLoom-AI
 . .venv/bin/activate
 ```
 
+最方便的入口是本地工程工作台：
+
+```bash
+PYTHONPATH=src python -m engineering_agent.cli desktop --mode browser
+```
+
+它会启动一个本地地址并打开浏览器。工作台也支持可选的独立桌面窗口：
+
+```bash
+python -m pip install -e '.[desktop]'
+PYTHONPATH=src python -m engineering_agent.cli desktop --mode native
+```
+
+Windows 用户可以直接运行 `install-windows.cmd`，安装完成后双击 `Start SimLoom AI.cmd`。
+macOS/Linux 可以执行 `./Start SimLoom AI.command`（先运行 `./install.sh`）。项目、队列
+和历史记录默认保存在操作系统的用户数据目录，不会把运行数据库写进源码目录。
+
 项目不要求先安装 CATIA、Ansys、Adams 或 VI-grade。离线 runtime、解析器、验证器、
 事务层、MCP 和测试都可以在普通开发环境运行。
 
@@ -164,6 +181,18 @@ PYTHONPATH=src python -m engineering_agent.cli \
   evaluate examples/demo_project/metrics.json \
   examples/demo_project/rules.json
 ```
+
+## 第一次使用工作台
+
+打开工作台后按这条路径操作：
+
+1. 点击“新建项目”，填写项目名称并选择“悬架结构”“悬架动力学”“整车操稳”或“四软件离线体验”。
+2. 在第二步调整轴距、轮距、几何高度和载荷；这些参数会写入项目的 `simloom.project.json`。
+3. 用自然语言描述目标，点击“生成工程计划”查看阶段和依赖关系。
+4. 点击“运行离线闭环”生成 STEP、CSV、JSON 和报告；任务状态会自动记录。
+5. 进入“模型与结果”，点击文件即可查看 STEP 包围盒或 B-Rep 曲面网格、OBJ 网格、CSV 曲线和 JSON 指标。
+
+项目向导会为每个新项目创建独立目录；重复使用同一个目录会被拒绝，以避免覆盖已有工程。
 
 ## 离线四软件闭环
 
@@ -254,6 +283,18 @@ Ansys → Adams → VI-grade 流程画布，右侧区域展示验证指标、任
 
 工作台也提供 `GET /api/templates` 和 `POST /api/offline-run`，方便桌面壳或其他
 前端复用模板与离线执行能力。
+
+工作台项目服务还提供：
+
+- `POST /api/projects`：创建带模板、参数、目录和默认规则的工程项目。
+- `GET /api/projects/<id>`：重新打开历史项目。
+- `POST /api/tasks/<id>/run`：运行一次排练任务；排练只生成输入并执行 dry-run。
+- `GET /api/download`：下载原始工程文件。
+
+工程文件预览在安全的 iframe 中运行，避免模型/结果中的 HTML 或脚本影响工作台页面。
+STEP 有 OpenCascade 时会先三角化真实 B-Rep 曲面，然后自动居中、适配尺寸并支持旋转、
+缩放、重置和线框切换；没有内核时会明确显示包围盒预览。CSV 预览最多绘制前四个数值列，
+大文件会抽样显示并保留完整原始文件下载。
 
 也可以使用 SQLite 任务队列：
 
@@ -364,6 +405,8 @@ SimLoom-AI/
 ├── examples/                # demo project 和 offline four-tool fixture
 ├── configs/                 # 工具、bridge 和任务配置示例
 ├── tests/                   # 单元、集成和契约测试
+├── Start SimLoom AI.cmd     # Windows 启动入口
+├── install-windows.cmd      # Windows 安装入口
 ├── ENGINEERING_AGENT.md     # 详细工程能力说明
 └── install.sh               # 本地安装脚本
 ```

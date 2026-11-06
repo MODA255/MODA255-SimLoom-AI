@@ -22,10 +22,17 @@ brep = [
 windows = [
   "pywin32>=306; sys_platform == 'win32'",
 ]
+desktop = [
+  "pywebview>=5,<7",
+]
 
 [project.scripts]
 orchestrator = "orchestrator.cli:main"
 engineering-agent = "engineering_agent.cli:main"
+simloom-ai = "engineering_agent.desktop:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+engineering_agent = ["static/*.html", "static/*.css", "static/*.js"]
