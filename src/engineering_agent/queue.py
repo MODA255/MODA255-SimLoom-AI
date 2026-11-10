@@ -36,6 +36,14 @@ class TaskQueue:
                 if name not in columns:
                     db.execute(f"ALTER TABLE projects ADD COLUMN {name} {declaration}")
 
+            columns = {row[1] for row in db.execute("PRAGMA table_info(tasks)")}
+            for name, declaration in (("mode", "TEXT NOT NULL DEFAULT 'rehearsal'"),
+                                      ("input_json", "TEXT"), ("retry_of", "TEXT")):
+                if name not in columns:
+                    db.execute(f"ALTER TABLE tasks ADD COLUMN {name} {declaration}")
+            db.execute("CREATE INDEX IF NOT EXISTS tasks_project ON tasks(project_id, created_at)")
+            db.execute("CREATE INDEX IF NOT EXISTS tasks_retry ON tasks(retry_of, status)")
+
     def create_project(self, name: str, project_dir: str | None = None, metadata: dict[str, Any] | None = None) -> str:
         project_id = str(uuid.uuid4())
         with self._connect() as db:
@@ -59,13 +67,52 @@ class TaskQueue:
         value["metadata"] = json.loads(value.pop("metadata_json") or "{}")
         return value
 
-    def submit(self, prompt: str, project_dir: str = ".", project_id: str | None = None) -> str:
-        task_id = str(uuid.uuid4())
-        now = _now()
+    def submit(self, prompt: str, project_dir: str = ".", project_id: str | None = None,
+               *, mode: str = "rehearsal", inputs: dict | None = None) -> str:
+        if mode not in {"offline", "rehearsal"}:
+            raise ValueError("未知的任务模式")
         with self._lock, self._connect() as db:
-            db.execute("INSERT INTO tasks VALUES (?, ?, ?, ?, 'queued', NULL, ?, ?)", (task_id, project_id, prompt, project_dir, now, now))
-            db.execute("INSERT INTO task_events(task_id,event,payload_json,created_at) VALUES (?, 'queued', '{}', ?)", (task_id, now))
+            return self._insert(db, prompt, project_dir, project_id, mode, inputs)
+
+    def _insert(self, db, prompt, project_dir, project_id, mode, inputs, retry_of=None):
+        task_id, at = str(uuid.uuid4()), _now()
+        db.execute("INSERT INTO tasks(id,project_id,prompt,project_dir,status,created_at,updated_at,mode,input_json,retry_of) "
+                   "VALUES (?,?,?,?,'queued',?,?,?,?,?)",
+                   (task_id, project_id, prompt, project_dir, at, at, mode,
+                    json.dumps(inputs, ensure_ascii=False) if inputs is not None else None, retry_of))
+        db.execute("INSERT INTO task_events(task_id,event,payload_json,created_at) VALUES (?, 'queued', ?, ?)",
+                   (task_id, json.dumps({"retry_of": retry_of}), at))
         return task_id
+
+    def retry(self, task_id: str) -> str:
+        # SQLite serializes the check and insert across processes, not just threads.
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            task = self._row(db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone())
+            if not task:
+                raise FileNotFoundError("任务不存在")
+            if task["status"] != "failed":
+                raise ValueError("仅失败任务可以重试")
+            external = db.execute("SELECT payload_json FROM task_events WHERE task_id=? AND event='execution_mode' ORDER BY id DESC LIMIT 1", (task_id,)).fetchone()
+            if external and json.loads(external[0]).get("mode") == "external":
+                raise ValueError("外部执行任务请通过 CLI 重新提交并明确执行模式")
+            if task["input"] is None:
+                raise ValueError("旧任务没有输入快照，请重新创建任务")
+            existing = db.execute("SELECT id FROM tasks WHERE retry_of=? AND status IN ('queued','running')", (task_id,)).fetchone()
+            if existing:
+                return existing["id"]
+            return self._insert(db, task["prompt"], task["project_dir"], task["project_id"],
+                                task["mode"], task["input"], task_id)
+
+    def set_input(self, task_id, inputs):
+        with self._connect() as db:
+            db.execute("UPDATE tasks SET input_json=? WHERE id=? AND input_json IS NULL",
+                       (json.dumps(inputs, ensure_ascii=False), task_id))
+
+    def record_event(self, task_id, event, payload):
+        with self._lock, self._connect() as db:
+            db.execute("INSERT INTO task_events(task_id,event,payload_json,created_at) VALUES (?,?,?,?)",
+                       (task_id, event, json.dumps(payload, ensure_ascii=False), _now()))
 
     def update(self, task_id: str, status: str, result: dict[str, Any] | None = None):
         with self._lock, self._connect() as db:
@@ -78,9 +125,12 @@ class TaskQueue:
             row = db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
         return self._row(row)
 
-    def list(self, limit: int = 50) -> list[dict[str, Any]]:
+    def list(self, limit: int = 50, project_id: str | None = None) -> list[dict[str, Any]]:
         with self._connect() as db:
-            rows = db.execute("SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+            if project_id:
+                rows = db.execute("SELECT * FROM tasks WHERE project_id=? ORDER BY created_at DESC LIMIT ?", (project_id, limit)).fetchall()
+            else:
+                rows = db.execute("SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
         return [self._row(row) for row in rows]
 
     def next_queued(self) -> dict[str, Any] | None:
@@ -113,4 +163,8 @@ class TaskQueue:
             return None
         result = dict(row)
         result["result"] = json.loads(result.pop("result_json")) if result.get("result_json") else None
+        inputs = result.pop("input_json", None)
+        result["input"] = json.loads(inputs) if inputs else None
+        if (result.get("result") or {}).get("workflow") == "offline_vehicle_chain":
+            result["mode"] = "offline"
         return result

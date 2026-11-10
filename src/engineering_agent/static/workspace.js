@@ -3,7 +3,7 @@ const $ = s => document.querySelector(s);
 const escapeHTML = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const state = {project:null, templates:[], busy:false, page:1, preview:0};
 const icons = {catia:'◇', ansys:'△', adams:'⌁', 'vi-grade':'◎'};
-const labels = {queued:'待排练', running:'运行中', completed:'已完成', failed:'失败'};
+const labels = {queued:'待运行', running:'运行中', completed:'已完成', failed:'失败'};
 let toastTimer;
 function toast(message) { clearTimeout(toastTimer); $('#toast').textContent=message; $('#toast').classList.add('show'); toastTimer=setTimeout(()=>$('#toast').classList.remove('show'),4000); }
 function details(data) { $('#output').textContent=JSON.stringify(data,null,2); }
@@ -17,10 +17,11 @@ async function request(url, body) {
 }
 function busy(value) {
   state.busy=value;
-  document.querySelectorAll('[data-action], .project-open, #planButton, #offlineButton, #queueButton, .run-task, #createProject').forEach(b=>b.disabled=value);
+  document.querySelectorAll('[data-action], .project-open, #planButton, #offlineButton, #queueButton, .run-task, #createProject, #retryTask').forEach(b=>b.disabled=value);
   if(value) $('#runError').textContent='';
 }
 function choosePanel(id) {
+  $('.hero').hidden=id==='taskDetail';
   document.querySelectorAll('.panel').forEach(panel=>panel.hidden=panel.id!==id);
   document.querySelectorAll('[data-panel]').forEach(button=>button.classList.toggle('active',button.dataset.panel===id));
   if(id==='projects') refreshProjects().catch(reportError);
@@ -42,7 +43,7 @@ function projectRequired() { if(state.project) return true; openWizard(); return
 async function openProject(id) {
   const project=await request('/api/projects/'+encodeURIComponent(id));
   if(!project.project_dir) throw new Error('这是未关联目录的旧项目，请使用向导创建一个独立项目。');
-  state.project=project; state.preview++;
+  state.project=project; state.taskId=null; state.preview++;
   try { localStorage.setItem('simloom.project',id); } catch (_) {}
   $('#currentProject').textContent=project.name;
   $('#projectHint').textContent='当前项目：'+project.name;
@@ -115,8 +116,8 @@ async function runOffline(demo=false) {
     $('#planStatus').textContent='运行中'; $('#planStatus').className='pill amber';
     $('#resultHint').textContent='正在生成模型和离线结果，请稍候…';
     const result=await request('/api/offline-run',{project_id:state.project.id});
-    renderVerdicts(result); await refreshTasks(); toast('离线产物已保存，可以查看模型与结果。');
-  } catch(error) { $('#planStatus').textContent='运行失败'; $('#resultHint').textContent='本次运行未完成，请查看任务错误。'; reportError(error); }
+    renderVerdicts(result); await refreshTasks(); await showTask(result.task_id); toast('报告已生成，可以查看阶段、产物和工程指标。');
+  } catch(error) { $('#planStatus').textContent='运行失败'; $('#resultHint').textContent='本次运行未完成，请查看任务错误。'; reportError(error); await refreshTasks(); }
   finally { busy(false); }
 }
 async function refreshTasks(restore=false) {
@@ -125,18 +126,13 @@ async function refreshTasks(restore=false) {
   const tasks=await request('/api/tasks?project_id='+encodeURIComponent(id));
   if(state.project?.id!==id) return;
   $('#taskValue').textContent=tasks.length;
-  $('#tasks').innerHTML=tasks.length?`<table class="table"><thead><tr><th>状态</th><th>任务</th><th>时间</th><th>操作</th></tr></thead><tbody>${tasks.map(t=>`<tr><td><span class="pill ${t.status==='completed'?'green':''}">${escapeHTML(labels[t.status]||t.status)}</span></td><td>${escapeHTML(t.prompt)}${t.result?.error?`<p class="error">${escapeHTML(t.result.error)}</p>`:''}</td><td>${escapeHTML(new Date(t.created_at).toLocaleString())}</td><td>${t.status==='queued'?`<button class="btn btn-light run-task" data-run="${escapeHTML(t.id)}" ${state.busy?'disabled':''}>运行排练</button>`:`<button class="btn btn-light" data-task="${escapeHTML(t.id)}">查看记录</button>`}</td></tr>`).join('')}</tbody></table>`:'<div class="empty">还没有任务。生成计划或运行离线闭环开始。</div>';
+  $('#tasks').innerHTML=tasks.length?`<table class="table"><thead><tr><th>状态</th><th>任务</th><th>时间</th><th>操作</th></tr></thead><tbody>${tasks.map(t=>`<tr><td><span class="pill ${t.status==='completed'?'green':''}">${escapeHTML(labels[t.status]||t.status)}</span></td><td>${escapeHTML(t.prompt)}${t.result?.error?`<p class="error">${escapeHTML(t.result.error)}</p>`:''}</td><td>${escapeHTML(new Date(t.created_at).toLocaleString())}</td><td>${t.status==='queued'?`<button class="btn btn-light run-task" data-run="${escapeHTML(t.id)}" ${state.busy?'disabled':''}>${t.mode==='offline'?'运行离线任务':'运行排练'}</button> `:''}<button class="btn btn-light" data-task="${escapeHTML(t.id)}">查看详情</button></td></tr>`).join('')}</tbody></table>`:'<div class="empty">还没有任务。生成计划或运行离线闭环开始。</div>';
   if(restore) { const last=tasks.find(t=>t.result?.verdicts); if(last) renderVerdicts(last.result); }
 }
 async function runTask(id) {
   if(state.busy) return; busy(true);
-  try { const data=await request('/api/tasks/'+encodeURIComponent(id)+'/run',{}); details(data); await refreshTasks(); toast('排练已完成：已生成输入，未调用商业软件。'); }
-  catch(error) { reportError(error); await refreshTasks(); } finally { busy(false); }
-}
-async function showTask(id) {
-  const [task,events]=await Promise.all([request('/api/tasks/'+encodeURIComponent(id)),request('/api/tasks/'+encodeURIComponent(id)+'/events')]);
-  if(task.result?.verdicts) renderVerdicts(task.result);
-  details({task,events}); $('.output-details').open=true;
+  try { const data=await request('/api/tasks/'+encodeURIComponent(id)+'/run',{}); details(data); await refreshTasks(); await showTask(id); toast('任务执行结束，查看详情了解结果。'); }
+  catch(error) { reportError(error); await refreshTasks(); await showTask(id); } finally { busy(false); }
 }
 async function refreshAssets() {
   const project=state.project;
@@ -206,3 +202,80 @@ async function init() {
 }
 setInterval(()=>{if(state.busy&&state.project) refreshTasks().catch(()=>{});},2000);
 init();
+
+const metricTitles={max_stress:'最大应力',max_displacement:'最大位移',mesh_quality:'网格质量',understeer_gradient:'转向不足梯度'};
+const taskStatusLabels = {...labels, planned:'排练通过', blocked:'依赖阻塞', unavailable:'不可用', rolled_back:'已回滚'};
+const displayTime = value => value ? new Date(value).toLocaleString() : '未记录';
+const displayDuration = value => value == null ? '未记录' : `${Number(value).toFixed(3)} 秒`;
+function reportTable(headers, rows) {
+  return `<div class="table-wrap"><table class="table"><thead><tr>${headers.map(h=>`<th>${escapeHTML(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr>${row.map(c=>`<td>${escapeHTML(c ?? '未记录')}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+}
+function renderTaskReport(report) {
+  $('#taskTitle').textContent=report.prompt;
+  $('#taskSubtitle').textContent=`${report.project_name} · ${report.task_id}`;
+  $('#taskMode').textContent=report.mode_label;
+  $('#taskStatus').textContent=taskStatusLabels[report.status]||report.status;
+  $('#taskStatus').className='pill '+(report.status==='completed'?'green':'amber');
+  $('#taskNotice').textContent=report.notice;
+  $('#taskDuration').textContent=displayDuration(report.duration_seconds);
+  $('#taskStarted').textContent=displayTime(report.started_at);
+  $('#taskFinished').textContent=displayTime(report.finished_at);
+  $('#taskConclusion').textContent=({passed:'全部规则通过',failed:'存在未通过的规则',not_evaluated:'尚未判定'})[report.validation_status];
+  $('#taskFailure').hidden=!report.error;
+  $('#taskFailureText').textContent=report.error||'';
+  $('#taskNextStep').textContent=report.next_step;
+  $('#retryTask').hidden=!report.retry_allowed;
+  $('#retryTask').disabled=state.busy;
+  $('#taskRetryOrigin').hidden=!report.retry_of;
+  $('#taskRetryOrigin').textContent=report.retry_of ? '查看原失败任务' : '';
+  $('#taskRetryOrigin').dataset.task=report.retry_of||'';
+  $('#taskStages').innerHTML=report.stages.length?reportTable(['阶段','软件','状态','耗时','说明'],report.stages.map(s=>[s.label,s.tool||'工作台',taskStatusLabels[s.status]||s.status,displayDuration(s.duration_seconds),s.error||s.message||''])):'<p class="muted">开始运行后显示阶段记录。旧任务可能没有耗时信息。</p>';
+  $('#taskMetrics').innerHTML=report.verdicts.length?reportTable(['指标','数值','单位','规则','判定'],report.verdicts.map(v=>[metricTitles[v.name]||v.name,v.value,v.unit,`${v.operator} ${v.target}`,v.passed?'通过':'未通过'])):'<p class="muted">本次任务尚无指标判定；排练不会生成仿真结论。</p>';
+  const input=report.input?.model_spec;
+  const values={...(input?.parameters||{}),...(input?.load_cases?.[0]||{})};
+  const parameterNames={wheelbase_mm:'长度 / 轴距（mm）',track_front_mm:'宽度 / 轮距（mm）',chassis_height_mm:'几何高度（mm）',force_n:'载荷（N）'};
+  $('#taskInput').innerHTML=input?reportTable(['工程参数','本次使用值'],Object.entries(parameterNames).map(([key,name])=>[name,values[key]])):'<p class="muted">此旧任务未保存输入快照，不使用当前参数代替历史输入。</p>';
+  $('#taskInputJson').textContent=JSON.stringify(report.input,null,2);
+  $('#taskPlan').innerHTML=report.plan?.steps?.length?reportTable(['步骤','软件','动作','依赖'],report.plan.steps.map(s=>[s.id,s.tool,s.action==='offline_surrogate'?'离线示例':s.action,(s.depends_on||[]).join(' → ')||'无'])):'<p class="muted">暂无执行计划记录。</p>';
+  $('#taskArtifacts').innerHTML=report.artifacts.length?report.artifacts.map(a=>{
+    const query=new URLSearchParams({root:report.project_dir,path:a.path});
+    return `<article class="task-artifact"><div><strong>${escapeHTML(a.name)}</strong><p class="muted">${escapeHTML(a.path)} · ${Number(a.bytes).toLocaleString()} 字节</p><code>SHA-256 ${escapeHTML(a.sha256)}</code></div><a class="btn btn-light btn-link" href="/api/download?${escapeHTML(query.toString())}" download>下载</a></article>`;
+  }).join(''):'<p class="muted">尚无已保存的历史产物；旧任务的文件哈希不会补造。</p>';
+  const eventNames={queued:'任务已创建',running:'开始执行',plan:'计划已记录',stage_started:'阶段开始',stage_finished:'阶段结束',completed:'任务已完成',failed:'任务失败',execution_mode:'运行模式已记录'};
+  $('#taskEvents').innerHTML=report.events.map(e=>`<li><time>${escapeHTML(displayTime(e.created_at))}</time><div><strong>${escapeHTML(eventNames[e.event]||e.event)}</strong><p>${escapeHTML(e.payload.label||e.payload.error||'')}${e.payload.duration_seconds==null?'':` · ${escapeHTML(displayDuration(e.payload.duration_seconds))}`}</p></div></li>`).join('');
+  $('#taskEvidence').textContent=JSON.stringify(report,null,2);
+  for(const format of ['html','json']) $('#report'+format).href=`/api/tasks/${encodeURIComponent(report.task_id)}/report?format=${format}&download=1`;
+}
+async function showTask(id, refresh=false) {
+  state.taskId=id;
+  if(!refresh) { choosePanel('taskDetail'); $('#taskDetailContent').hidden=true; $('#taskLoading').hidden=false; $('#taskLoading').textContent='正在读取任务记录…'; }
+  const report=await request('/api/tasks/'+encodeURIComponent(id)+'/report');
+  if(state.taskId!==id) return;
+  renderTaskReport(report); state.taskStatus=report.status;
+  $('#taskDetailContent').hidden=false; $('#taskLoading').hidden=true;
+}
+async function retryCurrentTask() {
+  if(state.busy||!state.taskId) return;
+  const original=state.taskId; let child;
+  busy(true); $('#retryTask').disabled=true;
+  try {
+    child=await request('/api/tasks/'+encodeURIComponent(original)+'/retry',{});
+    await showTask(child.id);
+    const result=await request('/api/tasks/'+encodeURIComponent(child.id)+'/run',{});
+    if(result.verdicts) renderVerdicts(result);
+    toast('重试已完成，原失败记录已保留。');
+  } catch(error) { reportError(error); }
+  finally {
+    busy(false);
+    await refreshTasks();
+    await showTask(child?.id||original,true);
+  }
+}
+$('#retryTask').onclick=()=>retryCurrentTask().catch(reportError);
+$('#refreshTaskDetail').onclick=()=>{if(state.taskId) showTask(state.taskId,true).catch(reportError);};
+let taskRefreshing=false;
+setInterval(async()=>{
+  if(taskRefreshing||!state.taskId||$('#taskDetail').hidden||!['queued','running'].includes(state.taskStatus)) return;
+  taskRefreshing=true;
+  try { await showTask(state.taskId,true); } catch(_) {} finally { taskRefreshing=false; }
+},1500);

@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import mimetypes
 import shutil
-import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -15,6 +14,8 @@ from .validation import validate_plan
 from .viewer import artifact_listing, artifact_preview, asset_view, render_timeline_svg
 from .versioning import VersionStore
 from .workspace import TEMPLATES, Workspace
+from .tasks import TaskRunner, input_snapshot
+from .reports import build_report, render_report
 
 STATIC_DIR = Path(__file__).with_name("static")
 INDEX_HTML = (STATIC_DIR / "workspace.html").read_text(encoding="utf-8")
@@ -25,11 +26,10 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
                   workspace_root: str | Path | None = None) -> ThreadingHTTPServer:
     """Construct the same local service for browsers, desktop windows and tests."""
     workspace = Workspace(queue, workspace_root)
-    busy_projects: set[str] = set()
-    busy_lock = threading.Lock()
+    runner = TaskRunner(agent, queue)
 
     class Handler(BaseHTTPRequestHandler):
-        def _send(self, status: int, payload: Any, content_type: str = "application/json"):
+        def _send(self, status: int, payload: Any, content_type: str = "application/json", filename=None):
             if isinstance(payload, bytes):
                 body = payload
             elif isinstance(payload, str):
@@ -41,6 +41,8 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
             self.send_header("Content-Length", str(len(body)))
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Cache-Control", "no-store")
+            if filename:
+                self.send_header("Content-Disposition", "attachment; filename*=UTF-8\'\'" + quote(filename))
             self.end_headers()
             self.wfile.write(body)
 
@@ -124,9 +126,7 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
             if parsed.path == "/api/capabilities":
                 return self._send(200, agent.capabilities())
             if parsed.path == "/api/tasks":
-                tasks = queue.list()
-                if query.get("project_id"):
-                    tasks = [item for item in tasks if item["project_id"] == query["project_id"][0]]
+                tasks = queue.list(project_id=query.get("project_id", [None])[0])
                 return self._send(200, tasks)
             if parsed.path == "/api/projects":
                 return self._send(200, queue.list_projects())
@@ -137,8 +137,19 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
                 return self._send(200, project)
             if parsed.path.startswith("/api/tasks/"):
                 task_path = parsed.path[len("/api/tasks/"):]
+                if task_path.endswith("/report"):
+                    task_id = task_path[:-len("/report")]
+                    report = build_report(queue, task_id)
+                    format_name = query.get("format", ["json"])[0]
+                    if format_name not in {"html", "json"}:
+                        raise ValueError("报告格式仅支持 html 或 json")
+                    filename = f"simloom-{task_id}.{format_name}" if query.get("download") == ["1"] else None
+                    return self._send(200, render_report(report) if format_name == "html" else report,
+                                      "text/html" if format_name == "html" else "application/json", filename)
                 if task_path.endswith("/events"):
-                    return self._send(200, queue.events(task_path[:-len("/events")].rstrip("/")))
+                    if not queue.get(task_path[:-len("/events")]):
+                        raise FileNotFoundError("任务不存在")
+                    return self._send(200, queue.events(task_path[:-len("/events")]))
                 task = queue.get(task_path)
                 if not task:
                     raise FileNotFoundError("任务不存在")
@@ -183,47 +194,18 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
                 if path == "/api/plan":
                     plan = agent.plan(prompt, project_dir=root, parameters={"model_spec": metadata.get("model_spec", {})})
                     return self._send(200, {"plan": plan.to_dict(), "validation": validate_plan(plan)})
-                task_id = queue.submit(prompt, root, project_id)
+                task_id = queue.submit(prompt, root, project_id, inputs=input_snapshot(metadata))
                 return self._send(201, queue.get(task_id))
             if path == "/api/offline-run":
                 root, metadata, project_id = self._project_input(body)
-                with busy_lock:
-                    if root in busy_projects:
-                        raise RuntimeError("PROJECT_ALREADY_RUNNING")
-                    busy_projects.add(root)
-                task_id = None
-                try:
-                    task_id = queue.submit("四软件离线演示", root, project_id)
-                    queue.update(task_id, "running")
-                    result = agent.run_offline_vehicle_chain(root, body.get("model_spec") or metadata.get("model_spec", {}),
-                                                            body.get("rules", metadata.get("rules")))
-                    result["task_id"] = task_id
-                    result["validation_passed"] = bool(result["verdicts"]) and all(v["passed"] for v in result["verdicts"])
-                    queue.update(task_id, "completed", result)
-                    return self._send(200, result)
-                except Exception as exc:
-                    if task_id:
-                        queue.update(task_id, "failed", {"error": str(exc)})
-                    raise
-                finally:
-                    with busy_lock:
-                        busy_projects.discard(root)
+                task_id = queue.submit("四软件离线演示", root, project_id, mode="offline",
+                                       inputs=input_snapshot(metadata, body))
+                return self._send(200, runner.run(task_id))
+            if path.startswith("/api/tasks/") and path.endswith("/retry"):
+                task_id = queue.retry(path[len("/api/tasks/"):-len("/retry")])
+                return self._send(201, queue.get(task_id))
             if path.startswith("/api/tasks/") and path.endswith("/run"):
-                task_id = path[len("/api/tasks/"):-len("/run")]
-                task = queue.get(task_id)
-                if not task:
-                    raise FileNotFoundError("任务不存在")
-                if not queue.claim(task_id):
-                    raise RuntimeError("TASK_ALREADY_RUNNING_OR_FINISHED")
-                try:
-                    project = queue.get_project(task["project_id"]) if task["project_id"] else None
-                    spec = (project or {}).get("metadata", {}).get("model_spec", {})
-                    result = agent.run(task["prompt"], project_dir=task["project_dir"], parameters={"model_spec": spec}, dry_run=True).to_dict()
-                    queue.update(task_id, "completed" if result["status"] == "committed" else "failed", result)
-                    return self._send(200, result)
-                except Exception as exc:
-                    queue.update(task_id, "failed", {"error": str(exc)})
-                    raise
+                return self._send(200, runner.run(path[len("/api/tasks/"):-len("/run")]))
             self._send(404, {"error": "接口不存在"})
 
         def log_message(self, *_args):

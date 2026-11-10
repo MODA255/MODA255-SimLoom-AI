@@ -19,6 +19,8 @@ def artifact_listing(root: str | Path, limit: int = 500) -> list[dict[str, Any]]
     items = []
     for directory, folders, files in os.walk(root, followlinks=False):
         folders[:] = sorted(name for name in folders if not name.startswith(".") and name not in {"runs", "__pycache__", "node_modules"} and not (Path(directory) / name).is_symlink())
+        if Path(directory) == root / "artifacts/generated":
+            folders[:] = [name for name in folders if name != "history"]
         for name in sorted(files):
             path = Path(directory) / name
             if name.startswith(".") or path.suffix in {".db", ".db-wal", ".db-shm"} or path.is_symlink():

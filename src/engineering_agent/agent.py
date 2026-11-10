@@ -18,6 +18,7 @@ from .operations import OperationRegistry
 from .results import MetricRule, evaluate_metrics, parse_result_file
 from .script_gen import ModelSpec, ScriptGenerator
 from .transactions import RunTransaction
+from .execution import Progress, commit_outputs
 from .validation import validate_artifacts, validate_asset, validate_plan, validate_report
 from .versioning import VersionStore
 from .windows_control import WindowsAutomation
@@ -35,73 +36,49 @@ class EngineeringAgent:
     def plan(self, prompt: str, *, project_dir: str = ".", parameters: dict[str, Any] | None = None) -> ExecutionPlan:
         return self.planner.plan(AgentRequest(prompt, project_dir, parameters or {}))
 
-    def run(
-        self,
-        prompt: str,
-        *,
-        project_dir: str = ".",
-        parameters: dict[str, Any] | None = None,
-        dry_run: bool = True,
-    ) -> RunReport:
-        plan = self.plan(prompt, project_dir=project_dir, parameters=parameters)
-        plan_validation = validate_plan(plan)
-        txn = RunTransaction(project_dir)
-        txn.begin(plan.to_dict())
-        txn.checkpoint("before-execution", {"plan_valid": plan_validation["valid"]})
-        generated_files = {}
-        staged_files = {}
-        if self.config.get("generate_scripts", True):
-            spec_data = (parameters or {}).get("model_spec", {})
-            staged_files = ScriptGenerator(project_dir, txn.stage_dir / "generated").generate(ModelSpec(**spec_data))
-            generated_files = staged_files
-        context = AdapterContext(
-            project_dir=Path(project_dir).resolve(),
-            dry_run=dry_run,
-            timeout_seconds=int(self.config.get("timeouts", {}).get("step_seconds", 600)),
-            environment=self.config.get("environment", {}),
-        )
-        results: list[ToolResult] = []
-        completed: set[str] = set()
-        for step in plan.steps:
-            missing = [dependency for dependency in step.depends_on if dependency not in completed]
-            if missing:
-                result = ToolResult(
-                    step_id=step.id,
-                    tool=step.tool,
-                    status="blocked",
-                    message=f"依赖步骤未完成: {', '.join(missing)}",
-                )
-            else:
-                result = self.adapters[step.tool].execute(step, context)
-            results.append(result)
-            if result.status in {"planned", "completed"}:
-                completed.add(step.id)
-            elif result.status in {"failed", "unavailable", "blocked"}:
-                # Preserve dependency semantics for later steps.
-                completed.discard(step.id)
-        report = RunReport(plan, results, generated_files, txn.run_id, "", {"plan": plan_validation}, txn.events())
-        if not plan_validation["valid"]:
-            txn.rollback("invalid execution plan")
-            report.status = "failed"
-            report.timeline = txn.events()
+    def run(self, prompt: str, *, project_dir: str = ".", parameters: dict[str, Any] | None = None,
+            dry_run: bool = True, on_event=None) -> RunReport:
+        progress = Progress(on_event)
+        with progress.stage("planning", "生成并检查计划"):
+            plan = self.plan(prompt, project_dir=project_dir, parameters=parameters)
+            plan_validation = validate_plan(plan)
+            progress.emit("plan", plan.to_dict())
+        with RunTransaction(project_dir) as txn:
+            txn.begin(plan.to_dict())
+            txn.checkpoint("before-execution", {"plan_valid": plan_validation["valid"]})
+            report = RunReport(plan, [], {}, txn.run_id, "", {"plan": plan_validation}, [])
+            if not plan_validation["valid"]:
+                txn.rollback("invalid execution plan")
+                report.status, report.timeline = "failed", txn.events()
+                return report
+            staged_files = {}
+            with progress.stage("prepare", "准备软件输入"):
+                if self.config.get("generate_scripts", True):
+                    staged_files = ScriptGenerator(project_dir, txn.stage_dir / "generated").generate(
+                        ModelSpec(**(parameters or {}).get("model_spec", {})))
+            context = AdapterContext(project_dir=Path(project_dir).resolve(), dry_run=dry_run,
+                                     timeout_seconds=int(self.config.get("timeouts", {}).get("step_seconds", 600)),
+                                     environment=self.config.get("environment", {}))
+            completed = set()
+            for step in plan.steps:
+                with progress.stage("tool:" + step.id, step.objective or step.action, step.tool.value) as stage:
+                    missing = [dep for dep in step.depends_on if dep not in completed]
+                    result = (ToolResult(step.id, step.tool, "blocked", "依赖步骤未完成: " + ", ".join(missing))
+                              if missing else self.adapters[step.tool].execute(step, context))
+                    report.results.append(result)
+                    stage.update(status=result.status, message=result.message, inputs=step.inputs, outputs=result.outputs)
+                    if result.status in {"planned", "completed"}:
+                        completed.add(step.id)
+            if any(r.status in {"failed", "blocked", "unavailable"} for r in report.results):
+                txn.rollback("one or more execution steps failed")
+                report.status, report.timeline = "rolled_back", txn.events()
+                return report
+            with progress.stage("publish", "保存产物和历史副本"):
+                report.generated_files, report.artifact_manifest = commit_outputs(txn, staged_files)
+            report.status, report.timeline = "committed", txn.events()
+            report.validation = {"plan": plan_validation, "report": validate_report(report),
+                                 "artifacts": validate_artifacts(report.generated_files)}
             return report
-        if any(result.status in {"failed", "blocked", "unavailable"} for result in results):
-            txn.rollback("one or more execution steps failed")
-            report.status = "rolled_back"
-            report.generated_files = {}
-            report.timeline = txn.events()
-            return report
-        if staged_files:
-            report.generated_files = txn.commit(staged_files)
-        else:
-            txn.record("commit", {"files": {}})
-            txn.state = "committed"
-            txn._write_state()
-            txn.release_lock()
-        report.status = "committed"
-        report.timeline = txn.events()
-        report.validation = {"plan": plan_validation, "report": validate_report(report), "artifacts": validate_artifacts(report.generated_files)}
-        return report
 
     def generate(self, project_dir: str = ".", model_spec: dict[str, Any] | None = None) -> dict[str, str]:
         """Generate vendor inputs through the same staged transaction path as runs."""
@@ -114,9 +91,9 @@ class EngineeringAgent:
             txn.fail(str(exc))
             raise
 
-    def run_offline_vehicle_chain(self, project_dir: str = ".", model_spec: dict[str, Any] | None = None, rules: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    def run_offline_vehicle_chain(self, project_dir: str = ".", model_spec: dict[str, Any] | None = None, rules: list[dict[str, Any]] | None = None, *, on_event=None) -> dict[str, Any]:
         """Run the deterministic four-tool fixture chain without vendor software."""
-        return run_offline_vehicle_chain(project_dir, model_spec, rules)
+        return run_offline_vehicle_chain(project_dir, model_spec, rules, on_event=on_event)
 
     def ingest(self, path: str, kind: str | None = None) -> dict[str, Any]:
         return self.reader.read(path, kind).to_dict()

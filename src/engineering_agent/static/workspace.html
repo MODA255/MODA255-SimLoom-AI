@@ -47,6 +47,27 @@
       <div class="card"><div class="card-head"><div><h3>模型与结果</h3><p id="assetProject">选择项目后浏览产物。</p></div><button class="btn btn-light" id="refreshAssets">刷新</button></div><div class="asset-list" id="assetsList"></div></div>
       <div class="card"><div class="preview-meta"><div class="eyebrow">Asset preview</div><h3 id="previewName">选择一个工程文件</h3><p class="muted" id="previewHint">STEP / OBJ 模型 · CSV 曲线 · JSON 指标</p></div><div class="file-actions"><a id="downloadAsset" class="btn btn-light btn-link" hidden>下载原始文件</a></div><div id="preview"><div class="empty">预览将在这里显示。</div></div><details><summary>文件信息与数据</summary><pre class="json" id="assetDetails">—</pre></details></div>
     </div></section>
+    <section id="taskDetail" class="panel" hidden aria-label="任务详情">
+      <div class="task-toolbar"><button class="btn btn-light" data-panel="workspace">← 返回工作台</button><button class="btn btn-light" id="refreshTaskDetail">刷新记录</button></div>
+      <p id="taskLoading" role="status">正在读取任务记录…</p>
+      <div id="taskDetailContent" hidden>
+        <div class="card task-summary"><div class="eyebrow">Run record / 工程运行记录</div><h2 id="taskTitle"></h2><p class="muted" id="taskSubtitle"></p><div class="action-row"><span class="pill" id="taskMode"></span><span class="pill" id="taskStatus"></span><button class="btn btn-light" id="taskRetryOrigin" hidden></button></div><p id="taskNotice" class="task-notice"></p>
+          <div class="task-facts"><div><span>开始时间</span><strong id="taskStarted"></strong></div><div><span>结束时间</span><strong id="taskFinished"></strong></div><div><span>执行耗时</span><strong id="taskDuration"></strong></div><div><span>工程指标</span><strong id="taskConclusion"></strong></div></div>
+          <div class="action-row"><a class="btn btn-blue btn-link" id="reporthtml" download>下载 HTML 报告</a><a class="btn btn-light btn-link" id="reportjson" download>下载 JSON 报告</a><button class="btn btn-light" id="retryTask" hidden>使用原参数重试</button></div>
+          <p class="muted">HTML 报告可离线打开，也可用浏览器打印为 PDF。</p>
+        </div>
+        <div id="taskFailure" class="card task-failure" hidden><h3>失败原因</h3><p id="taskFailureText"></p><p id="taskNextStep"></p></div>
+        <div class="task-grid">
+          <div class="card"><h3>阶段进度与耗时</h3><div id="taskStages"></div></div>
+          <div class="card"><h3>工程指标判定</h3><div id="taskMetrics"></div></div>
+          <div class="card"><h3>本次输入快照</h3><div id="taskInput"></div><details><summary>完整参数与规则</summary><pre class="json" id="taskInputJson"></pre></details></div>
+          <div class="card"><h3>执行计划</h3><div id="taskPlan"></div></div>
+          <div class="card task-wide"><h3>本次产物</h3><p class="muted">每次运行保留独立副本，下次运行不会覆盖这里的文件。</p><div id="taskArtifacts"></div></div>
+          <div class="card task-wide"><h3>事件时间线</h3><ol class="task-events" id="taskEvents"></ol></div>
+          <details class="card task-wide"><summary>完整运行记录</summary><pre class="json" id="taskEvidence"></pre></details>
+        </div>
+      </div>
+    </section>
     <section id="settings" class="panel" hidden><div class="card"><div class="card-head"><div><h3>环境检查</h3><p>离线体验不需要商业软件。真实执行需另行配置 Windows 工作站。</p></div><button class="btn btn-light" id="refreshDoctor">重新检测</button></div><div class="capability-list" id="capabilities"></div><div class="status-list" id="doctor"></div></div></section>
   </main>
 </div>

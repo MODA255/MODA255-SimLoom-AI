@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .agent import EngineeringAgent
 from .queue import TaskQueue
+from .tasks import TaskRunner, input_snapshot
 from .results import MetricRule
 from .web import serve
 from .mcp_server import serve_stdio
@@ -168,7 +169,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "enqueue":
         queue = TaskQueue(args.db)
-        task_id = queue.submit(args.prompt, args.project_dir, args.project_id)
+        project = queue.get_project(args.project_id) if args.project_id else None
+        if args.project_id and not project:
+            raise ValueError("项目不存在")
+        root = (project or {}).get("project_dir") or args.project_dir
+        task_id = queue.submit(args.prompt, root, args.project_id, inputs=input_snapshot((project or {}).get("metadata")))
         print(json.dumps(queue.get(task_id), ensure_ascii=False, indent=2))
         return 0
     if args.command == "worker":
@@ -178,10 +183,12 @@ def main(argv: list[str] | None = None) -> int:
             task = queue.next_queued()
             if not task:
                 break
-            queue.update(task["id"], "running")
-            report = agent.run(task["prompt"], project_dir=task["project_dir"], dry_run=not args.execute)
-            failed = any(result.status in {"failed", "blocked", "unavailable"} for result in report.results)
-            queue.update(task["id"], "failed" if failed else "completed", report.to_dict())
+            try:
+                TaskRunner(agent, queue).run(task["id"], execute=args.execute)
+            except RuntimeError as exc:
+                if str(exc) == "TASK_ALREADY_RUNNING_OR_FINISHED":
+                    continue
+                raise
             processed += 1
             if args.once:
                 break

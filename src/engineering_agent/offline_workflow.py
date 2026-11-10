@@ -18,6 +18,7 @@ from .results import MetricRule, evaluate_metrics
 from .script_gen import ModelSpec, ScriptGenerator
 from .transactions import RunTransaction
 from .validation import hash_file
+from .execution import Progress, commit_outputs
 
 
 DEFAULT_RULES = [
@@ -120,8 +121,9 @@ def _vigrade_surrogate(stage_root: Path, spec: ModelSpec, motion: list[dict[str,
     return str(path), result
 
 
-def run_offline_vehicle_chain(project_dir: str | Path, model_spec: dict[str, Any] | None = None, rules: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+def run_offline_vehicle_chain(project_dir: str | Path, model_spec: dict[str, Any] | None = None, rules: list[dict[str, Any]] | None = None, *, on_event=None) -> dict[str, Any]:
     """Run a complete, deterministic CATIA→Ansys→Adams→VI-grade fixture chain."""
+    progress = Progress(on_event)
     project_root = Path(project_dir).resolve()
     spec = ModelSpec(**(model_spec or {}))
     rule_data = rules if rules is not None else DEFAULT_RULES
@@ -129,11 +131,23 @@ def run_offline_vehicle_chain(project_dir: str | Path, model_spec: dict[str, Any
     txn.begin({"operation": "workflow.offline_vehicle_chain", "model_spec": model_spec or {}, "rules": rule_data})
     try:
         stage_root = txn.stage_dir / "generated"
-        generated = ScriptGenerator(project_root, stage_root).generate(spec)
-        model_path, geometry = _create_model(stage_root, spec)
-        ansys_path, ansys = _ansys_surrogate(stage_root, spec)
-        motion_path, motion = _adams_surrogate(stage_root, spec)
-        vigrade_path, vigrade = _vigrade_surrogate(stage_root, spec, motion)
+        progress.emit("plan", {"steps": [
+            {"id": tool, "tool": tool, "action": "offline_surrogate", "depends_on": [previous] if previous else []}
+            for tool, previous in (("catia", None), ("ansys", "catia"), ("adams", "ansys"), ("vi-grade", "adams"))]})
+        with progress.stage("prepare", "准备软件输入"):
+            generated = ScriptGenerator(project_root, stage_root).generate(spec)
+        with progress.stage("catia", "生成离线 STEP 模型", "catia") as stage:
+            model_path, geometry = _create_model(stage_root, spec)
+            stage["outputs"] = ["offline/model.step"]
+        with progress.stage("ansys", "生成离线结构示例", "ansys") as stage:
+            ansys_path, ansys = _ansys_surrogate(stage_root, spec)
+            stage["outputs"] = ["offline/ansys_result.json"]
+        with progress.stage("adams", "生成离线运动曲线", "adams") as stage:
+            motion_path, motion = _adams_surrogate(stage_root, spec)
+            stage["outputs"] = ["offline/adams_motion.csv"]
+        with progress.stage("vi-grade", "生成离线操稳指标", "vi-grade") as stage:
+            vigrade_path, vigrade = _vigrade_surrogate(stage_root, spec, motion)
+            stage["outputs"] = ["offline/vigrade_metrics.json"]
         # Rules describe the complete cross-tool engineering objective.  Keep
         # each vendor result in its own artifact, then expose a read-only
         # merged view to the independent validator so rules can reference
@@ -150,7 +164,8 @@ def run_offline_vehicle_chain(project_dir: str | Path, model_spec: dict[str, Any
                 "vi-grade": vigrade,
             },
         }
-        verdicts = [verdict.to_dict() for verdict in evaluate_metrics(combined, [MetricRule(**item) for item in rule_data])]
+        with progress.stage("validate", "检查工程指标"):
+            verdicts = [verdict.to_dict() for verdict in evaluate_metrics(combined, [MetricRule(**item) for item in rule_data])]
         all_staged = {
             **generated,
             "offline/model.step": model_path,
@@ -177,9 +192,10 @@ def run_offline_vehicle_chain(project_dir: str | Path, model_spec: dict[str, Any
         }
         write_json(report_path, report)
         all_staged["offline/report.json"] = str(report_path)
-        committed = txn.commit(all_staged)
+        with progress.stage("publish", "保存产物和历史副本"):
+            committed, manifest = commit_outputs(txn, all_staged)
         report["status"] = "committed"
-        return {"workflow": report["workflow"], "status": report["status"], "simulation_backend": report["simulation_backend"], "geometry": geometry, "stages": report["stages"], "verdicts": verdicts, "artifacts": committed, "report": committed["offline/report.json"]}
+        return {"run_id": txn.run_id, "artifact_manifest": manifest, "workflow": report["workflow"], "status": report["status"], "simulation_backend": report["simulation_backend"], "geometry": geometry, "stages": report["stages"], "verdicts": verdicts, "artifacts": committed, "report": committed["offline/report.json"]}
     except Exception as exc:
         txn.fail(str(exc))
         raise

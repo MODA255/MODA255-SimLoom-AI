@@ -247,3 +247,18 @@ PYTHONPATH=src python -m engineering_agent.cli mcp
 ## 当前边界
 
 这是一个可运行的端到端 MVP，不包含四个商业软件的授权、安装和团队内部已经验证的生产模板。接入真实环境时，需要在 Windows 工作站配置软件路径、pywin32/厂商 API、输入文件映射和结果字段；随后才能把模板脚本替换成实际项目脚本，并让 bridge 返回真实产物和指标。
+
+
+## 工作台任务报告
+
+`tasks.TaskRunner` 为 Web 和 CLI worker 统一原子认领、输入快照、阶段事件和失败记录。
+`execution.Progress` 使用实际时间测量阶段耗时；`reports.build_report` 只读取持久化
+任务与事件，不读取当前模型来补造历史指标。HTML 导出对用户文本转义并禁止脚本。
+
+新报告入口为 `/api/tasks/<id>/report?format=json|html`，`download=1` 返回下载附件。
+重试入口 `/api/tasks/<id>/retry` 复制原快照并关联 `retry_of`，运行仍调用
+`/api/tasks/<id>/run`。旧数据库按需增加 `mode`、`input_json`、`retry_of` 字段。
+
+`execution.commit_outputs` 在原事务中提交最新产物与按 run_id 分隔的历史副本。
+报告保存历史副本相对路径、字节数和生成时 SHA-256。每次运行保留副本会增加磁盘用量，
+当前没有自动清理。执行失败、指标不通过、未判定和缺失证据在界面中分别展示。
