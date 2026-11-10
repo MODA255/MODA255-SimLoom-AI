@@ -1,0 +1,62 @@
+{
+  "_comment": "Tracked test fixture. Mirrors the shape of the gitignored local/phase1/run-config.json so the phase-one readiness and route-contract tests can run in CI, where local/ does not exist. Contains no credentials: every sensitive field is an environment-variable reference with a null value, and the host is a reserved .invalid domain. Do not point this at a real environment.",
+  "mode": "remote_live",
+  "state_db": ":memory:",
+  "profiles": {
+    "publish": false
+  },
+  "target": {
+    "environment": "remote-matrixgen-test",
+    "base_url": "https://matrixgen.example.invalid",
+    "api_prefix": "/api/v1",
+    "allowed_hosts": [
+      "matrixgen.example.invalid"
+    ],
+    "verify_tls": true
+  },
+  "auth": {
+    "type": "bearer",
+    "matrixgen_token": null,
+    "matrixgen_token_env": "MATRIXGEN_TOKEN",
+    "identifier_env": "MATRIXGEN_IDENTIFIER",
+    "email_env": "MATRIXGEN_EMAIL",
+    "password_env": "MATRIXGEN_PASSWORD",
+    "refresh_token": null,
+    "cookie": null
+  },
+  "enabled_chains": [
+    "I-LINK", "I-LIVE", "I-UPLOAD", "M-ECOM", "M-IP", "M-THEME",
+    "A-ECOM", "A-IP", "A-THEME"
+  ],
+  "phase1": {
+    "suite": "../../configs/daily-nine-chain-phase1.json",
+    "safe_write": false
+  },
+  "remote_api": {
+    "routes": {
+      "vfc_config": "GET /vfc/config",
+      "import_url": "POST /assets/import-url",
+      "upload_file": "POST /assets/upload",
+      "list_assets": "GET /assets",
+      "asset_detail": "GET /assets/{asset_id}",
+      "asset_progress": "GET /assets/{asset_id}/progress",
+      "asset_progress_phases": "GET /assets/{asset_id}/progress/phases",
+      "source_probe": "GET /sources/probe",
+      "create_vfc_task": "POST /vfc/tasks",
+      "get_vfc_task": "GET /vfc/tasks/{task_id}",
+      "get_vfc_phases": "GET /vfc/tasks/{task_id}/phases",
+      "get_vfc_videos": "GET /vfc/tasks/{task_id}/videos",
+      "download_vfc_video": "GET /vfc/tasks/{task_id}/videos/{video_id}/download",
+      "get_vfc_evidence": "GET /vfc/tasks/{task_id}/evidence",
+      "get_vfc_nodes": "GET /vfc/tasks/{task_id}/nodes",
+      "get_vfc_node": "GET /vfc/tasks/{task_id}/nodes/{node_key}",
+      "get_vfc_diagnostic": "GET /vfc/tasks/{task_id}/diagnostics/{name}"
+    }
+  },
+  "automation_routes": {
+    "get_task": "GET /automation/tasks/{task_id}",
+    "get_automation_stages": "GET /automation/tasks/{task_id}/stages",
+    "get_ip_promo_task": "GET /ip-promo-automations/{task_id}",
+    "get_ip_promo_phases": "GET /ip-promo-automations/{task_id}/phases"
+  }
+}

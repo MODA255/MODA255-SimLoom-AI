@@ -4,14 +4,19 @@ from orchestrator.phase1_runner import phase1_readiness
 from orchestrator.phase1_suite import _read_config, load_phase1_suite, validate_phase1_resources
 
 CONFIG = Path(__file__).parents[1] / "configs" / "daily-nine-chain-phase1.json"
-LOCAL_RUN_CONFIG = Path(__file__).parents[1] / "local" / "phase1" / "run-config.json"
 
 
-def test_local_run_config_resolves_relative_suite_and_local_env(monkeypatch):
-    monkeypatch.delenv("MATRIXGEN_FOLDER_ID", raising=False)
-    monkeypatch.delenv("DAILY_DOUYIN_URL", raising=False)
+def test_local_run_config_resolves_relative_suite_and_local_env(phase1_run_config, tmp_path, monkeypatch):
+    # A different working directory proves the suite and upload paths do not
+    # accidentally depend on the checkout's ignored local files.
+    monkeypatch.chdir(tmp_path)
+    config = _read_config(phase1_run_config)
+    assert config["phase1"]["suite"] == "../../configs/daily-nine-chain-phase1.json"
+    assert config["_env_values"]["MATRIXGEN_FOLDER_ID"] == "fixture-folder"
+    assert config["_env_values"]["DAILY_DOUYIN_URL"] == "https://fixture.test/douyin/video"
+    assert Path(config["_env_values"]["DAILY_UPLOAD_FILE"]).is_file()
 
-    result = phase1_readiness(_read_config(LOCAL_RUN_CONFIG))
+    result = phase1_readiness(config)
 
     assert result["status"] == "ready"
     assert result["suite_id"] == "daily-nine-chain-phase1-v1"

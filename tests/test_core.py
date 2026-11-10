@@ -92,7 +92,7 @@ def test_config_loads_env_overrides_without_persisting_secrets(tmp_path):
     assert "secret-token" not in json.dumps(c.snapshot())
 
 
-def test_remote_adapter_builds_config_route_without_calling_unknown_route(tmp_path):
+def test_remote_adapter_builds_config_route_without_calling_unknown_route(tmp_path, remote_test_config):
     from orchestrator.adapters import RemoteAdapter
     data = config(tmp_path, mode="remote_live")
     data["target"] = {"base_url": "https://example.test", "api_prefix": "/api/v1", "allowed_hosts": ["example.test"]}
@@ -103,15 +103,14 @@ def test_remote_adapter_builds_config_route_without_calling_unknown_route(tmp_pa
     with pytest.raises(RuntimeError, match="REMOTE_ROUTE_UNCONFIGURED"):
         adapter.request("missing", {})
 
-    data = json.loads((ROOT / "configs" / "remote-test.local.json").read_text())
-    data["state_db"] = str(tmp_path / "state.db")
+    data = remote_test_config
     c = load_config(data)
     assert c.mode == "remote_live"
 
 
-def test_search_link_cli_returns_json_blocked_for_missing_provider():
+def test_search_link_cli_returns_json_blocked_for_missing_provider(remote_config_path):
     result = subprocess.run(
-        [sys.executable, "-m", "orchestrator", "search-link", "--config", str(ROOT / "configs" / "remote-test.local.json"), "--query", "test", "--limit", "1"],
+        [sys.executable, "-m", "orchestrator", "search-link", "--config", str(remote_config_path), "--query", "test", "--limit", "1"],
         cwd=ROOT,
         capture_output=True,
         text=True,

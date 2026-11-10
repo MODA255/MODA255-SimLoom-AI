@@ -111,12 +111,10 @@ def test_idempotent_operation_store_never_resubmits():
     assert len(fake.imports)==1 and second['asset']==first['asset']
 
 
-def test_all_adapter_methods_use_httpx_without_network(monkeypatch):
+def test_all_adapter_methods_use_httpx_without_network(monkeypatch, remote_test_config):
     import httpx
     from orchestrator.adapters import RemoteAdapter
-    import json
-    from pathlib import Path
-    cfg=json.loads((Path(__file__).parents[1]/'configs/remote-test.local.json').read_text())
+    cfg = remote_test_config
     calls=[]
     def request(method,url,**kwargs):
         calls.append((method,url,kwargs))
