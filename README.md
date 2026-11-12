@@ -150,7 +150,7 @@ agent.execute_operation("cad.batch_apply", {
 
 验证发现零长度线、非法半径、短多段线、无效填充边界或缺失块引用时，
 `cad.validate_and_repair` 会生成可审计的修复 operation plan，并在验证通过后
-再提交结果。Web 资产预览对 DXF 提供实体选择、图层开关、逐实体高亮、撤销/重做和选择集保存。Viewer 的移动、旋转、删除、文字属性编辑和选择集保存会通过父工作台的 `postMessage` 发回
+再提交结果。Web 资产预览对 DXF 提供实体选择、图层开关、变更对象定位、真实历史快照回放、撤销/重做和选择集保存。Viewer 的移动、旋转、删除、文字属性编辑和选择集保存会通过父工作台的 `postMessage` 发回
 `/api/cad/operation`，因此和 Python/MCP 一样经过事务、checkpoint、独立验证、diff、落盘重读和 rollback；外部 CAD
 软件仍然只负责后续的厂商格式和真实求解。
 
@@ -168,6 +168,11 @@ CAD 审计也可以带工程要求，例如 `required_layers`、`required_entity
 工作台的 DXF 预览显示原生圆弧、带凸度的多段线、旋转椭圆、嵌套块与属性、
 填充孔洞及尺寸标注。点击块内图形仍选择顶层可编辑实体；滚轮缩放、拖动平移、
 Shift 框选和图层显示开关可直接使用。事务编辑完成后保留世界坐标视角与选择。
+
+「图纸版本」可以查看初始图纸及每次已保存的修改，支持前后步、播放和暂停。
+回放读取经过哈希校验的 DXF 与元数据快照，可以看到移动前的位置和后来删除的对象，
+不会执行编辑命令或移动撤销位置。历史模式禁止编辑和出图；「返回当前」重新读取当前文件。
+批次按一次原子提交回放，子步骤的对象列表用于高亮定位，不提供批次内部的几何快照。
 
 暂不支持的图元和缺字会显示提示，预览本身不修改原图。
 详见 [原生二维 CAD 视图](docs/NATIVE_CAD_VIEWER.md)。当前模型视图、纸空间出图、
@@ -422,6 +427,7 @@ Ansys → Adams → VI-grade 流程画布，右侧区域展示验证指标、任
 | `GET/POST` | `/api/projects` | 管理历史项目 |
 | `GET` | `/api/artifacts` | 列出工程产物 |
 | `GET` | `/api/asset-view` | 获取 SVG/WebGL 资产预览 |
+| `GET` | `/api/cad/history-view` | 按 `root`、`path`、`revision_id`、`side=before/after` 只读查看已校验的 DXF 历史快照 |
 | `POST` | `/api/cad/operation` | 执行统一 `cad.*` 文档操作、原子 batch、自动修复和 Viewer 编辑 |
 | `GET` | `/api/timeline` | 获取版本时间线 |
 | `GET` | `/api/versions?project_id=...` | 获取项目版本摘要、DXF 能力标记和时间线 SVG |

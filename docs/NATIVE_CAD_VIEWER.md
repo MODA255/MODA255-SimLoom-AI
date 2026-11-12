@@ -19,6 +19,40 @@
 点击块内轮廓、属性或尺寸箭头，选中的是对应 INSERT / DIMENSION，
 不会把匿名块中的临时图元当成独立模型实体修改。
 
+## 历史几何回放
+
+「图纸版本」列出初始图纸和当前历史分支中的各次事务提交，包含尚未重做的版本。
+可直接选择版本、前后步、播放或暂停。显示的是当时保存的真实 DXF：
+移动前的位置、删除前的对象和原生曲线都会随版本变化。
+文件创建之前显示空场景，并明确提示文件尚不存在。
+
+历史模式为只读：编辑、撤销/重做、外层图纸工具和当前文件下载入口会禁用或隐藏，
+但选择、缩放、平移和图层显示仍可使用。「返回当前」重新读取当前文件并恢复之前的视角。
+浏览不执行历史操作，不修改当前 DXF、sidecar 或历史游标，不创建新的写事务。
+如项目存在此前中断的事务，读取锁仍按统一事务规则先恢复一致状态。
+
+Python/MCP 可调用只读操作 `cad.history_view`，safe MCP profile 也可使用：
+
+```python
+view = agent.execute_operation("cad.history_view", {
+    "project_dir": "./project",
+    "input_file": "part.dxf",
+    "revision_id": revision_id,  # 取自 cad.history 的 history.revisions[].id
+    "side": "before",          # 默认 after
+})
+```
+
+HTTP 对应 `GET /api/cad/history-view?root=...&path=...&revision_id=...&side=before`。
+响应包含 `snapshot`、`document`、`scene`、`history` 和只读 `viewer`。
+快照只允许来自该图纸当前分支；DXF 与 `.cad.json` 都要通过保存时的 SHA-256 校验，
+文件缺失、意外出现、哈希不符、路径穿越或符号链接均会拒绝。当前文件被外部修改
+不影响读取可信快照；撤销和继续编辑仍执行原有冲突检查。
+
+批次只有事务提交前后两个几何状态，尚无批次内每一步的独立快照。
+「定位变更对象」记录实际新增、删除和修改的实体 ID；展开的批次子步骤只高亮
+当前仍可见的对象，并提示已删除或隐藏的对象数量。该列表不替代几何回放。
+脚本和普通编辑也记录变更 ID；元数据变化可能没有直接变更的实体。
+
 ## 图层、图元与完整性
 
 显示路径记录顶层实体 ID、handle、实际图层及父块图层。
@@ -35,18 +69,21 @@ API 的 `asset.cad_view` 包含源 DXF 哈希、实体/绘图路径数量、世�
 ## 验证
 
 ```bash
-python -m pytest tests/test_cad_viewer.py tests/test_cad_editing.py -q
+python -m pytest tests/test_cad_viewer.py tests/test_cad_editing.py tests/test_cad_replay.py -q
 node tests/browser/cad_viewer.cjs
 node tests/browser/cad_editor.cjs
+node tests/browser/cad_history.cjs
 ```
 
 测试使用独立 ezdxf fixture：圆弧、半圆凸度多段线、旋转椭圆、嵌套块/属性、
 带孔填充和原生尺寸标注。浏览器实际计算 SVG 几何范围并与解析值比较，
 检查孔洞的点击行为、图层祖先关系、框选、缩放、平移和事务写入。
 另有 1,200 个实体的完整性测试；这不是工业大图性能基准。
+历史回放测试检查移动/删除前后的真实几何、撤销后的版本读取、文件创建前空场景、
+快照损坏与路径拒绝、只读入口、暂停、过期响应以及浏览期间所有项目文件的字节保持不变。
 
 当前渲染范围是二维模型空间；纸空间图纸仍使用单独的出图预览。
 栅格 IMAGE、部分代理图元和复杂字体不能完整显示。曲线通过原生绘图管线
 转换为矢量路径，并非通用精确几何约束求解器。
 框选要求对象全部落在窗口内，尚无交叉窗口、对象捕捉、夹点编辑或完整制图命令栏。
-「逐个高亮」展示当前对象，不是历史操作重放。
+回放范围是已保存的二维 DXF 事务；尚无跨软件原生模型历史或实时外部变更通知。

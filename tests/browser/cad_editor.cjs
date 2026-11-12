@@ -53,6 +53,15 @@ async function main() {
         const r=el.getBoundingClientRect(); return {x:r.x+el.clientLeft,y:r.y+el.clientTop};
       });
       const point = await frame().locator(`[data-entity-id="${id}"]`).first().evaluate(el => {
+        if(el.dataset.drawKind==='fill'){
+          // A letter outline may border a counter (a hole). Click inside actual
+          // ink so viewport size and glyph rounding do not move the hit outside.
+          const box=el.getBBox();
+          for(let y=1;y<30;y++)for(let x=1;x<60;x++){
+            const p=new DOMPoint(box.x+box.width*x/60,box.y+box.height*y/30);
+            if(el.isPointInFill(p)){const q=p.matrixTransform(el.getScreenCTM());return {x:q.x,y:q.y};}
+          }
+        }
         // Click an actual point on the visible stroke. SVG line boxes can have
         // zero height and a circle's center is deliberately unpainted.
         if(typeof el.getPointAtLength==='function'){

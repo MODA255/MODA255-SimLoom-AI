@@ -99,6 +99,25 @@ def test_api_errors_do_not_disconnect_clients(service):
     assert call("/api/health")[1] == {"ok": True}
 
 
+def test_history_view_http_reads_saved_geometry_and_reports_corruption(service, tmp_path):
+    from engineering_agent.formats import write_dxf
+    call, _, agent = service
+    path = tmp_path / "historical.dxf"
+    write_dxf(path, lines=[{"x1": 0, "y1": 0, "x2": 10, "y2": 0}])
+    revision = agent.execute_operation("cad.entity_move", {
+        "project_dir": str(tmp_path), "input_file": str(path), "output_file": str(path),
+        "entity_ids": ["e00001"], "delta": [5, 0, 0]})["run_id"]
+    query = urllib.parse.urlencode({"root": str(tmp_path), "path": path.name, "revision_id": revision, "side": "before"})
+    status, result = call("/api/cad/history-view?" + query)
+    assert status == 200 and result["read_only"]
+    assert result["document"]["entities"][0]["start"]["x"] == 0
+    assert result["history"]["cursor"] == 1
+    (tmp_path / "artifacts/runs" / revision / "backup" / path.name).write_bytes(b"damaged")
+    status, result = call("/api/cad/history-view?" + query)
+    assert status >= 400
+    assert "CAD_HISTORY_SNAPSHOT_CORRUPT" in result["error"]
+
+
 def test_capabilities_explain_offline_and_connected_modes(service):
     call, _, _ = service
     status, capabilities = call("/api/capabilities")

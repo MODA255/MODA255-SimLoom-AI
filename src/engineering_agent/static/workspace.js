@@ -1,7 +1,7 @@
 'use strict';
 const $ = s => document.querySelector(s);
 const escapeHTML = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const state = {project:null, templates:[], busy:false, page:1, preview:0, previewPath:null, versions:[], versionView:0};
+const state = {project:null, templates:[], busy:false, page:1, preview:0, previewPath:null, versions:[], versionView:0, cadHistory:false, historyRequest:0};
 const icons = {catia:'◇', ansys:'△', adams:'⌁', 'vi-grade':'◎'};
 const labels = {waiting:'等待恢复连接',queued:'待运行', running:'运行中', completed:'已完成', failed:'失败'};
 let toastTimer;
@@ -43,7 +43,7 @@ function projectRequired() { if(state.project) return true; openWizard(); return
 async function openProject(id) {
   const project=await request('/api/projects/'+encodeURIComponent(id));
   if(!project.project_dir) throw new Error('这是未关联目录的旧项目，请使用向导创建一个独立项目。');
-  state.project=project; state.taskId=null; state.preview++; state.previewPath=null;
+  state.project=project; state.taskId=null; state.preview++; state.previewPath=null; state.cadHistory=false; state.historyRequest++;
   try { localStorage.setItem('simloom.project',id); } catch (_) {}
   $('#currentProject').textContent=project.name;
   $('#projectHint').textContent='当前项目：'+project.name;
@@ -254,6 +254,7 @@ async function refreshAssets() {
 }
 async function previewAsset(path,viewerState=null) {
   const version=++state.preview;
+  state.cadHistory=false;state.historyRequest++;
   state.previewPath=path;
   $('#drawingTools').hidden=true;
   const query=new URLSearchParams({root:state.project.project_dir,path});
@@ -321,7 +322,7 @@ function drawingError(error) {
   return key?messages[key]:error.message;
 }
 async function changeDrawing(prepare) {
-  if(state.busy||!state.project||!state.drawing) return;
+  if(state.busy||state.cadHistory||!state.project||!state.drawing) return;
   const project=state.project, path=state.previewPath, version=state.preview;
   let name=$('#plotLayout').value, operation, arguments_;
   if(prepare) {
@@ -347,7 +348,7 @@ async function changeDrawing(prepare) {
   finally {busy(false); if(state.drawing) updateDrawingLayout(false);}
 }
 async function exportDrawing(format,preview=false) {
-  if(state.busy||!state.project||!state.drawing) return;
+  if(state.busy||state.cadHistory||!state.project||!state.drawing) return;
   const project=state.project, source=state.previewPath, version=state.preview;
   const layout=$('#plotLayout').value, model=layout==='Model';
   const basename=source.split('/').pop().replace(/\.dxf$/i,'');
@@ -381,12 +382,38 @@ $('#plotPdf').onclick=()=>exportDrawing('pdf');
 $('#plotPng').onclick=()=>exportDrawing('png');
 $('#prepareSheet').onclick=()=>changeDrawing(true);
 $('#saveTitle').onclick=()=>changeDrawing(false);
+window.addEventListener('message',async event=>{
+  const data=event.data, frame=$('#preview iframe');
+  if(!['cad-history-request','cad-history-current','cad-history-cancel'].includes(data?.type)||!frame||event.source!==frame.contentWindow)return;
+  const assetPath=String(data.assetPath||'');
+  if(!state.project||assetPath!==state.previewPath||!assetPath.toLowerCase().endsWith('.dxf'))return;
+  if(data.type==='cad-history-cancel'){
+    if(state.activeHistoryRequest===data.requestId){state.historyRequest++;state.activeHistoryRequest=null;}
+    return;
+  }
+  const reply=payload=>event.source.postMessage({type:'cad-history-result',assetPath,requestId:data.requestId,index:data.index,...payload},'*');
+  if(state.busy){reply({ok:false,error:'另一项操作正在保存，请稍后重试'});return;}
+  if(data.type==='cad-history-current'){await previewAsset(assetPath,data.viewerState);return;}
+  const project=state.project, version=state.preview, sequence=++state.historyRequest;
+  state.activeHistoryRequest=data.requestId;
+  state.cadHistory=true;$('#drawingTools').hidden=true;$('#downloadAsset').hidden=true;
+  $('#previewHint').textContent='历史图纸只读 · 查看不会修改当前文件或撤销位置';
+  const current=()=>state.project?.id===project.id&&state.preview===version&&state.historyRequest===sequence&&$('#preview iframe')===frame;
+  try{
+    const query=new URLSearchParams({root:project.project_dir,path:assetPath,revision_id:data.revision_id,side:data.side});
+    const result=await request('/api/cad/history-view?'+query);
+    if(!current())return;
+    $('#assetDetails').textContent=JSON.stringify({snapshot:result.snapshot,document:result.document},null,2);
+    reply({ok:true,scene:result.scene,snapshot:result.snapshot});
+  }catch(error){if(current())reply({ok:false,error:error.message});}
+});
 window.addEventListener('message', async event=>{
   const data=event.data;
   if(!data||data.type!=='cad-operation') return;
   const activeFrame=$('#preview iframe');
   if(!activeFrame || !event.source || event.source!==activeFrame.contentWindow) return;
   const reply=payload=>event.source.postMessage({type:'cad-operation-result',requestId:data.requestId,...payload},'*');
+  if(state.cadHistory){reply({ok:false,error:'历史图纸只读，请先返回当前文件'});return;}
   if(state.busy) { reply({ok:false,error:'另一项操作正在保存，请稍候再试'}); return; }
   const assetPath=String(data.assetPath||'');
   if(!state.project||assetPath!==state.previewPath||!assetPath.toLowerCase().endsWith('.dxf')) {

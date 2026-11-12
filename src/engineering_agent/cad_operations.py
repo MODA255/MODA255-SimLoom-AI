@@ -167,6 +167,17 @@ def _copy_with_transform(document: CadDocument, entity: dict[str, Any], *, dx: f
     return copied
 
 
+def _entity_change_ids(before: CadDocument, after: CadDocument) -> dict[str, list[str]]:
+    """Return stable IDs for added, removed and changed CAD entities."""
+    left = {str(item.get("id")): item for item in before.entities}
+    right = {str(item.get("id")): item for item in after.entities}
+    added = sorted(set(right) - set(left))
+    removed = sorted(set(left) - set(right))
+    changed = sorted(identifier for identifier in set(left) & set(right) if left[identifier] != right[identifier])
+    return {"added_ids": added, "removed_ids": removed, "changed_ids": changed,
+            "entity_ids": sorted(set(added) | set(removed) | set(changed))}
+
+
 def _chain_lines(lines: list[dict[str, Any]], tolerance: float) -> list[dict[str, float]]:
     """Build one ordered vertex chain from connected LINE entities."""
     if not lines:
@@ -1371,8 +1382,10 @@ class CadOperationEngine:
                 transaction.rollback("CAD_SCRIPT_VALIDATION_FAILED")
                 raise ValueError("CAD_SCRIPT_VALIDATION_FAILED:" + json.dumps(validation.get("errors", []), ensure_ascii=False))
             diff = before.diff(after)
+            changes = _entity_change_ids(before, after)
             after.metadata.setdefault("operation_history", []).append({
-                "operation": "cad.script_apply", "script": script_label, "change_count": diff["change_count"]})
+                "operation": "cad.script_apply", "script": script_label, "change_count": diff["change_count"],
+                "run_id": transaction.run_id, **changes})
             staged_sidecar = Path(str(staged_dxf) + ".cad.json")
             staged_sidecar.write_text(json.dumps(after.sidecar(staged_dxf), ensure_ascii=False, indent=2), encoding="utf-8")
             relative = str(output_file.relative_to(project_root))
@@ -1398,6 +1411,13 @@ class CadOperationEngine:
             }
 
     def apply(self, operation: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if operation == "cad.history_view":
+            from .cad_replay import history_view
+            raw_input = Path(arguments["input_file"]).expanduser()
+            if not arguments.get("project_dir"):
+                raw_input = raw_input.absolute()
+            return history_view(arguments.get("project_dir") or raw_input.parent, raw_input,
+                                arguments["revision_id"], arguments.get("side", "after"))
         if operation in {"cad.standard_catalog", "cad.standard_library"}:
             from .standards import catalog, standard_library
             return catalog(arguments.get("standard")) if operation == "cad.standard_catalog" else standard_library(arguments.get("category"), arguments.get("query"))
@@ -1471,11 +1491,14 @@ class CadOperationEngine:
             before = document.clone()
             transaction.checkpoint("before-cad-edit", {"operation": operation, "entity_count": len(document.entities)})
             results = []
+            replay_steps = []
             corner_postconditions = []
             for item in operations:
                 item = dict(item)
                 item_name = str(item.pop("operation", operation))
+                step_before = document.clone()
                 result = {"operation": item_name, **self._apply_one(document, item_name, item)}
+                replay_steps.append({"operation": item_name, **_entity_change_ids(step_before, document)})
                 if "corner_check" in result:
                     from .corner_validation import inspect_corner
                     check = result["corner_check"]
@@ -1495,7 +1518,10 @@ class CadOperationEngine:
                 for repair in repair_plan:
                     repair_payload = dict(repair)
                     repair_name = repair_payload.pop("operation")
+                    step_before = document.clone()
                     results.append({"operation": repair_name, "replanned": True, **self._apply_one(document, repair_name, repair_payload)})
+                    replay_steps.append({"operation": repair_name, "replanned": True,
+                                         **_entity_change_ids(step_before, document)})
                 validation = validate_cad_document(document, requirements)
             if not validation["valid"]:
                 transaction.rollback("CAD_VALIDATION_FAILED")
@@ -1511,7 +1537,10 @@ class CadOperationEngine:
                 if unchanged:
                     requirements.setdefault("corner_connections", []).append(check)
             diff = before.diff(document)
-            document.metadata.setdefault("operation_history", []).append({"operation": operation, "change_count": diff["change_count"], "repair_count": len(repair_plan)})
+            changes = _entity_change_ids(before, document)
+            document.metadata.setdefault("operation_history", []).append({
+                "operation": operation, "change_count": diff["change_count"], "repair_count": len(repair_plan),
+                "run_id": transaction.run_id, "steps": replay_steps, **changes})
             transaction.checkpoint("after-cad-validation", {"valid": True, "change_count": diff["change_count"], "repair_count": len(repair_plan)})
             transaction.record("cad_diff", {"change_count": diff["change_count"], "repair_count": len(repair_plan)})
             committed, persisted_validation, history = self._write(transaction, document, output_file, requirements, operation)

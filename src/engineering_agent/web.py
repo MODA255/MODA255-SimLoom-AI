@@ -220,6 +220,11 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
                 return self._send(200, artifact_preview(root, relative))
             if parsed.path == "/api/asset-view":
                 return self._send(200, asset_view(root, relative))
+            if parsed.path == "/api/cad/history-view":
+                return self._send(200, agent.execute_operation("cad.history_view", {
+                    "project_dir": root, "input_file": relative,
+                    "revision_id": query.get("revision_id", [""])[0],
+                    "side": query.get("side", ["after"])[0]}))
             if parsed.path == "/api/download":
                 base = Path(root).resolve()
                 path = (base / relative).resolve()

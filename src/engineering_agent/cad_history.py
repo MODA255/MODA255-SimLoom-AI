@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,40 @@ class CadHistory:
             path = confined_path(self.transaction.project_dir, entry["path"])
             if file_hash(path) != entry[side]:
                 raise RuntimeError("CAD_HISTORY_CONFLICT:" + entry["path"])
+
+    def snapshot(self, revision_id: str, side: str = "after") -> dict[str, Any]:
+        """Locate and verify an immutable DXF/sidecar pair without moving the cursor.
+
+        Only revisions in this drawing's active history branch are addressable.
+        Paths are derived from the revision, never accepted from a caller or
+        trusted from editable snapshot metadata.
+        """
+        if side not in {"before", "after"}:
+            raise ValueError("CAD_HISTORY_INVALID_SIDE")
+        if not isinstance(revision_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", revision_id):
+            raise ValueError("CAD_HISTORY_INVALID_REVISION")
+        row = next((item for item in self.data["revisions"] if item["id"] == revision_id), None)
+        if row is None:
+            raise ValueError("CAD_HISTORY_REVISION_NOT_FOUND:" + revision_id)
+        group = (self.relative, self.relative + ".cad.json")
+        entries = row.get("files", [])
+        if len(entries) != 2 or {item.get("path") for item in entries} != set(group):
+            raise ValueError("CAD_HISTORY_INVALID_FILE_GROUP")
+        folder = "backup" if side == "before" else "after"
+        verified = {}
+        for entry in entries:
+            source = confined_path(self.transaction.project_dir,
+                                   f"artifacts/runs/{revision_id}/{folder}/{entry['path']}")
+            if side not in entry or file_hash(source) != entry[side]:
+                raise RuntimeError("CAD_HISTORY_SNAPSHOT_CORRUPT:" + entry["path"])
+            verified[entry["path"]] = {"path": source if entry[side] is not None else None,
+                                        "sha256": entry[side]}
+        drawing, sidecar = (verified[path] for path in group)
+        if drawing["path"] is None and sidecar["path"] is not None:
+            raise ValueError("CAD_HISTORY_INVALID_FILE_GROUP")
+        return {"revision_id": revision_id, "operation": row["operation"], "at": row["at"],
+                "side": side, "path": drawing["path"], "sha256": drawing["sha256"],
+                "sidecar_sha256": sidecar["sha256"], "exists": drawing["path"] is not None}
 
     def _stage_history(self, files: dict[str, str | None]):
         staged = self.transaction.stage_dir / "cad-history.json"

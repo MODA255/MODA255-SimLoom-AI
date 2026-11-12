@@ -1,17 +1,42 @@
 const svg=document.getElementById('cad'), selected=new Set(), status=document.getElementById('selection'), editStatus=document.getElementById('editStatus');
 const viewer=document.querySelector('[data-cad-viewer]'), assetPath=viewer?.dataset.assetPath||'';
-let pending=null, requestSequence=0, replaySequence=0, drag=null, suppressClick=false, spaceDown=false;
-const initialView=svg.dataset.initialViewbox.split(/\s+/).map(Number);
-const worldMatrix=new DOMMatrix(JSON.parse(svg.dataset.worldTransform));
-const inverseWorld=worldMatrix.inverse();
-const primitives=[...svg.querySelectorAll('.entity:not(.pick-stroke)')];
-const allPaths=[...svg.querySelectorAll('.entity')];
-const layerInputs=[...document.querySelectorAll('input[data-layer]')];
-const layerVisibility=new Map(layerInputs.map(input=>[input.dataset.layer,input.checked]));
+let pending=null, requestSequence=0, drag=null, suppressClick=false, spaceDown=false;
+let initialView=svg.dataset.initialViewbox.split(/\s+/).map(Number);
+let worldMatrix=new DOMMatrix(JSON.parse(svg.dataset.worldTransform));
+let inverseWorld=worldMatrix.inverse();
+let primitives=[...svg.querySelectorAll('.entity:not(.pick-stroke)')];
+let allPaths=[...svg.querySelectorAll('.entity')];
+let layerInputs=[...document.querySelectorAll('input[data-layer]')];
+let layerVisibility=new Map(layerInputs.map(input=>[input.dataset.layer,input.checked]));
+const operationHistory=JSON.parse(document.getElementById('operationHistory')?.textContent||'[]');
+const operationButtons=[...document.querySelectorAll('[data-history-index]')];
 let historyState={can_undo:!document.getElementById('undo').disabled,can_redo:!document.getElementById('redo').disabled};
+const revisionHistory=JSON.parse(document.getElementById('revisionHistory')?.textContent||'{}');
+const revisions=revisionHistory.revisions||[], frames=revisions.length?[
+  {revision_id:revisions[0].id,side:'before',label:'初始图纸'},
+  ...revisions.map((row,index)=>({revision_id:row.id,side:'after',label:`${index+1}. ${row.operation}${row.applied?'':' · 尚未重做'} · ${row.at}`})),
+]:[];
+const revisionSelect=document.getElementById('revision'), historyStatus=document.getElementById('historyStatus');
+let readOnly=viewer.dataset.readOnly==='true', historyIndex=-1, historyPending=null, historyResolve=null, historySequence=0, playSequence=0, playing=false, currentView=null;
+for(const [index,item] of frames.entries()){const option=document.createElement('option');option.value=String(index);option.textContent=item.label;revisionSelect.append(option);}
+function refreshControls(){
+  document.querySelectorAll('.edits button,.edits input').forEach(el=>el.disabled=readOnly||pending!==null);
+  document.getElementById('undo').disabled=readOnly||pending!==null||!historyState.can_undo;
+  document.getElementById('redo').disabled=readOnly||pending!==null||!historyState.can_redo;
+  const unavailable=!frames.length||!assetPath||pending!==null;
+  revisionSelect.disabled=unavailable;
+  document.getElementById('historyPrevious').disabled=unavailable||historyPending!==null||historyIndex===0;
+  document.getElementById('historyNext').disabled=unavailable||historyPending!==null||(historyIndex<0?revisionHistory.cursor:historyIndex)>=frames.length-1;
+  document.getElementById('historyCurrent').disabled=!readOnly||!assetPath||pending!==null;
+  document.getElementById('replay').disabled=unavailable;
+  document.getElementById('replay').textContent=playing?'暂停':'播放历史';
+  document.querySelector('.operations').hidden=readOnly;
+  viewer.dataset.readOnly=String(readOnly);
+}
 function paint(){svg.querySelectorAll('.entity').forEach(e=>e.classList.toggle('selected',selected.has(e.dataset.entityId)));status.textContent=selected.size?`已选择 ${selected.size} 个实体：${[...selected].join(', ')}`:'未选择实体';}
 function selectedIds(){return [...selected];}
 function requestEdit(operation, arguments_){
+  if(readOnly){editStatus.textContent='历史图纸只读，请先返回当前文件';return;}
   if(pending)return;
   if(window.parent===window){editStatus.textContent='请在工作台中打开文件后编辑';return;}
   if(!['cad.undo','cad.redo'].includes(operation) && !selected.size){editStatus.textContent='请先选择实体';return;}
@@ -83,7 +108,99 @@ function restoreView(state){
   }
   applyLayers();
 }
-function clearSelection(){replaySequence++;allPaths.forEach(el=>el.classList.remove('replay'));selected.clear();paint();}
+function clearReplay(){allPaths.forEach(el=>el.classList.remove('replay'));operationButtons.forEach(button=>button.classList.remove('active'));}
+function clearSelection(){clearReplay();selected.clear();paint();}
+function showOperation(index){
+  const step=operationHistory[index];if(!step)return;
+  clearReplay();
+  const ids=new Set(step.ids||[]),paths=visiblePaths().filter(el=>ids.has(el.dataset.entityId));
+  paths.forEach(el=>el.classList.add('replay'));
+  operationButtons[index]?.classList.add('active');
+  const present=new Set(paths.map(el=>el.dataset.entityId)),missing=[...ids].filter(id=>!present.has(id));
+  editStatus.textContent=`步骤 ${index+1}/${operationHistory.length}：${step.label} · ${present.size} 个当前可见对象`+(missing.length?` · ${missing.length} 个已删除或当前隐藏对象`:'');
+}
+function replaceScene(scene){
+  const parsed=new DOMParser().parseFromString(scene.svg,'image/svg+xml'), replacement=parsed.documentElement;
+  if(replacement.localName!=='svg'||parsed.querySelector('parsererror'))throw new Error('历史图纸预览格式错误');
+  if(drag){drag.rect?.remove();if(svg.hasPointerCapture(drag.id))svg.releasePointerCapture(drag.id);drag=null;}
+  svg.classList.remove('panning');
+  svg.replaceChildren(...[...replacement.childNodes].map(node=>document.importNode(node,true)));
+  for(const name of ['viewBox','data-world-transform','data-initial-viewbox'])svg.setAttribute(name,replacement.getAttribute(name));
+  initialView=svg.dataset.initialViewbox.split(/\s+/).map(Number);
+  worldMatrix=new DOMMatrix(JSON.parse(svg.dataset.worldTransform));inverseWorld=worldMatrix.inverse();
+  primitives=[...svg.querySelectorAll('.entity:not(.pick-stroke)')];allPaths=[...svg.querySelectorAll('.entity')];
+  const layerList=document.querySelector('.layer-list');layerList.replaceChildren();
+  for(const [name,props] of Object.entries(scene.layers)){
+    const label=document.createElement('label'),input=document.createElement('input');
+    input.type='checkbox';input.dataset.layer=name;input.checked=props.visible;label.append(input,document.createTextNode(' '+name));layerList.append(label);
+  }
+  layerInputs=[...layerList.querySelectorAll('input')];layerVisibility=new Map(layerInputs.map(input=>[input.dataset.layer,input.checked]));
+  const warnings=document.getElementById('renderWarnings');warnings.replaceChildren();
+  if(scene.warnings.length){
+    const notice=document.createElement('details'),summary=document.createElement('summary'),list=document.createElement('ul');
+    notice.className='render-warning';summary.textContent=`历史预览有 ${scene.warnings.length} 条提示，部分内容可能未显示完整`;
+    for(const item of scene.warnings){const li=document.createElement('li');li.textContent=item.message||item.reason||item.characters||item.code;list.append(li);}
+    notice.append(summary,list);warnings.append(notice);
+  }
+  document.getElementById('entityCount').textContent=`${scene.rendered_entities} / ${scene.entity_count} 个模型实体`;
+  document.getElementById('coordinates').textContent='';selected.clear();applyLayers();setView(initialView);
+}
+function cancelHistoryRequest(){
+  if(historyPending!==null){
+    window.parent.postMessage({type:'cad-history-cancel',assetPath,requestId:historyPending},'*');
+    revisionSelect.value=historyIndex<0?'current':String(historyIndex);
+  }
+  historySequence++;historyPending=null;
+  const resolve=historyResolve;historyResolve=null;resolve?.(false);
+}
+function pauseHistory(){
+  playing=false;playSequence++;cancelHistoryRequest();refreshControls();
+}
+function loadHistory(index){
+  if(!frames[index]||pending!==null)return Promise.resolve(false);
+  if(window.parent===window){historyStatus.textContent='请在工作台中打开图纸后查看历史';return Promise.resolve(false);}
+  cancelHistoryRequest();
+  if(!readOnly)currentView=captureView();
+  readOnly=true;historyPending=++historySequence;revisionSelect.value=String(index);
+  historyStatus.textContent='正在读取历史快照 · 只读';editStatus.textContent='历史图纸只读，请先返回当前文件';refreshControls();
+  const result=new Promise(resolve=>{historyResolve=resolve;});
+  window.parent.postMessage({type:'cad-history-request',requestId:historyPending,assetPath,index,...frames[index]},'*');
+  return result;
+}
+function returnCurrent(){
+  pauseHistory();
+  if(!assetPath||window.parent===window)return;
+  historyStatus.textContent='正在重新读取当前文件…';
+  window.parent.postMessage({type:'cad-history-current',assetPath,viewerState:currentView},'*');
+}
+revisionSelect.onchange=()=>{const target=revisionSelect.value;pauseHistory();if(target==='current')returnCurrent();else loadHistory(Number(target));};
+document.getElementById('historyPrevious').onclick=()=>{pauseHistory();loadHistory(historyIndex<0?Math.max(0,revisionHistory.cursor-1):historyIndex-1);};
+document.getElementById('historyNext').onclick=()=>{pauseHistory();loadHistory(historyIndex<0?revisionHistory.cursor+1:historyIndex+1);};
+document.getElementById('historyCurrent').onclick=returnCurrent;
+document.getElementById('replay').onclick=async()=>{
+  if(playing){pauseHistory();historyStatus.textContent='已暂停 · 历史图纸只读';return;}
+  playing=true;const run=++playSequence;refreshControls();
+  const start=historyIndex<0||historyIndex===frames.length-1?0:historyIndex+1;
+  for(let index=start;index<frames.length;index++){
+    if(run!==playSequence)return;
+    if(!await loadHistory(index)){if(run===playSequence)pauseHistory();return;}
+    await new Promise(resolve=>setTimeout(resolve,700));
+  }
+  if(run===playSequence){playing=false;refreshControls();}
+};
+window.addEventListener('message',event=>{
+  const data=event.data;
+  if(event.source!==window.parent||data?.type!=='cad-history-result'||data.assetPath!==assetPath||data.requestId!==historyPending)return;
+  historyPending=null;const resolve=historyResolve;historyResolve=null;
+  let ok=false;
+  try{
+    if(!data.ok)throw new Error(data.error||'读取历史失败');
+    replaceScene(data.scene);historyIndex=data.index;revisionSelect.value=String(historyIndex);
+    historyStatus.textContent=`${frames[historyIndex].label} · ${data.snapshot.revision_id} · ${data.snapshot.exists?'历史图纸只读':'文件尚不存在 · 只读'}`;
+    ok=true;
+  }catch(error){revisionSelect.value=historyIndex<0?'current':String(historyIndex);historyStatus.textContent='读取历史失败：'+error.message+'；可返回当前文件';}
+  refreshControls();resolve?.(ok);
+});
 svg.addEventListener('click',e=>{
   if(suppressClick){suppressClick=false;return;}if(pending)return;
   const item=e.target.closest('.entity');if(!item)return;
@@ -146,7 +263,7 @@ window.addEventListener('keydown',e=>{
 });
 window.addEventListener('keyup',e=>{if(e.code==='Space')spaceDown=false;});
 window.addEventListener('blur',()=>{spaceDown=false;});
-layerInputs.forEach(input=>input.addEventListener('change',()=>{layerVisibility.set(input.dataset.layer,input.checked);applyLayers();}));
+document.querySelector('.layer-list').addEventListener('change',event=>{const input=event.target;if(input.matches('input[data-layer]')){layerVisibility.set(input.dataset.layer,input.checked);applyLayers();}});
 document.getElementById('fit').onclick=()=>fit(visiblePaths());
 document.getElementById('fitSelection').onclick=()=>fit(visiblePaths().filter(el=>selected.has(el.dataset.entityId)));
 document.getElementById('clear').onclick=clearSelection;
@@ -158,15 +275,9 @@ document.getElementById('rotate').onclick=()=>requestEdit('cad.entity_rotate',{a
 document.getElementById('delete').onclick=()=>requestEdit('cad.entity_delete',{});
 document.getElementById('updateText').onclick=()=>requestEdit('cad.entity_update',{patch:{text:document.getElementById('text').value}});
 document.getElementById('saveSelection').onclick=()=>requestEdit('cad.selection_create',{name:document.getElementById('selectionName').value||'picked'});
-document.getElementById('replay').onclick=async()=>{
-  const run=++replaySequence,paths=visiblePaths(),ids=[...new Set(paths.map(el=>el.dataset.entityId))];
-  for(const id of ids){
-    if(run!==replaySequence)return;
-    const items=paths.filter(el=>el.dataset.entityId===id);items.forEach(el=>el.classList.add('replay'));
-    await new Promise(resolve=>setTimeout(resolve,180));items.forEach(el=>el.classList.remove('replay'));
-  }
-};
+operationButtons.forEach(button=>button.onclick=()=>{if(!readOnly)showOperation(Number(button.dataset.historyIndex));});
 window.addEventListener('message',event=>{
   if(event.source===window.parent&&event.data?.type==='cad-view-restore'&&event.data.assetPath===assetPath)restoreView(event.data.state);
 });
-window.addEventListener('message',event=>{if(event.source!==window.parent || event.data?.type!=='cad-operation-result' || event.data.requestId!==pending)return;pending=null;document.querySelectorAll('button').forEach(button=>button.disabled=false);if(event.data.history)historyState=event.data.history;document.getElementById('undo').disabled=!historyState.can_undo;document.getElementById('redo').disabled=!historyState.can_redo;if(event.data.deleted){svg.replaceChildren();selected.clear();paint();}editStatus.textContent=event.data.ok?(event.data.deleted?'文件创建已撤销，可以重做':'已保存并刷新'):'保存失败：'+(event.data.error||'未知错误');});
+window.addEventListener('message',event=>{if(event.source!==window.parent || event.data?.type!=='cad-operation-result' || event.data.requestId!==pending)return;pending=null;document.querySelectorAll('button').forEach(button=>button.disabled=false);if(event.data.history)historyState=event.data.history;refreshControls();if(event.data.deleted){svg.replaceChildren();selected.clear();paint();}editStatus.textContent=event.data.ok?(event.data.deleted?'文件创建已撤销，可以重做':'已保存并刷新'):'保存失败：'+(event.data.error||'未知错误');});
+if(readOnly){historyStatus.textContent='历史图纸只读';editStatus.textContent='历史图纸只读';}refreshControls();
