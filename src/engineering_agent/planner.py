@@ -56,7 +56,7 @@ class EngineeringPlanner:
                 action="create_or_update_model",
                 objective="建立或更新参数化几何/装配模型",
                 outputs=["artifacts/model.step"],
-                parameters={"source_prompt": request.prompt},
+                parameters={**request.parameters, "source_prompt": request.prompt},
             ))
         if intent.structural:
             dependencies = ["catia_model"] if intent.geometry else []
@@ -69,7 +69,7 @@ class EngineeringPlanner:
                 depends_on=dependencies,
                 inputs=inputs,
                 outputs=["artifacts/ansys/result.h5", "artifacts/ansys/report.json"],
-                parameters={"source_prompt": request.prompt},
+                parameters={**request.parameters, "source_prompt": request.prompt},
             ))
         if intent.multibody:
             dependencies = ["catia_model"] if intent.geometry else []
@@ -82,7 +82,7 @@ class EngineeringPlanner:
                 depends_on=dependencies,
                 inputs=inputs,
                 outputs=["artifacts/adams/motion.csv", "artifacts/adams/report.json"],
-                parameters={"source_prompt": request.prompt},
+                parameters={**request.parameters, "source_prompt": request.prompt},
             ))
         if intent.vehicle:
             dependencies = []
@@ -104,7 +104,7 @@ class EngineeringPlanner:
                 depends_on=dependencies,
                 inputs=inputs,
                 outputs=["artifacts/vi-grade/metrics.json", "artifacts/vi-grade/report.html"],
-                parameters={"source_prompt": request.prompt},
+                parameters={**request.parameters, "source_prompt": request.prompt},
             ))
 
         if not steps:

@@ -10,6 +10,7 @@ from typing import Any
 
 from .object_model import ArtifactRef, AssetKind, EngineeringObject, EngineeringProject
 from .dxf import read_dxf
+from .cad_model import CadDocument
 from .mesh import read_obj
 
 
@@ -106,7 +107,8 @@ class ArtifactReader:
         return EngineeringObject(object_id=str(uuid.uuid4()), name=path.stem, kind=AssetKind.RESULT, source=source, metrics=metrics, metadata={"format": "JSON", "top_level_keys": list(payload) if isinstance(payload, dict) else []})
 
     def _dxf(self, path: Path, source: ArtifactRef) -> EngineeringObject:
-        document = read_dxf(path)
+        cad_document = CadDocument.open(path)
+        document = cad_document.to_dxf()
         return EngineeringObject(
             object_id=str(uuid.uuid4()),
             name=path.stem,
@@ -123,8 +125,9 @@ class ArtifactReader:
                 "blocks": document.get("blocks", {}),
                 "coordinate_systems": document.get("coordinate_systems", []),
                 "topology": document.get("topology", {}),
+                "cad_document": cad_document.to_dict(),
             },
-            metadata={"format": "DXF"},
+            metadata={"format": "DXF", "cad_schema_version": cad_document.schema_version},
         )
 
     def _svg(self, path: Path, source: ArtifactRef) -> EngineeringObject:

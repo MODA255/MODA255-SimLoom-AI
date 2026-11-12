@@ -1,0 +1,13 @@
+{
+  "scenario": "team-defined",
+  "scenario_file": "inputs/scenario.json",
+  "metrics_output": "artifacts/vehicle-results.json",
+  "report_output": "artifacts/vehicle-evidence.json",
+  "required_metrics": [
+    "lap_time_s"
+  ],
+  "metric_units": {
+    "lap_time_s": "s"
+  },
+  "metric_rules": []
+}

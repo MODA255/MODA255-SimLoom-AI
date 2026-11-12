@@ -27,11 +27,11 @@ class VersionStore:
         payload = {"id": version_id, "label": label, "parent": parent, "created_at": _now(), "objects": [asset.to_dict() for asset in assets]}
         timeline_event = {"event": "version_created", "version_id": version_id, "label": label, "parent": parent, "created_at": payload["created_at"]}
         timeline_path = self.root / "timeline.jsonl"
-        prior_timeline = timeline_path.read_text(encoding="utf-8") if timeline_path.exists() else ""
-        timeline = prior_timeline + json.dumps(timeline_event, ensure_ascii=False) + "\n"
         txn = RunTransaction(self.project_dir)
         txn.begin({"operation": "project.version", "label": label, "parent": parent})
         try:
+            prior_timeline = timeline_path.read_text(encoding="utf-8") if timeline_path.exists() else ""
+            timeline = prior_timeline + json.dumps(timeline_event, ensure_ascii=False) + "\n"
             version_stage = txn.stage_dir / "version.json"
             timeline_stage = txn.stage_dir / "timeline.jsonl"
             version_stage.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

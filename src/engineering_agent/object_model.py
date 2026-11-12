@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from .models import AssetKind
+from .cad_model import Block, CadDocument, Constraint, EntityRef, Layer, SelectionSet
 
 
 @dataclass

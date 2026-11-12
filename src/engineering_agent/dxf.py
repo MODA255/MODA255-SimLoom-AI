@@ -14,7 +14,7 @@ def _number(value: Any, default: float = 0.0) -> float:
 
 def _pairs(text: str) -> list[tuple[str, str]]:
     lines = [line.rstrip("\r") for line in text.splitlines()]
-    return [(lines[index].strip(), lines[index + 1].strip()) for index in range(0, len(lines) - 1, 2)]
+    return [(lines[index].strip(), lines[index + 1]) for index in range(0, len(lines) - 1, 2)]
 
 
 def _value(groups: dict[str, list[str]], code: str, default: Any = None) -> Any:
@@ -33,6 +33,16 @@ def _entity(entity_type: str, groups: dict[str, list[str]]) -> dict[str, Any]:
         common["handle"] = str(_value(groups, "5"))
     if _value(groups, "330") is not None:
         common["owner"] = str(_value(groups, "330"))
+    if _value(groups, "6") is not None:
+        common["linetype"] = str(_value(groups, "6"))
+    if _value(groups, "62") is not None:
+        common["color_index"] = int(_number(_value(groups, "62")))
+    if _value(groups, "420") is not None:
+        common["true_color"] = int(_number(_value(groups, "420")))
+    if _value(groups, "370") is not None:
+        common["lineweight"] = int(_number(_value(groups, "370")))
+    if _value(groups, "39") is not None:
+        common["thickness"] = _number(_value(groups, "39"))
     if entity_type == "LINE":
         return common | {"start": _point(groups), "end": _point(groups, "11", "21", "31")}
     if entity_type == "CIRCLE":
@@ -43,33 +53,74 @@ def _entity(entity_type: str, groups: dict[str, list[str]]) -> dict[str, Any]:
         return common | {"point": _point(groups)}
     if entity_type == "TEXT":
         return common | {"insert": _point(groups), "text": str(_value(groups, "1", "")), "height": _number(_value(groups, "40", 1.0), 1.0), "rotation": _number(_value(groups, "50"))}
+    if entity_type == "MTEXT":
+        return common | {"insert": _point(groups), "text": str(_value(groups, "1", "")), "height": _number(_value(groups, "40", 1.0), 1.0), "width": _number(_value(groups, "41", 0.0)), "rotation": _number(_value(groups, "50"))}
+    if entity_type == "LEADER":
+        xs, ys, zs = groups.get("10", []), groups.get("20", []), groups.get("30", [])
+        vertices = [{"x": _number(x), "y": _number(ys[index] if index < len(ys) else 0), "z": _number(zs[index] if index < len(zs) else 0)} for index, x in enumerate(xs)]
+        return common | {"vertices": vertices, "text": str(_value(groups, "3", "")), "arrowhead": bool(int(_number(_value(groups, "71", 1))))}
+    if entity_type == "ELLIPSE":
+        return common | {"center": _point(groups), "major_axis": _point(groups, "11", "21", "31"), "ratio": _number(_value(groups, "40", 1.0), 1.0), "start_param": _number(_value(groups, "41", 0.0)), "end_param": _number(_value(groups, "42", 6.283185307179586), 6.283185307179586)}
     if entity_type == "DIMENSION":
-        return common | {"definition": _point(groups), "text": str(_value(groups, "1", "")), "measurement": _number(_value(groups, "42"), 0.0), "block_name": _value(groups, "2")}
+        dimension_codes = {0: "linear", 1: "linear", 2: "angular", 3: "diameter", 4: "radial", 6: "ordinate", 7: "ordinate"}
+        dimension_type = dimension_codes.get(int(_number(_value(groups, "70", 0))), "linear")
+        return common | {"definition": _point(groups), "text": str(_value(groups, "1", "")), "measurement": _number(_value(groups, "42"), 0.0), "block_name": _value(groups, "2"), "dimension_type": dimension_type, "axis": "y" if int(_number(_value(groups, "70", 0))) == 7 else "x"}
     if entity_type in {"LWPOLYLINE", "POLYLINE"}:
         xs, ys = groups.get("10", []), groups.get("20", [])
         vertices = [{"x": _number(x), "y": _number(ys[index] if index < len(ys) else 0.0), "z": 0.0} for index, x in enumerate(xs)]
         flags = int(_number(_value(groups, "70", 0)))
-        return common | {"vertices": vertices, "closed": bool(flags & 1)}
+        bulges = [_number(value) for value in groups.get("42", [])]
+        entity = common | {"vertices": vertices, "closed": bool(flags & 1)}
+        if bulges:
+            entity["bulges"] = bulges
+        return entity
     if entity_type == "INSERT":
         return common | {"block_name": str(_value(groups, "2", "")), "insert": _point(groups), "scale": {"x": _number(_value(groups, "41", 1.0), 1.0), "y": _number(_value(groups, "42", 1.0), 1.0), "z": _number(_value(groups, "43", 1.0), 1.0)}, "rotation": _number(_value(groups, "50"))}
     if entity_type == "HATCH":
         xs, ys = groups.get("10", []), groups.get("20", [])
         boundary = [{"x": _number(x), "y": _number(ys[index] if index < len(ys) else 0.0), "z": 0.0} for index, x in enumerate(xs)]
-        return common | {"pattern": str(_value(groups, "2", "SOLID")), "solid": bool(int(_number(_value(groups, "70", 0)))), "boundary_path_count": int(_number(_value(groups, "91", 0))), "boundary_vertices": boundary, "boundary_refs": [str(value) for value in groups.get("330", [])]}
-    return common | {"data": {code: values[0] if len(values) == 1 else values for code, values in groups.items()}}
+        return common | {
+            "pattern": str(_value(groups, "2", "SOLID")),
+            "solid": bool(int(_number(_value(groups, "70", 0)))),
+            "boundary_path_count": int(_number(_value(groups, "91", 0))),
+            "boundary_vertices": boundary,
+            "boundary_refs": [str(value) for value in groups.get("330", [])],
+            "hatch_style": int(_number(_value(groups, "75", 0))),
+            "pattern_type": int(_number(_value(groups, "76", 0))),
+            "pattern_angle": _number(_value(groups, "52", 0)),
+            "pattern_scale": _number(_value(groups, "41", 1), 1),
+            "double": bool(int(_number(_value(groups, "77", 0)))),
+        }
+    # Keep every group for unsupported/proxy entities.  The writer can emit
+    # these groups again, so a read/edit/write cycle does not silently delete
+    # vendor extensions that this semantic layer does not understand yet.
+    return common | {
+        "data": {code: values[0] if len(values) == 1 else values for code, values in groups.items()},
+        "raw_groups": {str(code): list(values) for code, values in groups.items()},
+        "raw_tags": list(getattr(groups, "tags", [])),
+    }
+
+
+class _GroupValues(dict):
+    """Retain group order for records whose vendor-specific schema is unknown."""
+
+    def __init__(self):
+        super().__init__()
+        self.tags: list[tuple[str, str]] = []
 
 
 def _records(pairs: list[tuple[str, str]]) -> list[tuple[str, dict[str, list[str]]]]:
     records: list[tuple[str, dict[str, list[str]]]] = []
     current_type: str | None = None
-    groups: dict[str, list[str]] = {}
+    groups = _GroupValues()
     for code, value in pairs:
         if code == "0":
             if current_type is not None:
                 records.append((current_type, groups))
-            current_type, groups = value.upper(), {}
+            current_type, groups = value.upper(), _GroupValues()
         elif current_type is not None:
             groups.setdefault(code, []).append(value)
+            groups.tags.append((code, value))
     if current_type is not None:
         records.append((current_type, groups))
     return records
@@ -157,7 +208,16 @@ def parse_dxf(text: str) -> dict[str, Any]:
 
 def read_dxf(path: str | Path) -> dict[str, Any]:
     path = Path(path)
-    return parse_dxf(path.read_text(encoding="utf-8", errors="replace"))
+    with path.open("rb") as stream:
+        header = stream.read(16384)
+    if b"$ACADVER" in header or header.startswith(b"AutoCAD Binary DXF"):
+        from .native_dxf import read_native
+        return read_native(path)
+    # Compatibility with the headerless ASCII fixtures emitted by early
+    # SimLoom versions. Full DXFs never silently fall back after a parse error.
+    payload = parse_dxf(path.read_text(encoding="utf-8", errors="strict"))
+    payload["backend"] = "legacy-ascii"
+    return payload
 
 
 def _counts(entities: Iterable[dict[str, Any]]) -> dict[str, int]:
@@ -178,7 +238,7 @@ def _points(entity: dict[str, Any]) -> list[dict[str, float]]:
         return [{"x": _number(center.get("x")) - radius, "y": _number(center.get("y")) - radius, "z": _number(center.get("z"))}, {"x": _number(center.get("x")) + radius, "y": _number(center.get("y")) + radius, "z": _number(center.get("z"))}]
     if kind == "POINT":
         return [entity.get("point", {})]
-    if kind == "TEXT":
+    if kind in {"TEXT", "MTEXT"}:
         return [entity.get("insert", {})]
     if kind == "DIMENSION":
         return [entity.get("definition", {})]
@@ -186,6 +246,12 @@ def _points(entity: dict[str, Any]) -> list[dict[str, float]]:
         return [entity.get("insert", {})]
     if kind == "HATCH":
         return list(entity.get("boundary_vertices", []))
+    if kind == "LEADER":
+        return list(entity.get("vertices", []))
+    if kind == "ELLIPSE":
+        center, axis = entity.get("center", {}), entity.get("major_axis", {})
+        radius = math.sqrt(_number(axis.get("x")) ** 2 + _number(axis.get("y")) ** 2 + _number(axis.get("z")) ** 2)
+        return [{"x": _number(center.get("x")) - radius, "y": _number(center.get("y")) - radius, "z": _number(center.get("z"))}, {"x": _number(center.get("x")) + radius, "y": _number(center.get("y")) + radius, "z": _number(center.get("z"))}]
     if kind in {"LWPOLYLINE", "POLYLINE"}:
         return list(entity.get("vertices", []))
     return []
@@ -220,7 +286,7 @@ def transform_document(document: dict[str, Any], *, translate: Iterable[float] =
             item["radius"] = abs(_number(item.get("radius")) * float(scale))
         elif kind == "POINT":
             item["point"] = transform_point(item.get("point", {}))
-        elif kind == "TEXT":
+        elif kind in {"TEXT", "MTEXT"}:
             item["insert"] = transform_point(item.get("insert", {}))
         elif kind == "DIMENSION":
             item["definition"] = transform_point(item.get("definition", {}))
@@ -228,6 +294,13 @@ def transform_document(document: dict[str, Any], *, translate: Iterable[float] =
             item["insert"] = transform_point(item.get("insert", {}))
         elif kind == "HATCH":
             item["boundary_vertices"] = [transform_point(point) for point in item.get("boundary_vertices", [])]
+        elif kind == "LEADER":
+            item["vertices"] = [transform_point(point) for point in item.get("vertices", [])]
+        elif kind == "ELLIPSE":
+            item["center"] = transform_point(item.get("center", {}))
+            axis = item.get("major_axis", {})
+            item["major_axis"] = {"x": _number(axis.get("x")) * float(scale), "y": _number(axis.get("y")) * float(scale), "z": _number(axis.get("z")) * float(scale)}
+            item["ratio"] = _number(item.get("ratio"), 1.0)
         elif kind in {"LWPOLYLINE", "POLYLINE"}:
             item["vertices"] = [transform_point(point) for point in item.get("vertices", [])]
         transformed.append(item)

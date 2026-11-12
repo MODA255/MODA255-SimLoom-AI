@@ -427,3 +427,93 @@ def test_invalid_plan_does_not_invoke_adapter(tmp_path, monkeypatch):
     assert report.status == 'failed' and not called
     assert any(event['event'] == 'checkpoint' for event in report.timeline)
     assert not (tmp_path / '.engineering-agent/project.lock').exists()
+
+
+def test_cad_plot_api_reports_errors_and_serves_pdf(service, tmp_path):
+    from engineering_agent.formats import write_dxf
+    call, _, _ = service
+    source = tmp_path / 'web.dxf'
+    write_dxf(source, lines=[{'x1': 0, 'y1': 0, 'x2': 100, 'y2': 0}])
+    original = source.read_bytes()
+    arguments = {'project_dir': str(tmp_path), 'input_file': source.name, 'output_file': 'exports/web.pdf'}
+    status, error = call('/api/cad/operation', {'operation': 'cad.plot', 'arguments': arguments | {'scale': '100:1'}})
+    assert status == 400 and error['code'] == 'INVALID_ARGUMENTS'
+    assert 'PLOT_SCALE_DOES_NOT_FIT' in error['error']
+    assert not (tmp_path / 'exports/web.pdf').exists()
+    status, plotted = call('/api/cad/operation', {'operation': 'cad.plot', 'arguments': arguments | {'scale': '1:1'}})
+    assert status == 200 and plotted['validation']['valid']
+    query = urllib.parse.urlencode({'root': str(tmp_path), 'path': 'exports/web.pdf'})
+    status, pdf = call('/api/download?' + query)
+    assert status == 200 and pdf.startswith(b'%PDF-')
+    assert source.read_bytes() == original
+
+
+def test_web_plan_and_queue_preserve_explicit_software_parameters(service, tmp_path):
+    call, queue, _ = service
+    _, project = call('/api/projects', {'name': '软件参数'})
+    request = {'project_id': project['id'], 'prompt': 'VI-grade', 'parameters': {'scenario': 'step-steer', 'speed_kph': 60}}
+    status, plan = call('/api/plan', request)
+    assert status == 200 and plan['validation']['valid']
+    assert plan['plan']['steps'][0]['parameters']['scenario'] == 'step-steer'
+    status, task = call('/api/tasks', request)
+    assert status == 201
+    assert queue.get(task['id'])['input']['parameters'] == request['parameters']
+
+
+def test_web_versions_and_visual_diff(service, tmp_path):
+    from engineering_agent.formats import write_dxf
+
+    call, _queue, agent = service
+    status, project = call('/api/projects', {'name': '版本视觉差异'})
+    assert status == 201
+    root = Path(project['project_dir'])
+    left = root / 'baseline.dxf'
+    right = root / 'tuned.dxf'
+    write_dxf(left, lines=[{'x1': 0, 'y1': 0, 'x2': 100, 'y2': 0}])
+    write_dxf(right, lines=[{'x1': 0, 'y1': 0, 'x2': 120, 'y2': 0}, {'x1': 0, 'y1': 0, 'x2': 0, 'y2': 40}])
+    baseline = agent.create_version(str(root), '基线', [str(left)])
+    tuned = agent.create_version(str(root), '调参后', [str(right)], parent=baseline['id'])
+
+    status, versions = call('/api/versions?project_id=' + project['id'])
+    assert status == 200 and versions['schemaVersion'] == 'simloom-ai/web/v1'
+    assert {item['id'] for item in versions['versions']} == {baseline['id'], tuned['id']}
+    assert all(item['has_dxf'] for item in versions['versions'])
+    assert all('objects' not in item for item in versions['versions'])
+    assert versions['events'] and versions['events'][-1]['version_id'] == tuned['id']
+
+    status, view = call('/api/version-view?' + urllib.parse.urlencode({
+        'project_id': project['id'], 'version_id': tuned['id'], 'asset_index': 0,
+    }))
+    assert status == 200 and view['version']['id'] == tuned['id']
+    assert view['asset']['geometry']['format'] == 'DXF'
+    assert view['svg'].startswith('<svg') and len(view['assets']) == 1
+
+    status, result = call('/api/version-visual-diff', {
+        'project_id': project['id'], 'left': baseline['id'], 'right': tuned['id'],
+        'width': 640, 'height': 360,
+    })
+    assert status == 200
+    assert result['visual_diff']['svg'].startswith('<svg')
+    assert result['visual_diff']['change_count'] >= 1
+    assert result['diff']['left'] == baseline['id'] and result['diff']['right'] == tuned['id']
+
+
+def test_web_creates_project_version_from_current_assets_and_rejects_escape(service, tmp_path):
+    from engineering_agent.formats import write_dxf
+
+    call, _queue, _agent = service
+    status, project = call('/api/projects', {'name': '快照创建'})
+    assert status == 201
+    root = Path(project['project_dir'])
+    write_dxf(root / 'model.dxf', lines=[{'x1': 0, 'y1': 0, 'x2': 10, 'y2': 0}])
+    status, snapshot = call('/api/version', {'project_id': project['id'], 'label': '初始版本'})
+    assert status == 201 and snapshot['label'] == '初始版本'
+    assert len(snapshot['objects']) == 1
+    status, error = call('/api/version', {'project_id': project['id'], 'label': '越界', 'paths': ['../outside.dxf']})
+    assert status == 400 and error['code'] == 'INVALID_ARGUMENTS'
+
+
+def test_software_job_api_reports_unconfigured_worker_without_launching(service):
+    call, _, _ = service
+    status, result = call('/api/software-jobs', {'tool': 'catia', 'action': 'list'})
+    assert status == 400 and result['code'] == 'REMOTE_WORKER_NOT_CONFIGURED'

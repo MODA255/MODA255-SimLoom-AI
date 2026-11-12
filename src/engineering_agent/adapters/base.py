@@ -1,13 +1,21 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
-import subprocess
+import tempfile
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from ..models import PlanStep, ToolName, ToolResult
+from ..software_worker import run_job
+from ..software_jobs_client import ReceiptStore, execute_remote
+from ..worker_protocol import (SCHEMA, MAX_HTTP_BYTES, WorkerError, decode_files, manifest,
+                               names, pack_file, safe_file)
+from ..vendor_validation import VendorValidationError, validate_report
+from ..vendor_evidence import SCHEMA as EVIDENCE_SCHEMA, build_contract, requirements, strict_json, validate_evidence
 
 
 class AdapterError(RuntimeError):
@@ -20,11 +28,12 @@ class AdapterContext:
     dry_run: bool = True
     timeout_seconds: int = 600
     environment: dict[str, str] = field(default_factory=dict)
+    workspace_dir: Path | None = None
+    input_files: dict[str, str] = field(default_factory=dict)
+    on_event: Any = None
 
     def env(self) -> dict[str, str]:
-        result = dict(os.environ)
-        result.update(self.environment)
-        return result
+        return dict(os.environ) | self.environment
 
 
 class ToolAdapter:
@@ -32,144 +41,201 @@ class ToolAdapter:
     capabilities: frozenset[str] = frozenset()
 
     def doctor(self) -> dict[str, Any]:
-        return {
-            "tool": self.name.value,
-            "available": True,
-            "capabilities": sorted(self.capabilities),
-        }
+        return {"tool": self.name.value, "available": True, "capabilities": sorted(self.capabilities)}
 
     def execute(self, step: PlanStep, context: AdapterContext) -> ToolResult:
         raise NotImplementedError
 
 
 class CommandAdapter(ToolAdapter):
-    """Base adapter for a vendor executable or a remote gateway command.
-
-    The agent never builds a shell string. Commands stay as an argv list so a
-    natural-language prompt cannot turn into arbitrary shell execution.
-    """
-
-    executable_key = "executable"
+    """Execute explicitly bound, trusted scripts via the same local/remote contract."""
 
     def __init__(self, config: dict[str, Any]):
         self.config = config
-        self.executable = config.get(self.executable_key)
+        self.executable = config.get("executable")  # Legacy config is visible, never guessed into an action.
         self.bridge_url = config.get("bridge_url")
 
-    def _command(self, step: PlanStep, context: AdapterContext) -> list[str] | None:
-        if not self.executable:
-            return None
-        command = [str(self.executable)]
-        command.extend(str(value) for value in step.parameters.get("extra_args", []))
-        return command
+    def _post(self, payload, timeout):
+        import httpx
 
-    def doctor(self) -> dict[str, Any]:
-        executable = self.executable
-        resolved = shutil.which(executable) if executable else None
-        return {
-            "tool": self.name.value,
-            "available": bool(resolved or self.bridge_url),
-            "mode": "bridge" if self.bridge_url else "command",
-            "executable": executable,
-            "resolved": resolved,
-            "bridge_url": self.bridge_url,
-            "capabilities": sorted(self.capabilities),
-        }
+        token = self.config.get("bridge_token", "")
+        if self.config.get("bridge_token_env"):
+            token = os.environ.get(self.config["bridge_token_env"], "")
+            if not token:
+                raise WorkerError("BRIDGE_TOKEN_MISSING")
+        headers = {"X-Bridge-Token": token} if token else {}
+        encoded = json.dumps(payload, allow_nan=False).encode("utf-8")
+        if len(encoded) > MAX_HTTP_BYTES:
+            raise WorkerError("TRANSFER_TOO_LARGE")
+        headers["Content-Type"] = "application/json"
+        with httpx.stream("POST", self.bridge_url, content=encoded, headers=headers, timeout=timeout) as response:
+            response_status = response.status_code
+            chunks, size = [], 0
+            for chunk in response.iter_bytes():
+                size += len(chunk)
+                if size > MAX_HTTP_BYTES:
+                    raise WorkerError("TRANSFER_TOO_LARGE")
+                chunks.append(chunk)
+        body = json.loads(b"".join(chunks))
+        if response_status >= 400:
+            error = body.get("error", {}) if isinstance(body, dict) else {}
+            raise WorkerError(error.get("code", "BRIDGE_HTTP_ERROR"), error.get("message", f"HTTP {response_status}"))
+        if not isinstance(body, dict) or body.get("schema_version") != SCHEMA:
+            raise WorkerError("WORKER_SCHEMA_UNSUPPORTED")
+        return body
+
+    def doctor(self, *, probe: bool = True) -> dict[str, Any]:
+        actions = self.config.get("actions", {})
+        bound = {name: cfg for name, cfg in actions.items() if isinstance(cfg, dict) and cfg.get("script")}
+        item = {"tool": self.name.value, "available": False, "configured": bool(actions or self.bridge_url or self.executable),
+                "reachable": False, "execution_ready": False, "real_machine_verified": False,
+                "mode": "bridge" if self.bridge_url else "command", "bridge_url": self.bridge_url,
+                "executable": self.executable, "capabilities": sorted(self.capabilities),
+                "actions": [], "status": "unconfigured", "evidence": []}
+        if item["configured"]:
+            item["status"] = "configured"
+        if self.bridge_url and probe:
+            try:
+                health = self._post({"operation": "health", "schema_version": SCHEMA}, 3)
+                if health.get("ok") is not True:
+                    raise WorkerError("BRIDGE_HEALTH_FAILED")
+                item.update(reachable=True, status="reachable", worker_platform=health.get("platform"), worker_features=health.get("features", {}))
+                checks = health.get("command_checks", {})
+                item["actions"] = sorted(name for name in bound
+                                         if checks.get(f"{self.name.value}.{name}", {}).get("executable_found") is True)
+            except Exception as exc:
+                item["evidence"].append(str(exc))
+        elif not self.bridge_url:
+            item["actions"] = sorted(name for name, cfg in bound.items()
+                                     if self._valid_command(cfg.get("command")) and shutil.which(cfg["command"][0]))
+            if item["actions"]:
+                item["status"] = "executable_found"
+        item["execution_ready"] = item["available"] = bool(item["actions"])
+        item["evidence"].append("VENDOR_OPERATION_AND_LICENSE_NOT_VERIFIED")
+        return item
+
+    @staticmethod
+    def _valid_command(command):
+        return (isinstance(command, list) and bool(command)
+                and all(isinstance(p, str) and p for p in command) and any("{script}" in p for p in command))
 
     def execute(self, step: PlanStep, context: AdapterContext) -> ToolResult:
         if context.dry_run:
-            return ToolResult(
-                step_id=step.id,
-                tool=self.name,
-                status="planned",
-                message=f"dry-run: {self.name.value} adapter accepted {step.action}",
-                outputs=step.outputs,
-                details={"doctor": self.doctor()},
-            )
-
-        command = self._command(step, context)
-        if not command and not self.bridge_url:
-            return ToolResult(
-                step_id=step.id,
-                tool=self.name,
-                status="unavailable",
-                message=f"configure {self.name.value}.executable or bridge_url before execution",
-                outputs=[],
-                details={"doctor": self.doctor()},
-            )
-        if self.bridge_url:
-            return self._execute_bridge(step, context)
-
-        assert command is not None
+            return ToolResult(step.id, self.name, "planned", f"dry-run: {self.name.value} {step.action}",
+                              step.outputs, {"doctor": self.doctor(probe=False), "execution": "not_run"})
+        binding = self.config.get("actions", {}).get(step.action)
+        if not isinstance(binding, dict) or not binding.get("script") or (not self.bridge_url and not self._valid_command(binding.get("command"))):
+            return ToolResult(step.id, self.name, "unavailable", "Configure an action script and a runner command or worker URL",
+                              details={"error": {"code": "ACTION_BINDING_REQUIRED"}, "action": step.action})
         try:
-            completed = subprocess.run(
-                command,
-                cwd=context.project_dir,
-                env=context.env(),
-                capture_output=True,
-                text=True,
-                timeout=context.timeout_seconds,
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            return ToolResult(
-                step_id=step.id,
-                tool=self.name,
-                status="failed",
-                message=f"{self.name.value} process failed: {exc}",
-                details={"command": command},
-            )
-        status = "completed" if completed.returncode == 0 else "failed"
-        return ToolResult(
-            step_id=step.id,
-            tool=self.name,
-            status=status,
-            message=f"{self.name.value} returned exit code {completed.returncode}",
-            outputs=step.outputs if status == "completed" else [],
-            details={
-                "command": command,
-                "returncode": completed.returncode,
-                "stdout": completed.stdout[-4000:],
-                "stderr": completed.stderr[-4000:],
-            },
-        )
+            payload = self._prepare(step, context, binding)
+            workspace = context.workspace_dir
+            if workspace is None:
+                # Raw adapter use stages results only; the agent owns publication.
+                workspace = Path(tempfile.mkdtemp(prefix="simloom-software-"))
+            workspace.mkdir(parents=True, exist_ok=True)
+            if self.bridge_url:
+                body = execute_remote(self, payload, context)
+            else:
+                body = run_job(workspace, payload, {f"{self.name.value}.{step.action}": binding["command"]},
+                               timeout=context.timeout_seconds, environment=context.env())
+            return self.collect_response(step, body, payload["request_id"], payload["outputs"], workspace,
+                                         payload.get("validation"))
+        except Exception as exc:
+            details = {"error": {"code": getattr(exc, "code", "SOFTWARE_ADAPTER_FAILED"), "message": str(exc)}}
+            if self.bridge_url and "payload" in locals():
+                details["remote_job"] = {"request_id": payload["request_id"], "status": "unknown", "requires_reconnect": True,
+                                         "receipt_path": str(ReceiptStore(context.project_dir).path(payload["request_id"]))}
+            return ToolResult(step.id, self.name, "failed", str(exc), details=details)
 
-    def _execute_bridge(self, step: PlanStep, context: AdapterContext) -> ToolResult:
-        # The HTTP bridge is intentionally optional.  Vendor-specific gateways
-        # can implement this same contract without adding vendor SDKs here.
-        try:
-            import httpx
+    def collect_response(self, step, body, request_id, expected_outputs, workspace, validation=None):
+        if body.get("schema_version") != SCHEMA or body.get("request_id") != request_id:
+            raise WorkerError("WORKER_RESPONSE_MISMATCH")
+        if body.get("status") == "failed":
+            return ToolResult(step.id, self.name, "failed", body.get("error", {}).get("message", "Worker execution failed"),
+                              details={k: v for k, v in body.items() if k != "outputs"})
+        if body.get("status") != "completed" or type(body.get("returncode")) is not int or body["returncode"] != 0:
+            raise WorkerError("INVALID_WORKER_COMPLETION")
+        if body.get("tool") != self.name.value or body.get("action") != step.action:
+            raise WorkerError("WORKER_RESPONSE_MISMATCH")
+        decoded = decode_files(body.get("outputs"))
+        if set(decoded) != set(expected_outputs) or any(not data for data in decoded.values()):
+            raise WorkerError("OUTPUT_MANIFEST_MISMATCH")
+        collected = Path(tempfile.mkdtemp(prefix="collected-", dir=workspace))
+        output_files = {}
+        for name, data in decoded.items():
+            path = safe_file(collected, name)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+            output_files[name] = str(path)
+        details = {k: v for k, v in body.items() if k != "outputs"}
+        details.update(verification="artifact_integrity", vendor_validation="not_run")
+        if validation is not None:
+            report_path = validation.get("report") if isinstance(validation, dict) else None
+            if not isinstance(report_path, str) or report_path not in decoded:
+                raise WorkerError("VENDOR_REPORT_MISSING")
+            try:
+                report = strict_json(decoded[report_path])
+                if validation.get("schema_version") == EVIDENCE_SCHEMA:
+                    report = validate_evidence(report, validation, decoded, request_id=request_id,
+                                               tool=self.name.value, action=step.action)
+                else:
+                    report = validate_report(report, request_id=request_id, tool=self.name.value,
+                                             action=step.action, required_checks=validation.get("required_checks", []))
+            except (UnicodeDecodeError, json.JSONDecodeError, VendorValidationError) as exc:
+                raise WorkerError(getattr(exc, "code", "VENDOR_REPORT_INVALID"), str(exc)) from exc
+            details["vendor_validation"] = report
+            details["verification"] = ("artifact_and_vendor_evidence" if validation.get("schema_version") == EVIDENCE_SCHEMA
+                                       else "artifact_and_report_schema")
+        details.update(output_manifest=manifest(body["outputs"]), output_files=output_files,
+                       verification=details.get("verification", "artifact_integrity"),
+                       vendor_validation=details.get("vendor_validation", "not_run"))
+        return ToolResult(step.id, self.name, "completed", "Runner completed; declared output files collected and hashes verified",
+                          list(output_files), details)
 
-            response = httpx.post(
-                self.bridge_url,
-                json={
-                    "tool": self.name.value,
-                    "step": {
-                        "id": step.id,
-                        "action": step.action,
-                        "objective": step.objective,
-                        "parameters": step.parameters,
-                        "inputs": step.inputs,
-                        "outputs": step.outputs,
-                    },
-                },
-                timeout=context.timeout_seconds,
-            )
-            response.raise_for_status()
-            body = response.json() if response.content else {}
-        except Exception as exc:  # bridge failures are reported to the caller
-            return ToolResult(
-                step_id=step.id,
-                tool=self.name,
-                status="failed",
-                message=f"{self.name.value} bridge failed: {exc}",
-                details={"bridge_url": self.bridge_url},
-            )
-        return ToolResult(
-            step_id=step.id,
-            tool=self.name,
-            status=body.get("status", "completed"),
-            message=body.get("message", f"{self.name.value} bridge accepted the step"),
-            outputs=body.get("outputs", step.outputs),
-            details=body,
-        )
+    def file_contract(self, step, binding):
+        validation = binding.get("validation", step.parameters.get("validation"))
+        if validation is not None and not isinstance(validation, dict):
+            raise WorkerError("INVALID_VALIDATION_CONTRACT")
+        typed = {("catia", "update_parameters"): "catia_parameters", ("ansys", "solve_configured_model"): "mechanical_solve"}
+        kind = typed.get((self.name.value, step.action)) or (validation or {}).get("kind")
+        inferred_inputs, inferred_outputs = [], []
+        if kind:
+            source, inferred_outputs, _ = requirements(kind, step.parameters)
+            inferred_inputs = [source]
+        inputs = names(list(dict.fromkeys(step.inputs + binding.get("inputs", []) + inferred_inputs)))
+        outputs = names(step.outputs or binding.get("outputs", []) or inferred_outputs, output=True)
+        if not outputs:
+            raise WorkerError("OUTPUT_CONTRACT_REQUIRED")
+        script = names([binding["script"]])[0]
+        names(list(dict.fromkeys([script] + inputs)) + outputs)
+        return script, inputs, outputs, validation, kind
+
+    def _prepare(self, step, context, binding):
+        script, inputs, outputs, validation, kind = self.file_contract(step, binding)
+        files = []
+        for name in dict.fromkeys([script] + inputs):
+            if name in context.input_files:
+                source = Path(context.input_files[name])
+                record = pack_file(source.parent, source.name)
+                record["path"] = name
+            else:
+                record = pack_file(context.project_dir, name)
+            files.append(record)
+        decode_files(files)  # Validate total transfer size before contacting a worker.
+        names([r["path"] for r in files] + outputs)
+        if kind:
+            validation = build_contract(kind, step.parameters, files, outputs, self.name.value, step.action)
+        elif isinstance(validation, dict):
+            if validation.get("schema_version") not in (None, "simloom-ai/vendor-validation/v1"):
+                raise WorkerError("VENDOR_CONTRACT_UNSUPPORTED")
+            validation = {"report": validation.get("report"),
+                          "required_checks": list(validation.get("required_checks", []))}
+            if validation["report"] not in outputs:
+                raise WorkerError("INVALID_VALIDATION_CONTRACT")
+        return {"schema_version": SCHEMA, "operation": "run", "request_id": uuid.uuid4().hex,
+                "tool": self.name.value, "action": step.action, "script": script,
+                "parameters": step.parameters, "inputs": inputs, "outputs": outputs, "files": files,
+                "validation": validation,
+                **({"vendor_options": json.loads(json.dumps(binding["vendor_options"], allow_nan=False))}
+                   if "vendor_options" in binding else {})}

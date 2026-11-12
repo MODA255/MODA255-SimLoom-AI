@@ -129,6 +129,10 @@ class BRepBackend:
     def create_primitive(self, primitive: str, parameters: dict[str, Any], output: str | Path) -> dict[str, Any]:
         raise NotImplementedError
 
+    def build_feature_graph(self, features: list[dict[str, Any]], parameters: dict[str, Any],
+                            constraints: list[dict[str, Any]], output: str | Path) -> dict[str, Any]:
+        raise NotImplementedError
+
     def tessellate_step(self, path: str | Path, deflection: float = 0.5) -> dict[str, Any]:
         raise BRepUnavailable("OPENCASCADE_BACKEND_UNAVAILABLE")
 
@@ -146,6 +150,10 @@ class UnavailableBRepBackend(BRepBackend):
         self._raise()
 
     def create_primitive(self, primitive: str, parameters: dict[str, Any], output: str | Path) -> dict[str, Any]:
+        self._raise()
+
+    def build_feature_graph(self, features: list[dict[str, Any]], parameters: dict[str, Any],
+                            constraints: list[dict[str, Any]], output: str | Path) -> dict[str, Any]:
         self._raise()
 
 
@@ -173,6 +181,11 @@ class OpenCascadeBackend(BRepBackend):
             # BRepGProp/BRepBndLib, while older OCP/pythonocc releases expose
             # module-level functions. Keep one normalized adapter surface.
             self._api = locals()
+            try:
+                from OCP.BRepPrimAPI import BRepPrimAPI_MakeCone, BRepPrimAPI_MakeSphere  # type: ignore
+                self._api.update(BRepPrimAPI_MakeCone=BRepPrimAPI_MakeCone, BRepPrimAPI_MakeSphere=BRepPrimAPI_MakeSphere)
+            except ImportError:
+                self._api.update(BRepPrimAPI_MakeCone=None, BRepPrimAPI_MakeSphere=None)
             gprop_class = getattr(_BRepGPropModule, "BRepGProp", None)
             bnd_class = getattr(_BRepBndLibModule, "BRepBndLib", None)
             self._api["brepgprop_SurfaceProperties"] = getattr(_BRepGPropModule, "brepgprop_SurfaceProperties", None) or getattr(gprop_class, "SurfaceProperties_s", None)
@@ -196,6 +209,11 @@ class OpenCascadeBackend(BRepBackend):
             from OCC.Core.TopAbs import TopAbs_COMPSOLID, TopAbs_EDGE, TopAbs_FACE, TopAbs_SHELL, TopAbs_SOLID, TopAbs_VERTEX  # type: ignore
             from OCC.Core.TopExp import TopExp_Explorer  # type: ignore
             self._api = locals()
+            try:
+                from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakeCone, BRepPrimAPI_MakeSphere  # type: ignore
+                self._api.update(BRepPrimAPI_MakeCone=BRepPrimAPI_MakeCone, BRepPrimAPI_MakeSphere=BRepPrimAPI_MakeSphere)
+            except ImportError:
+                self._api.update(BRepPrimAPI_MakeCone=None, BRepPrimAPI_MakeSphere=None)
             return
         except ImportError as exc:
             raise BRepUnavailable("OPENCASCADE_BACKEND_UNAVAILABLE") from exc
@@ -316,14 +334,77 @@ class OpenCascadeBackend(BRepBackend):
         self._write(shape, output)
         return {"backend": self.name, "operation": operation, "output": str(output), "inspection": self.inspect_step(output)}
 
-    def create_primitive(self, primitive: str, parameters: dict[str, Any], output: str | Path) -> dict[str, Any]:
+    def _primitive_shape(self, primitive: str, parameters: dict[str, Any]):
         primitive = primitive.lower()
         if primitive == "box":
-            shape = self._api["BRepPrimAPI_MakeBox"](float(parameters["length"]), float(parameters["width"]), float(parameters["height"])).Shape()
-        elif primitive == "cylinder":
-            shape = self._api["BRepPrimAPI_MakeCylinder"](float(parameters["radius"]), float(parameters["height"])).Shape()
-        else:
-            raise ValueError(f"UNSUPPORTED_PRIMITIVE:{primitive}")
+            return self._api["BRepPrimAPI_MakeBox"](float(parameters["length"]), float(parameters["width"]), float(parameters["height"])).Shape()
+        if primitive == "cylinder":
+            return self._api["BRepPrimAPI_MakeCylinder"](float(parameters["radius"]), float(parameters["height"])).Shape()
+        if primitive == "sphere":
+            maker = self._api.get("BRepPrimAPI_MakeSphere")
+            if maker is None:
+                raise ValueError("SPHERE_PRIMITIVE_UNAVAILABLE")
+            return maker(float(parameters["radius"])).Shape()
+        if primitive == "cone":
+            maker = self._api.get("BRepPrimAPI_MakeCone")
+            if maker is None:
+                raise ValueError("CONE_PRIMITIVE_UNAVAILABLE")
+            return maker(float(parameters["radius1"]), float(parameters.get("radius2", 0)), float(parameters["height"])).Shape()
+        raise ValueError(f"UNSUPPORTED_PRIMITIVE:{primitive}")
+
+    @staticmethod
+    def _resolve_parameters(value: Any, parameters: dict[str, float]) -> Any:
+        if isinstance(value, str) and value in parameters:
+            return parameters[value]
+        if isinstance(value, dict):
+            return {key: OpenCascadeBackend._resolve_parameters(item, parameters) for key, item in value.items()}
+        if isinstance(value, list):
+            return [OpenCascadeBackend._resolve_parameters(item, parameters) for item in value]
+        return value
+
+    def build_feature_graph(self, features: list[dict[str, Any]], parameters: dict[str, Any],
+                            constraints: list[dict[str, Any]], output: str | Path) -> dict[str, Any]:
+        if not isinstance(features, list) or not features:
+            raise ValueError("FEATURE_GRAPH_REQUIRED")
+        solved = (solve_constraints(parameters or {}, constraints or {}).to_dict()
+                  if constraints else ConstraintResult(True, 0, {str(key): float(value) for key, value in (parameters or {}).items()}, []).to_dict())
+        if constraints and not solved["converged"]:
+            raise ValueError("CONSTRAINTS_NOT_SATISFIED")
+        values = solved["parameters"]
+        shapes: dict[str, Any] = {}
+        history: list[dict[str, Any]] = []
+        for index, raw in enumerate(features, 1):
+            feature = self._resolve_parameters(raw, values)
+            feature_id = str(feature.get("id") or f"feature-{index:04d}")
+            primitive = str(feature.get("primitive", feature.get("type", ""))).lower()
+            if primitive in {"box", "cylinder", "sphere", "cone"}:
+                shape = self._primitive_shape(primitive, dict(feature.get("parameters") or {}))
+            elif primitive in {"fuse", "cut", "common", "intersection"}:
+                left_id, right_id = str(feature.get("left", "")), str(feature.get("right", ""))
+                if left_id not in shapes or right_id not in shapes:
+                    raise ValueError(f"FEATURE_REFERENCE_NOT_FOUND:{feature_id}")
+                if primitive == "fuse":
+                    shape = self._api["BRepAlgoAPI_Fuse"](shapes[left_id], shapes[right_id]).Shape()
+                elif primitive == "cut":
+                    shape = self._api["BRepAlgoAPI_Cut"](shapes[left_id], shapes[right_id]).Shape()
+                else:
+                    shape = self._api["BRepAlgoAPI_Common"](shapes[left_id], shapes[right_id]).Shape()
+            else:
+                raise ValueError(f"UNSUPPORTED_FEATURE:{primitive}")
+            if shape.IsNull():
+                raise ValueError(f"FEATURE_EMPTY_SHAPE:{feature_id}")
+            shapes[feature_id] = shape
+            history.append({"id": feature_id, "type": primitive, "parameters": feature.get("parameters", {}), "left": feature.get("left"), "right": feature.get("right")})
+        final_id = str(features[-1].get("id") or f"feature-{len(features):04d}")
+        if final_id not in shapes:
+            final_id = history[-1]["id"]
+        self._write(shapes[final_id], output)
+        return {"backend": self.name, "output": str(output), "final_feature": final_id,
+                "features": history, "constraints": solved, "inspection": self.inspect_step(output)}
+
+    def create_primitive(self, primitive: str, parameters: dict[str, Any], output: str | Path) -> dict[str, Any]:
+        primitive = primitive.lower()
+        shape = self._primitive_shape(primitive, parameters)
         self._write(shape, output)
         return {"backend": self.name, "primitive": primitive, "output": str(output), "inspection": self.inspect_step(output)}
 

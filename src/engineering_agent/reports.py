@@ -4,7 +4,7 @@ from html import escape
 import json
 
 
-STATUS_LABELS = {"queued": "待运行", "running": "运行中", "completed": "已完成", "failed": "失败",
+STATUS_LABELS = {"queued": "待运行", "running": "运行中", "waiting": "等待恢复连接", "completed": "已完成", "failed": "失败",
                  "planned": "排练通过", "blocked": "依赖阻塞", "unavailable": "不可用", "rolled_back": "已回滚"}
 
 
@@ -30,6 +30,8 @@ def build_report(queue, task_id):
                                          if s.get("status") in {"failed", "blocked", "unavailable"}), None)
     if task["status"] == "failed" and not error:
         error = "任务未完成，请检查执行计划和事件记录。"
+    if task["status"] == "waiting":
+        error = None
     verdicts = result.get("verdicts", [])
     verdict_status = ("failed" if any(not v["passed"] for v in verdicts) else "passed") if verdicts else "not_evaluated"
     mode = next((e["payload"]["mode"] for e in events if e["event"] == "execution_mode"), task["mode"])
@@ -52,8 +54,11 @@ def build_report(queue, task_id):
         "plan": plan, "stages": list(stages.values()), "verdicts": verdicts,
         "validation_status": verdict_status,
         "artifacts": result.get("artifact_manifest", []), "error": error,
+        "workflow_id": task.get("workflow_id"),
+        "resume_allowed": bool(task.get("workflow_id")) and task["status"] in {"waiting", "failed", "running"},
         "retry_allowed": task["status"] == "failed" and snapshot is not None and not external,
-        "next_step": ("检查失败阶段及外部软件日志；通过 CLI 重新提交任务并明确执行模式。" if external and error else
+        "next_step": ("恢复原工程链：先检查原任务，再继续剩余步骤；不会自动重跑状态不明的操作。" if task.get("workflow_id") and task["status"] != "completed" else
+                      "检查失败阶段及外部软件日志；通过 CLI 重新提交任务并明确执行模式。" if external and error else
                       "检查失败阶段及其输入；修复环境后，可使用原参数重试。" if error else
                       "可以查看产物并导出报告。" if task["status"] == "completed" else "等待任务完成。"),
         "evidence_note": "报告使用该任务保存的输入快照与运行时记录的文件哈希；旧任务缺失的信息不补造。",

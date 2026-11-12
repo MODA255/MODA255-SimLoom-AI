@@ -79,6 +79,7 @@ class RunReport:
     validation: dict[str, Any] = field(default_factory=dict)
     timeline: list[dict[str, Any]] = field(default_factory=list)
     artifact_manifest: list[dict[str, Any]] = field(default_factory=list)
+    workflow_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -90,4 +91,5 @@ class RunReport:
             "validation": self.validation,
             "timeline": self.timeline,
             "artifact_manifest": self.artifact_manifest,
+            "workflow_id": self.workflow_id,
         }

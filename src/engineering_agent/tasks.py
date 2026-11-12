@@ -9,10 +9,13 @@ def input_snapshot(metadata=None, overrides=None):
     metadata, overrides = metadata or {}, overrides or {}
     spec = overrides.get("model_spec", metadata.get("model_spec", {}))
     rules = overrides.get("rules", metadata.get("rules", DEFAULT_RULES))
+    parameters = overrides.get("parameters", metadata.get("parameters", {}))
     if not isinstance(spec, dict) or not isinstance(rules, list):
         raise ValueError("模型参数必须为对象，指标规则必须为数组")
+    if not isinstance(parameters, dict):
+        raise ValueError("软件任务参数必须为对象")
     return {"project_name": metadata.get("name", "未命名项目"),
-            "model_spec": asdict(ModelSpec(**spec)), "rules": rules}
+            "model_spec": asdict(ModelSpec(**spec)), "rules": rules, "parameters": parameters}
 
 
 class TaskRunner:
@@ -41,14 +44,35 @@ class TaskRunner:
                     task["project_dir"], snapshot["model_spec"], snapshot["rules"], on_event=progress)
             else:
                 result = self.agent.run(task["prompt"], project_dir=task["project_dir"],
-                                        parameters={"model_spec": snapshot["model_spec"]},
+                                        parameters={**snapshot.get("parameters", {}), "model_spec": snapshot["model_spec"]},
                                         dry_run=not execute, on_event=progress).to_dict()
             result["task_id"] = task_id
             result["execution_mode"] = mode
             if "verdicts" in result:
                 result["validation_passed"] = bool(result["verdicts"]) and all(v["passed"] for v in result["verdicts"])
-            self.queue.update(task_id, "completed" if result["status"] == "committed" else "failed", result)
+            status = "completed" if result["status"] == "committed" else ("waiting" if result["status"] == "waiting" else "failed")
+            self.queue.update(task_id, status, result)
             return result
         except Exception as exc:
             self.queue.update(task_id, "failed", {"error": str(exc), "task_id": task_id})
+            raise
+
+    def resume(self, task_id):
+        task = self.queue.get(task_id)
+        if not task:
+            raise FileNotFoundError("任务不存在")
+        if not task.get("workflow_id"):
+            raise ValueError("任务没有可恢复的工程链记录")
+        def progress(event, payload):
+            self.queue.record_event(task_id, event, payload)
+        try:
+            result = self.agent.workflow("resume", task["workflow_id"], project_dir=task["project_dir"], on_event=progress)
+            result.update(task_id=task_id, execution_mode="external")
+            status = "completed" if result["status"] == "committed" else ("waiting" if result["status"] == "waiting" else "failed")
+            self.queue.update(task_id, status, result)
+            return result
+        except Exception as exc:
+            if "PROJECT_LOCKED" not in str(exc):
+                self.queue.update(task_id, "failed", {"error": str(exc), "task_id": task_id,
+                                                   "workflow_id": task["workflow_id"], "execution_mode": "external"})
             raise

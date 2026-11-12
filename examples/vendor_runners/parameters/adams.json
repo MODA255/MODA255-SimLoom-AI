@@ -1,0 +1,19 @@
+{
+  "command_file": "inputs/run.cmd",
+  "result_output": "artifacts/adams.csv",
+  "report_output": "artifacts/adams-evidence.json",
+  "required_metrics": [
+    "peak_displacement"
+  ],
+  "metric_units": {
+    "peak_displacement": "mm"
+  },
+  "metric_columns": {
+    "peak_displacement": {
+      "column": "displacement",
+      "unit": "m",
+      "reducer": "abs_max"
+    }
+  },
+  "metric_rules": []
+}

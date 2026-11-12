@@ -10,6 +10,9 @@ from typing import Any
 
 from .ingest import ArtifactReader
 from .brep import get_brep_backend
+from .cad_model import CadDocument
+from .cad_history import CadHistory
+from .transactions import RunTransaction
 
 
 def artifact_listing(root: str | Path, limit: int = 500) -> list[dict[str, Any]]:
@@ -44,6 +47,16 @@ def artifact_preview(root: str | Path, relative: str, max_chars: int = 20000) ->
 
 
 def asset_view(root: str | Path, relative: str) -> dict[str, Any]:
+    if Path(relative).suffix.lower() == ".dxf":
+        with RunTransaction.read_lock(root) as transaction:
+            path = (Path(root).resolve() / relative).resolve()
+            if not path.is_relative_to(transaction.project_dir):
+                raise ValueError("ARTIFACT_PATH_OUTSIDE_ROOT")
+            return _asset_view(root, relative, CadHistory(transaction, path).summary())
+    return _asset_view(root, relative)
+
+
+def _asset_view(root: str | Path, relative: str, history: dict[str, Any] | None = None) -> dict[str, Any]:
     root_path = Path(root).resolve()
     path = (root_path / relative).resolve()
     if root_path not in path.parents:
@@ -51,6 +64,10 @@ def asset_view(root: str | Path, relative: str) -> dict[str, Any]:
     asset = ArtifactReader().read(path)
     payload = asset.to_dict()
     note = "工程数据预览"
+    if path.suffix.lower() == ".dxf":
+        cad_document = CadDocument.open(path)
+        payload["cad_document"] = cad_document.to_dict()
+        payload["geometry"] = cad_document.to_dxf()
     if path.suffix.lower() in {".step", ".stp"}:
         backend = get_brep_backend()
         if backend.name == "opencascade":
@@ -68,7 +85,17 @@ def asset_view(root: str | Path, relative: str) -> dict[str, Any]:
             payload["geometry"] = geometry
             note = "JSON 网格 / 顶点结果场 · 拖动旋转、滚轮缩放。"
     svg = render_csv_svg(path) if path.suffix.lower() == ".csv" else render_asset_svg(payload)
-    return {"asset": payload, "svg": svg, "viewer": render_interactive_viewer(payload), "preview_note": note}
+    if path.suffix.lower() == ".dxf":
+        from .cad_render import native_model_scene
+        scene = native_model_scene(payload["geometry"], source_path=path if cad_document._source_path else None)
+        svg = scene["svg"]
+        payload["cad_view"] = {k: v for k, v in scene.items() if k != "svg"}
+        viewer = render_interactive_dxf_viewer(payload["geometry"], asset_path=relative, history=history, scene=scene)
+    else:
+        viewer = render_interactive_viewer(payload)
+    if path.suffix.lower() == ".dxf":
+        note = "2D CAD 视图 · 选择、图层、编辑和跨会话撤销/重做；保存后重新验证。"
+    return {"asset": payload, "svg": svg, "viewer": viewer, "preview_note": note, "cad_history": history}
 
 
 def render_csv_svg(path: Path) -> str:
@@ -215,12 +242,31 @@ def render_dxf_svg(geometry: dict[str, Any], width: int = 720, height: int = 460
                 points = " ".join(f"{x:.2f},{y:.2f}" for x, y in vertices)
                 tag = "polygon" if entity.get("closed") else "polyline"
                 body.append(f"<{tag} points='{points}' fill='none' stroke='{color}' stroke-width='2'/>")
-        elif kind == "TEXT":
+        elif kind in {"TEXT", "MTEXT"}:
             x, y = point(entity.get("insert", {}))
             text = str(entity.get("text", ""))[:40].replace("&", "&amp;").replace("<", "&lt;")
             body.append(f"<text x='{x:.2f}' y='{y:.2f}' font-size='12' fill='{color}'>{text}</text>")
+        elif kind == "LEADER":
+            vertices = [point(item) for item in entity.get("vertices", [])]
+            if len(vertices) >= 2:
+                body.append(f"<polyline points='{' '.join(f'{x:.2f},{y:.2f}' for x, y in vertices)}' fill='none' stroke='{color}' stroke-width='2'/>")
+                x, y = vertices[-1]
+                body.append(f"<text x='{x:.2f}' y='{y:.2f}' font-size='12' fill='{color}'>{escape(str(entity.get('text', ''))[:40])}</text>")
+        elif kind == "ELLIPSE":
+            center = point(entity.get("center", {})); axis = entity.get("major_axis", {})
+            rx = math.sqrt(float(axis.get("x", 1)) ** 2 + float(axis.get("y", 0)) ** 2) * scale
+            ry = rx * float(entity.get("ratio", 1.0))
+            body.append(f"<ellipse cx='{center[0]:.2f}' cy='{center[1]:.2f}' rx='{rx:.2f}' ry='{ry:.2f}' fill='none' stroke='{color}' stroke-width='2'/>")
     body.append("</svg>")
     return "".join(body)
+
+
+def render_interactive_dxf_viewer(geometry: dict[str, Any], width: int = 820, height: int = 560,
+                                  asset_path: str | None = None, history: dict[str, Any] | None = None,
+                                  source_path: str | Path | None = None, scene: dict[str, Any] | None = None) -> str:
+    """Render native curves with object selection; edits use the parent API."""
+    from .cad_viewer import render_cad_viewer
+    return render_cad_viewer(geometry, asset_path=asset_path, history=history, source_path=source_path, scene=scene)
 
 
 def render_mesh_svg(geometry: dict[str, Any], width: int = 720, height: int = 460) -> str:

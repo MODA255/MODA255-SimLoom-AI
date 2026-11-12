@@ -1,5 +1,10 @@
 {
   "generate_scripts": true,
+  "cad": {
+    "allow_scripts": false,
+    "script_timeout_seconds": 30,
+    "script_max_output_bytes": 16777216
+  },
   "llm": {
     "enabled": false,
     "model": "gpt-4o-mini",
@@ -7,27 +12,15 @@
     "api_key_env": "OPENAI_API_KEY",
     "timeout_seconds": 60
   },
-  "windows": {
-    "catia_prog_id": "CATIA.Application",
-    "ansys_prog_id": "Ansys.Application",
-    "adams_prog_id": "Adams.View",
-    "vi_grade_prog_id": "VIgrade.Application"
-  },
+  "windows": {},
   "windows_bridge": {
     "root_dir": "C:/EngineeringAgent/projects",
     "host": "127.0.0.1",
     "port": 8099,
     "token": "change-me",
     "timeout_seconds": 1800,
-    "commands": {
-      "catia.create_or_update_model": ["CNEXT", "-macro", "{script}"],
-      "ansys.mesh_and_solve": ["runwb2.exe", "-B", "-R", "{script}"],
-      "adams.build_and_run_multibody": ["adams", "-c", "{script}"],
-      "vi-grade.run_vehicle_dynamics": ["vi-grade-runner.exe", "{script}"]
-    },
-    "com": {
-      "CATIA.Application": {"methods": ["StartCommand", "Quit"]}
-    }
+    "commands": {},
+    "com": {}
   },
   "timeouts": {
     "step_seconds": 600
@@ -35,20 +28,28 @@
   "environment": {},
   "tools": {
     "ansys": {
-      "executable": "ansyswb",
-      "bridge_url": ""
+      "executable": "",
+      "bridge_url": "",
+      "bridge_token_env": "SIMLOOM_BRIDGE_TOKEN",
+      "actions": {}
     },
     "catia": {
-      "executable": "CNEXT",
-      "bridge_url": ""
+      "executable": "",
+      "bridge_url": "",
+      "bridge_token_env": "SIMLOOM_BRIDGE_TOKEN",
+      "actions": {}
     },
     "adams": {
-      "executable": "adams",
-      "bridge_url": ""
+      "executable": "",
+      "bridge_url": "",
+      "bridge_token_env": "SIMLOOM_BRIDGE_TOKEN",
+      "actions": {}
     },
     "vi-grade": {
       "executable": "",
-      "bridge_url": ""
+      "bridge_url": "",
+      "bridge_token_env": "SIMLOOM_BRIDGE_TOKEN",
+      "actions": {}
     }
   }
 }

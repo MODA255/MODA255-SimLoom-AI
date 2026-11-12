@@ -21,44 +21,31 @@ class WindowsAutomation:
         return {"platform": platform.system(), "windows": on_windows, "pywin32": com_available}
 
     def validate_backends(self, tools: dict[str, Any] | None = None, *, smoke: bool = False) -> dict[str, Any]:
-        """Return a four-tool readiness matrix and optionally dispatch COM.
-
-        A normal doctor call is read-only. ``smoke=True`` is an explicit
-        Windows-host validation that dispatches each configured ProgID and
-        immediately releases the COM reference; it does not run a solve.
-        """
+        """Report configuration evidence; COM dispatch alone is not a vendor task test."""
         tools = tools or {}
-        descriptors = {
-            "catia": {"prog_id": self.config.get("catia_prog_id", "CATIA.Application"), "executable": tools.get("catia", {}).get("executable", "")},
-            "ansys": {"prog_id": self.config.get("ansys_prog_id", "Ansys.Application"), "executable": tools.get("ansys", {}).get("executable", "")},
-            "adams": {"prog_id": self.config.get("adams_prog_id", "Adams.View"), "executable": tools.get("adams", {}).get("executable", "")},
-            "vi-grade": {"prog_id": self.config.get("vi_grade_prog_id", "VIgrade.Application"), "executable": tools.get("vi-grade", {}).get("executable", "")},
-        }
         result = {"platform": platform.system(), "smoke_requested": smoke, "tools": []}
-        for name, descriptor in descriptors.items():
-            executable = str(descriptor["executable"] or "")
-            executable_found = bool(executable and (shutil.which(executable) or platform.system().lower() == "windows" and ("\\" in executable or "/" in executable)))
-            item = {"tool": name, "prog_id": descriptor["prog_id"], "executable": executable, "executable_found": executable_found, "com_dispatch": "not_run", "status": "unavailable", "evidence": []}
-            if platform.system().lower() != "windows":
-                item["evidence"].append("WINDOWS_HOST_REQUIRED")
-            elif not self.doctor()["pywin32"]:
-                item["evidence"].append("PYWIN32_REQUIRED")
-            elif smoke:
+        for name in ("catia", "ansys", "adams", "vi-grade"):
+            cfg = tools.get(name, {})
+            prog_id = self.config.get(name.replace("-", "_") + "_prog_id", "")
+            executable = str(cfg.get("executable") or "")
+            found = bool(executable and shutil.which(executable))
+            configured = bool(prog_id or executable or cfg.get("actions") or cfg.get("bridge_url"))
+            item = {"tool": name, "prog_id": prog_id, "executable": executable,
+                    "executable_found": found, "com_dispatch": "not_run",
+                    "status": "configured" if configured else "unavailable",
+                    "real_machine_verified": False, "evidence": ["VENDOR_OPERATION_NOT_VERIFIED"]}
+            if smoke and prog_id:
                 try:
-                    application = self.dispatch(str(descriptor["prog_id"]))
+                    application = self.dispatch(prog_id)
                     item["com_dispatch"] = "passed"
-                    item["status"] = "ready"
-                    item["evidence"].append(f"COM_DISPATCH_OK:{type(application).__name__}")
+                    item["evidence"].append("COM_DISPATCH_ONLY")
                     del application
                 except Exception as exc:
                     item["com_dispatch"] = "failed"
                     item["evidence"].append(str(exc))
-            elif executable_found or descriptor["prog_id"]:
-                item["status"] = "configured"
-                item["evidence"].append("SMOKE_NOT_RUN")
             result["tools"].append(item)
-        result["ready_count"] = sum(item["status"] == "ready" for item in result["tools"])
-        result["configured_count"] = sum(item["status"] in {"configured", "ready"} for item in result["tools"])
+        result["ready_count"] = 0  # Requires separately recorded real operation evidence.
+        result["configured_count"] = sum(i["status"] == "configured" for i in result["tools"])
         return result
 
     def dispatch(self, prog_id: str) -> Any:

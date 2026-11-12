@@ -1,0 +1,23 @@
+{
+  "db_file": "inputs/analysis.mechdat",
+  "native_output": "artifacts/solved.mechdat",
+  "result_output": "artifacts/ansys-results.json",
+  "report_output": "artifacts/ansys-evidence.json",
+  "analysis_name": "Static Structural",
+  "required_metrics": [
+    "total_deformation",
+    "equivalent_stress"
+  ],
+  "metric_units": {
+    "total_deformation": "mm",
+    "equivalent_stress": "MPa"
+  },
+  "metric_rules": [
+    {
+      "name": "total_deformation",
+      "operator": "<=",
+      "target": 1,
+      "unit": "mm"
+    }
+  ]
+}

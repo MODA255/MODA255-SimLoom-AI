@@ -1,0 +1,90 @@
+{
+  "generate_scripts": false,
+  "tools": {
+    "catia": {
+      "actions": {
+        "update_parameters": {
+          "script": "examples/vendor_runners/catia_parameter_export.py",
+          "command": [
+            "C:/SimLoom/python/python.exe",
+            "{script}",
+            "{request_file}"
+          ],
+          "validation": {
+            "kind": "catia_parameters"
+          },
+          "vendor_options": {
+            "prog_id": ""
+          }
+        }
+      }
+    },
+    "ansys": {
+      "actions": {
+        "solve_configured_model": {
+          "script": "examples/vendor_runners/ansys_mechanical_solve.py",
+          "command": [
+            "C:/SimLoom/python/python.exe",
+            "{script}",
+            "{request_file}"
+          ],
+          "validation": {
+            "kind": "mechanical_solve"
+          },
+          "repair_strategies": [
+            {
+              "id": "reduce_declared_load",
+              "when": {
+                "metric": "equivalent_stress",
+                "failed": true
+              },
+              "parameter_patch": {
+                "load_case": "reduced_load_case"
+              },
+              "reason": "将模型切换到工程师预先配置的低载荷工况；不修改验收阈值。",
+              "max_attempts": 1
+            }
+          ]
+        }
+      }
+    },
+    "adams": {
+      "actions": {
+        "build_and_run_multibody": {
+          "script": "examples/vendor_runners/adams_command_runner.py",
+          "command": [
+            "C:/SimLoom/python/python.exe",
+            "{script}",
+            "{request_file}"
+          ],
+          "validation": {
+            "kind": "adams_export"
+          },
+          "vendor_options": {
+            "command": [],
+            "timeout_seconds": 1800
+          }
+        }
+      }
+    },
+    "vi-grade": {
+      "actions": {
+        "run_vehicle_dynamics": {
+          "script": "examples/vendor_runners/vi_grade_scenario_runner.py",
+          "command": [
+            "C:/SimLoom/python/python.exe",
+            "{script}",
+            "{request_file}"
+          ],
+          "validation": {
+            "kind": "vi_grade_export"
+          },
+          "vendor_options": {
+            "command": [],
+            "timeout_seconds": 1800
+          }
+        }
+      }
+    }
+  }
+}

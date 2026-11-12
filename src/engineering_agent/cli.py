@@ -24,21 +24,61 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", default=str(_default_config()))
     parser.add_argument("--project-dir", default=".")
     sub = parser.add_subparsers(dest="command", required=True)
+    for action in ("history", "undo", "redo"):
+        command = sub.add_parser("cad-" + action, help="CAD 持久历史 / 撤销 / 重做")
+        command.add_argument("input_file")
+    plot = sub.add_parser("cad-plot", help="将 DXF 工程图导出为 PDF / PNG")
+    plot.add_argument("input_file")
+    plot.add_argument("output_file")
+    plot.add_argument("--layout", default="Model")
+    plot.add_argument("--paper", choices=["A4", "A3", "A2", "A1", "A0", "layout"])
+    plot.add_argument("--orientation", choices=["landscape", "portrait"], default="landscape")
+    plot.add_argument("--scale", help="fit 或比例，如 1:2")
+    plot.add_argument("--drawing-units", choices=["mm", "cm", "m", "in", "ft"])
+    plot.add_argument("--dpi", type=int, default=150)
+    plot.add_argument("--margin-mm", type=float, default=10)
+    plot.add_argument("--color-mode", choices=["monochrome", "color"], default="monochrome")
+    plot.add_argument("--overwrite", action="store_true")
     plan = sub.add_parser("plan", help="根据自然语言生成工具链计划")
     plan.add_argument("prompt")
+    plan.add_argument("--parameters", default="{}", help="工程参数 JSON，例如工况、载荷或 model_spec")
+    preflight = sub.add_parser("preflight", help="检查软件动作、脚本、启动命令和输出契约，不启动外部软件")
+    preflight.add_argument("prompt")
+    preflight.add_argument("--parameters", default="{}", help="工程参数 JSON")
+    preflight.add_argument("--probe", action="store_true", help="同时探测已配置的远程 worker")
     run = sub.add_parser("run", help="执行计划；默认仅 dry-run")
     run.add_argument("prompt")
+    run.add_argument("--parameters", default="{}", help="传递给软件步骤的工程参数 JSON")
     run.add_argument("--execute", action="store_true", help="允许调用已配置的外部工具")
+    workflow = sub.add_parser("workflow", help="查看或恢复已有工程链；恢复会继续剩余的软件操作")
+    workflow.add_argument("action", choices=["list", "status", "resume", "repair"])
+    workflow.add_argument("workflow_id", nargs="?")
     sub.add_parser("doctor", help="检查四个工具的连接配置")
-    windows_validate = sub.add_parser("windows-validate", help="在 Windows 主机上验证四个软件的 COM 可用性")
+    job = sub.add_parser("software-job", help="查看、取消或回收已有远程软件任务，不重新启动求解")
+    job.add_argument("tool", choices=["catia", "ansys", "adams", "vi-grade"])
+    job.add_argument("action", choices=["list", "receipts", "status", "logs", "events", "cancel", "release", "collect"])
+    job.add_argument("request_id", nargs="?")
+    job.add_argument("--stream", choices=["stdout", "stderr"])
+    job.add_argument("--offset", type=int)
+    job.add_argument("--after", type=int)
+    job.add_argument("--cursor", type=int)
+    job.add_argument("--limit", type=int)
+    job.add_argument("--confirmed-stopped", action="store_true")
+    job.add_argument("--reason")
+    windows_validate = sub.add_parser("windows-validate", help="检查软件配置；可选探测显式配置的 COM 对象")
     windows_validate.add_argument("--smoke", action="store_true", help="显式执行 COM dispatch 探针")
     sub.add_parser("brep-doctor", help="检查 OpenCascade/OCP B-Rep 后端")
     brep_inspect = sub.add_parser("brep-inspect", help="检查 STEP solid 的 B-Rep 属性")
     brep_inspect.add_argument("input_file")
-    brep_primitive = sub.add_parser("brep-primitive", help="创建 OpenCascade box/cylinder STEP solid")
-    brep_primitive.add_argument("primitive", choices=["box", "cylinder"])
+    brep_primitive = sub.add_parser("brep-primitive", help="创建 OpenCascade box/cylinder/sphere/cone STEP solid")
+    brep_primitive.add_argument("primitive", choices=["box", "cylinder", "sphere", "cone"])
     brep_primitive.add_argument("output_file")
     brep_primitive.add_argument("--parameters", default="{}", help="JSON object")
+    brep_build = sub.add_parser("brep-build", help="按参数和约束构建 STEP feature graph")
+    brep_build.add_argument("features_file", help="JSON 文件：features 数组或包含 features 的对象")
+    brep_build.add_argument("output_file")
+    brep_build.add_argument("--parameters", default="{}", help="JSON object")
+    brep_build.add_argument("--constraints", default="[]", help="JSON array")
     brep_boolean = sub.add_parser("brep-boolean", help="对两个 STEP solid 执行 fuse/cut/common")
     brep_boolean.add_argument("operation", choices=["fuse", "cut", "common"])
     brep_boolean.add_argument("left_file")
@@ -64,6 +104,7 @@ def _parser() -> argparse.ArgumentParser:
     enqueue.add_argument("prompt")
     enqueue.add_argument("--db", default="engineering-agent.db")
     enqueue.add_argument("--project-id")
+    enqueue.add_argument("--parameters", default="{}", help="保存到任务快照的软件工程参数 JSON")
     worker = sub.add_parser("worker", help="执行 SQLite 队列中的任务")
     worker.add_argument("--db", default="engineering-agent.db")
     worker.add_argument("--execute", action="store_true")
@@ -77,6 +118,7 @@ def _parser() -> argparse.ArgumentParser:
     mcp.add_argument("--profile", choices=["safe", "full"], default="safe")
     validate = sub.add_parser("validate", help="校验自然语言生成的执行计划")
     validate.add_argument("prompt")
+    validate.add_argument("--parameters", default="{}", help="校验计划时使用的工程参数 JSON")
     ingest = sub.add_parser("ingest", help="读取 STEP/CSV/JSON 工程文件")
     ingest.add_argument("path")
     ingest.add_argument("--kind")
@@ -103,12 +145,31 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     agent = EngineeringAgent(EngineeringAgent.load_config(args.config))
+    if args.command == "workflow":
+        result = agent.workflow(args.action, args.workflow_id, project_dir=args.project_dir)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if args.action in {"list", "status"} or result.get("status") in {"committed", "needs_review"} else 2
+    if args.command == "software-job":
+        options = {key: getattr(args, key) for key in ("stream", "offset", "after", "cursor", "limit", "reason", "confirmed_stopped")
+                   if getattr(args, key) is not None}
+        result = agent.software_job(args.tool, args.action, args.request_id, project_dir=args.project_dir, **options)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "cad-plot":
+        arguments = {key: value for key, value in vars(args).items() if key not in {"command", "config"} and value is not None}
+        print(json.dumps(agent.execute_operation("cad.plot", arguments), ensure_ascii=False, indent=2))
+        return 0
     if args.command == "desktop":
         from .desktop import launch
         return launch(agent, data_dir=args.data_dir, mode=args.mode, port=args.port)
     if args.command == "doctor":
         print(json.dumps(agent.doctor(), ensure_ascii=False, indent=2))
         return 0
+    if args.command == "preflight":
+        result = agent.preflight(args.prompt, project_dir=args.project_dir,
+                                 parameters=json.loads(args.parameters), probe=args.probe)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result.get("ready") else 2
     if args.command == "windows-validate":
         result = agent.validate_windows_backends(smoke=args.smoke)
         print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -122,14 +183,24 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "brep-primitive":
         print(json.dumps(agent.execute_operation("brep.create_primitive", {"primitive": args.primitive, "output_file": args.output_file, "project_dir": args.project_dir, "parameters": json.loads(args.parameters)}), ensure_ascii=False, indent=2))
         return 0
+    if args.command == "brep-build":
+        payload = json.loads(Path(args.features_file).read_text(encoding="utf-8"))
+        features = payload.get("features", payload) if isinstance(payload, dict) else payload
+        print(json.dumps(agent.execute_operation("brep.build_feature_graph", {"features": features, "output_file": args.output_file, "project_dir": args.project_dir, "parameters": json.loads(args.parameters), "constraints": json.loads(args.constraints)}), ensure_ascii=False, indent=2))
+        return 0
     if args.command == "brep-boolean":
         print(json.dumps(agent.execute_operation("brep.boolean", {"operation": args.operation, "left_file": args.left_file, "right_file": args.right_file, "output_file": args.output_file, "project_dir": args.project_dir}), ensure_ascii=False, indent=2))
+        return 0
+    if args.command in {"cad-history", "cad-undo", "cad-redo"}:
+        result = agent.execute_operation(args.command.replace("cad-", "cad."), {
+            "input_file": args.input_file, "project_dir": args.project_dir})
+        print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     if args.command == "mcp":
         serve_stdio(agent, args.profile)
         return 0
     if args.command == "validate":
-        print(json.dumps(validate_plan(agent.plan(args.prompt, project_dir=args.project_dir)), ensure_ascii=False, indent=2))
+        print(json.dumps(validate_plan(agent.plan(args.prompt, project_dir=args.project_dir, parameters=json.loads(args.parameters))), ensure_ascii=False, indent=2))
         return 0
     if args.command == "ingest":
         print(json.dumps(agent.ingest(args.path, args.kind), ensure_ascii=False, indent=2))
@@ -173,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.project_id and not project:
             raise ValueError("项目不存在")
         root = (project or {}).get("project_dir") or args.project_dir
-        task_id = queue.submit(args.prompt, root, args.project_id, inputs=input_snapshot((project or {}).get("metadata")))
+        task_id = queue.submit(args.prompt, root, args.project_id, inputs=input_snapshot((project or {}).get("metadata"), {"parameters": json.loads(args.parameters)}))
         print(json.dumps(queue.get(task_id), ensure_ascii=False, indent=2))
         return 0
     if args.command == "worker":
@@ -203,11 +274,11 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(TaskQueue(args.db).list_projects(), ensure_ascii=False, indent=2))
         return 0
     if args.command == "plan":
-        print(json.dumps(agent.plan(args.prompt, project_dir=args.project_dir).to_dict(), ensure_ascii=False, indent=2))
+        print(json.dumps(agent.plan(args.prompt, project_dir=args.project_dir, parameters=json.loads(args.parameters)).to_dict(), ensure_ascii=False, indent=2))
         return 0
-    report = agent.run(args.prompt, project_dir=args.project_dir, dry_run=not args.execute)
+    report = agent.run(args.prompt, project_dir=args.project_dir, parameters=json.loads(args.parameters), dry_run=not args.execute)
     print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
-    return 0 if all(result.status not in {"failed", "blocked", "unavailable"} for result in report.results) else 2
+    return 0 if report.status == "committed" and all(result.status in {"planned", "completed"} for result in report.results) else 2
 
 
 if __name__ == "__main__":

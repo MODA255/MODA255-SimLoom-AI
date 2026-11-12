@@ -2,9 +2,11 @@
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+import re
 from time import perf_counter
 
 from .validation import hash_file
+from .worker_protocol import relative_path
 
 
 def now():
@@ -39,7 +41,7 @@ class Progress:
             self.emit("stage_finished", dict(data))
 
 
-def commit_outputs(transaction, files):
+def commit_outputs(transaction, files, output_files=None, metadata_files=None, *, expected_before=None):
     """Commit the latest outputs and a per-run copy in the same transaction."""
     prefix = f"history/{transaction.run_id}/"
     manifest = [
@@ -47,5 +49,23 @@ def commit_outputs(transaction, files):
          "bytes": Path(path).stat().st_size, "sha256": hash_file(path)}
         for name, path in files.items()
     ]
-    committed = transaction.commit({**files, **{prefix + k: v for k, v in files.items()}})
-    return {name: committed[name] for name in files}, manifest
+    published = {"artifacts/generated/" + name: path for name, path in files.items()}
+    published.update({"artifacts/generated/" + prefix + name: path for name, path in files.items()})
+    for name, path in (output_files or {}).items():
+        relative_path(name, output=True)
+        if name in published or name in files:
+            raise ValueError("OUTPUT_PUBLICATION_CONFLICT:" + name)
+        historical = f"artifacts/generated/{prefix}software/{name}"
+        if historical in published:
+            raise ValueError("OUTPUT_PUBLICATION_CONFLICT:" + historical)
+        published.update({name: path, historical: path})
+        manifest.append({"name": name, "path": historical, "bytes": Path(path).stat().st_size,
+                         "sha256": hash_file(path)})
+    for name, path in (metadata_files or {}).items():
+        allowed = re.fullmatch(r"\.engineering-agent/(?:software-jobs/[0-9a-f]{32}\.json|workflows/[0-9a-f]{32}/state\.json)", name)
+        if not allowed or name in published:
+            raise ValueError("INVALID_JOB_RECEIPT_PATH:" + name)
+        published[name] = path
+    committed = transaction.commit(published, destination_root=transaction.project_dir, expected_before=expected_before)
+    return {**{name: committed["artifacts/generated/" + name] for name in files},
+            **{name: committed[name] for name in (output_files or {})}}, manifest

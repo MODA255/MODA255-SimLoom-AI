@@ -36,6 +36,7 @@ class AutonomousPlanner:
         prompt = {
             "task": request.prompt,
             "project_dir": request.project_dir,
+            "parameters": request.parameters,
             "allowed_tools": [tool.value for tool in ToolName],
             "required_schema": {"steps": [{"id": "string", "tool": "ansys|catia|adams|vi-grade", "action": "string", "objective": "string", "depends_on": ["string"], "inputs": ["string"], "outputs": ["string"], "parameters": {}}]},
         }
@@ -56,7 +57,7 @@ class AutonomousPlanner:
             tool = allowed.get(str(item.get("tool", "")).lower())
             if not tool or not item.get("id") or not item.get("action"):
                 raise ValueError("invalid LLM plan step")
-            steps.append(PlanStep(id=str(item["id"]), tool=tool, action=str(item["action"]), objective=str(item.get("objective", "")), depends_on=list(item.get("depends_on", [])), inputs=list(item.get("inputs", [])), outputs=list(item.get("outputs", [])), parameters=dict(item.get("parameters", {}))))
+            steps.append(PlanStep(id=str(item["id"]), tool=tool, action=str(item["action"]), objective=str(item.get("objective", "")), depends_on=list(item.get("depends_on", [])), inputs=list(item.get("inputs", [])), outputs=list(item.get("outputs", [])), parameters={**dict(item.get("parameters", {})), **request.parameters}))
         if not steps:
             raise ValueError("empty LLM plan")
         ids = {step.id for step in steps}

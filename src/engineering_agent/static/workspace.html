@@ -16,7 +16,7 @@
       <button data-panel="assets" title="模型与结果"><span class="nav-icon">◇</span><span>模型与结果</span></button>
       <button data-panel="settings" title="环境检查"><span class="nav-icon">⚙</span><span>环境检查</span></button>
     </nav>
-    <div class="side-note"><strong>本地工程空间</strong>项目和结果保存在本机。离线演示使用确定性替代数据，帮助你熟悉完整流程。</div>
+    <div class="side-note"><strong>软件操作工作台</strong>从这里规划并驱动 CATIA、Ansys、Adams、VI-grade。离线演示只用于排练流程和检查证据。</div>
   </aside>
   <main class="main">
     <header class="topbar">
@@ -24,8 +24,8 @@
       <div class="health"><span id="healthText">正在连接…</span><span class="project-chip" id="currentProject">尚未选择项目</span><button class="btn btn-blue" data-action="new-project">＋ 新建项目</button></div>
     </header>
     <section class="hero">
-      <div class="hero-card"><div class="eyebrow">CATIA · ANSYS · ADAMS · VI-GRADE</div><h2>从工程想法，到看得见的模型与结果。</h2><p>创建项目、制定计划、体验离线流程。所有输入、产物和验证记录都在一个地方。</p><div class="hero-actions"><button class="btn btn-primary" data-action="new-project">创建第一个项目 →</button><button class="btn btn-ghost" data-action="demo">体验四软件演示</button></div></div>
-      <div class="hero-stats"><div class="stat"><span>运行模式</span><strong>离线体验</strong></div><div class="stat"><span>计划阶段</span><strong id="stageValue">—</strong></div><div class="stat"><span>指标检查</span><strong id="verdictValue">待运行</strong></div><div class="stat"><span>项目任务</span><strong id="taskValue">0</strong></div></div>
+      <div class="hero-card"><div class="eyebrow">CATIA · ANSYS · ADAMS · VI-GRADE</div><h2>从工程目标，到真实软件里的操作与结果。</h2><p>用一个入口规划并驱动已安装的工程软件，回收原生模型和结果，再统一检查指标与证据。没有软件时，也可以先用离线流程排练。</p><div class="hero-actions"><button class="btn btn-primary" data-action="new-project">创建工程项目 →</button><button class="btn btn-ghost" data-panel="settings">检查软件连接</button><button class="btn btn-ghost" data-action="demo">运行离线排练</button></div></div>
+      <div class="hero-stats"><div class="stat"><span>当前入口</span><strong>软件操作</strong></div><div class="stat"><span>计划阶段</span><strong id="stageValue">—</strong></div><div class="stat"><span>指标检查</span><strong id="verdictValue">待运行</strong></div><div class="stat"><span>项目任务</span><strong id="taskValue">0</strong></div></div>
     </section>
     <section id="workspace" class="layout panel">
       <div class="card"><div class="card-head"><div><h3>描述工程目标</h3><p id="projectHint">先创建项目，或从历史中继续。</p></div><span class="pill">01 · 计划</span></div>
@@ -42,10 +42,52 @@
       <div class="card" style="grid-column:1/-1"><div class="card-head"><div><h3>任务历史</h3><p>离线运行和计划排练都会保留记录。排练只生成输入和检查流程。</p></div><button class="btn btn-light" id="refreshTasks">刷新</button></div><div id="tasks" class="table-wrap"></div></div>
       <details class="card output-details"><summary>技术详情 · 计划、报告和诊断</summary><pre class="json" id="output">等待操作…</pre></details>
     </section>
-    <section id="projects" class="panel" hidden><div class="card"><div class="card-head"><div><h3>继续你的项目</h3><p>名称、模板、参数和目录会持久保存。</p></div><button class="btn btn-blue" data-action="new-project">＋ 新建项目</button></div><div class="project-cards" id="projectsList"></div></div></section>
+    <section id="projects" class="panel" hidden>
+      <div class="card"><div class="card-head"><div><h3>继续你的项目</h3><p>名称、模板、参数和目录会持久保存。</p></div><button class="btn btn-blue" data-action="new-project">＋ 新建项目</button></div><div class="project-cards" id="projectsList"></div></div>
+      <div class="card version-history-card">
+        <div class="card-head"><div><div class="eyebrow">PROJECT HISTORY</div><h3>版本时间线与视觉差异</h3><p id="versionHistoryHint">打开项目后查看快照、分支关系和 DXF 几何变化。</p></div><button class="btn btn-light" id="refreshVersions">刷新版本</button></div>
+        <div id="versionTimeline" class="version-timeline"><div class="empty">还没有版本时间线。</div></div>
+        <div class="version-create-row"><label for="versionLabel">创建快照</label><input id="versionLabel" maxlength="160" placeholder="例如：几何方案 B · 初始检查"><button class="btn btn-light" id="createVersion">保存当前项目版本</button></div>
+        <div id="versionList" class="version-list"></div>
+        <div class="version-compare">
+          <div class="version-select"><label for="versionLeft">左侧版本</label><select id="versionLeft" disabled><option value="">请选择版本</option></select></div>
+          <div class="version-compare-arrow" aria-hidden="true">→</div>
+          <div class="version-select"><label for="versionRight">右侧版本</label><select id="versionRight" disabled><option value="">请选择版本</option></select></div>
+          <button class="btn btn-blue" id="versionDiffButton" disabled>生成视觉 diff</button>
+        </div>
+        <p id="versionDiffStatus" class="muted" role="status"></p>
+        <div id="versionDiffSummary" class="version-diff-summary" hidden></div>
+        <div id="versionDiffPreview" class="version-diff-preview" hidden></div>
+        <details id="versionDiffDetails" hidden><summary>查看语义 diff</summary><pre class="json" id="versionDiffJson"></pre></details>
+        <div id="versionInspect" class="version-inspect" hidden>
+          <div class="card-head"><div><h3 id="versionInspectTitle">历史版本预览</h3><p id="versionInspectMeta" class="muted"></p></div><button class="btn btn-light" id="closeVersionInspect">收起</button></div>
+          <div id="versionInspectPreview" class="version-inspect-preview"></div>
+          <div id="versionInspectAssets" class="version-assets"></div>
+        </div>
+      </div>
+    </section>
     <section id="assets" class="panel" hidden><div class="asset-layout">
       <div class="card"><div class="card-head"><div><h3>模型与结果</h3><p id="assetProject">选择项目后浏览产物。</p></div><button class="btn btn-light" id="refreshAssets">刷新</button></div><div class="asset-list" id="assetsList"></div></div>
-      <div class="card"><div class="preview-meta"><div class="eyebrow">Asset preview</div><h3 id="previewName">选择一个工程文件</h3><p class="muted" id="previewHint">STEP / OBJ 模型 · CSV 曲线 · JSON 指标</p></div><div class="file-actions"><a id="downloadAsset" class="btn btn-light btn-link" hidden>下载原始文件</a></div><div id="preview"><div class="empty">预览将在这里显示。</div></div><details><summary>文件信息与数据</summary><pre class="json" id="assetDetails">—</pre></details></div>
+      <div class="card"><div class="preview-meta"><div class="eyebrow">Asset preview</div><h3 id="previewName">选择一个工程文件</h3><p class="muted" id="previewHint">STEP / OBJ 模型 · CSV 曲线 · JSON 指标</p></div><div class="file-actions"><a id="downloadAsset" class="btn btn-light btn-link" hidden>下载原始文件</a></div><details id="drawingTools" class="drawing-tools" hidden>
+<summary>图纸与出图</summary>
+<div class="drawing-grid">
+  <label>图纸<select id="plotLayout"><option value="Model">模型空间</option></select></label>
+  <label>纸张<select id="plotPaper"><option>A3</option><option>A4</option><option>A2</option><option>A1</option><option>A0</option></select></label>
+  <label>方向<select id="plotOrientation"><option value="landscape">横向</option><option value="portrait">纵向</option></select></label>
+  <label>比例<select id="plotScale"><option value="fit">适合纸张</option><option>1:1</option><option>1:2</option><option>1:5</option><option>1:10</option></select></label>
+  <label>颜色<select id="plotColor"><option value="monochrome">黑白</option><option value="color">彩色</option></select></label>
+  <label>图像清晰度<select id="plotDpi"><option value="150">150 DPI</option><option value="300">300 DPI</option></select></label>
+</div>
+<p class="muted" id="plotHint">模型空间可选择纸张与比例；已有图纸按实际纸张大小导出。</p>
+<div class="drawing-actions"><button class="btn btn-light" id="plotPreview" type="button">生成出图预览</button><button class="btn btn-blue" id="plotPdf" type="button">导出 PDF</button><button class="btn btn-light" id="plotPng" type="button">导出 PNG</button></div>
+<div class="drawing-grid title-fields">
+  <label>图纸名称<input id="titleText" maxlength="160" placeholder="例如：前悬架支架"></label>
+  <label>图号<input id="titleNumber" maxlength="160" placeholder="例如：SL-001"></label>
+  <label>版本<input id="titleRevision" maxlength="20" value="A"></label>
+</div>
+<div class="drawing-actions"><button class="btn btn-light" id="prepareSheet" type="button">创建工程图纸</button><button class="btn btn-light" id="saveTitle" type="button">保存标题栏</button></div>
+<p id="drawingStatus" role="status" aria-live="polite"></p><div id="plotResult"></div>
+</details><div id="preview"><div class="empty">预览将在这里显示。</div></div><details><summary>文件信息与数据</summary><pre class="json" id="assetDetails">—</pre></details></div>
     </div></section>
     <section id="taskDetail" class="panel" hidden aria-label="任务详情">
       <div class="task-toolbar"><button class="btn btn-light" data-panel="workspace">← 返回工作台</button><button class="btn btn-light" id="refreshTaskDetail">刷新记录</button></div>
@@ -53,7 +95,7 @@
       <div id="taskDetailContent" hidden>
         <div class="card task-summary"><div class="eyebrow">Run record / 工程运行记录</div><h2 id="taskTitle"></h2><p class="muted" id="taskSubtitle"></p><div class="action-row"><span class="pill" id="taskMode"></span><span class="pill" id="taskStatus"></span><button class="btn btn-light" id="taskRetryOrigin" hidden></button></div><p id="taskNotice" class="task-notice"></p>
           <div class="task-facts"><div><span>开始时间</span><strong id="taskStarted"></strong></div><div><span>结束时间</span><strong id="taskFinished"></strong></div><div><span>执行耗时</span><strong id="taskDuration"></strong></div><div><span>工程指标</span><strong id="taskConclusion"></strong></div></div>
-          <div class="action-row"><a class="btn btn-blue btn-link" id="reporthtml" download>下载 HTML 报告</a><a class="btn btn-light btn-link" id="reportjson" download>下载 JSON 报告</a><button class="btn btn-light" id="retryTask" hidden>使用原参数重试</button></div>
+          <div class="action-row"><a class="btn btn-blue btn-link" id="reporthtml" download>下载 HTML 报告</a><a class="btn btn-light btn-link" id="reportjson" download>下载 JSON 报告</a><button class="btn btn-light" id="retryTask" hidden>使用原参数重试</button><button class="btn btn-blue" id="resumeTask" hidden>恢复并继续工程链</button></div>
           <p class="muted">HTML 报告可离线打开，也可用浏览器打印为 PDF。</p>
         </div>
         <div id="taskFailure" class="card task-failure" hidden><h3>失败原因</h3><p id="taskFailureText"></p><p id="taskNextStep"></p></div>
@@ -68,7 +110,20 @@
         </div>
       </div>
     </section>
-    <section id="settings" class="panel" hidden><div class="card"><div class="card-head"><div><h3>环境检查</h3><p>离线体验不需要商业软件。真实执行需另行配置 Windows 工作站。</p></div><button class="btn btn-light" id="refreshDoctor">重新检测</button></div><div class="capability-list" id="capabilities"></div><div class="status-list" id="doctor"></div></div></section>
+    <section id="settings" class="panel" hidden><div class="card"><div class="card-head"><div><h3>环境检查</h3><p>连接工程软件后，由 AI 调用软件完成任务。离线体验用于演示与检查；连接成功不代表工程操作已验收。</p></div><button class="btn btn-light" id="refreshDoctor">重新检测</button></div><div class="capability-list" id="capabilities"></div><div class="status-list" id="doctor"></div></div>
+      <div class="card workflows-card">
+        <div class="card-head"><div><div class="eyebrow">SAVED WORKFLOWS</div><h3>继续未完成的工程链</h3><p>沿用原计划、输入和软件任务。恢复会查询已有任务，并继续剩余的软件操作。</p></div><button id="refreshWorkflows" class="btn btn-light">查看工程链</button></div>
+        <p id="workflowNotice" class="muted" role="status">打开项目后，可查看保存的工程链记录。</p><div id="savedWorkflows" class="software-job-list"></div>
+      </div>
+      <div class="card software-jobs-card">
+        <div class="card-head"><div><div class="eyebrow">SOFTWARE TASKS</div><h3>软件任务与连接恢复</h3><p>查看工作站上的任务和日志。断线后可回收原任务结果，无需再次求解。</p></div></div>
+        <div class="software-jobs-toolbar"><label for="softwareJobTool">软件</label><select id="softwareJobTool"><option value="catia">CATIA</option><option value="ansys">Ansys</option><option value="adams">Adams</option><option value="vi-grade">VI-grade</option></select><button class="btn btn-light" id="refreshSoftwareJobs">查询任务</button><button class="btn btn-light" id="moreSoftwareJobs" hidden>加载更多</button></div>
+        <p id="softwareJobNotice" class="muted" role="status">查询已配置的工作站。结果回收需要先打开对应项目。</p>
+        <div id="softwareJobs" class="software-job-list"></div>
+        <section id="softwareJobLogs" hidden><div class="card-head"><h4 id="softwareJobLogTitle">运行日志</h4><div class="file-actions"><select id="softwareLogStream" aria-label="日志类型"><option value="stdout">运行信息</option><option value="stderr">错误信息</option></select><button id="refreshSoftwareLogs" class="btn btn-light">继续读取</button></div></div><pre id="softwareJobLogText" class="json" aria-live="polite"></pre></section>
+        <form id="softwareReleaseForm" hidden class="software-release-form"><h4>核实软件停止状态</h4><p>解除占用后，排队中的任务将继续。请先在工作站确认原任务已停止。</p><label><input id="softwareStopped" type="checkbox" required> 我已检查工作站，确认该软件任务已停止</label><label for="softwareReleaseReason">核实记录</label><input id="softwareReleaseReason" required maxlength="1000" placeholder="例如：已在工作站检查，求解进程和相关任务均已结束"><div class="file-actions"><button class="btn btn-primary" type="submit">解除占用</button><button class="btn btn-light" type="button" id="dismissSoftwareRelease">返回</button></div></form>
+      </div>
+    </section>
   </main>
 </div>
 <dialog class="wizard" id="projectWizard" aria-labelledby="wizardTitle">

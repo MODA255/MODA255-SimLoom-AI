@@ -1,8 +1,11 @@
 # Engineering Agent
 
-这是一个面向 **Ansys、CATIA、Adams、VI-grade** 的 AgentCAD 风格原型。它把自然语言任务转换成一个有依赖关系的工具链计划，再通过四个可替换适配器执行。
+这是一个面向 **Ansys、CATIA、Adams、VI-grade** 的软件操作与工程编排 runtime。
+它把自然语言任务转换成有依赖关系的工具链计划，再通过四个适配器去驱动真实软件。
+四款软件仍然负责原生 CAD、网格、求解和专业结果；SimLoom AI 负责把目标变成可审计的
+软件动作，管理输入输出、任务状态、验证、版本和恢复。
 
-当前实现刻意把“规划”和“执行”分开：规划阶段不会生成未经验证的厂商脚本；执行阶段只有在配置了对应的本地可执行文件或 HTTP bridge，并显式传入 `--execute` 后才会调用外部软件。
+当前实现刻意把“规划”和“执行”分开：规划阶段不会生成未经验证的厂商脚本；执行阶段只有在配置了对应的本地可执行文件或 HTTP bridge，并显式传入 `--execute` 后才会调用外部软件。离线替身只验证 SimLoom 自己的事务、文件和验证边界，不冒充真实软件结果。
 
 ## 快速开始
 
@@ -136,7 +139,7 @@ PYTHONPATH=src python -m engineering_agent.cli projects --db engineering-agent.d
 
 ### 8. DXF 语义读写、变换和 Viewer
 
-ASCII DXF 现在会归一为可操作的实体对象，保留 LINE、CIRCLE、ARC、POINT、LWPOLYLINE、TEXT、DIMENSION、图层、坐标和包围盒。写入接口也支持这些实体类型，因此可以在没有 CAD 软件的环境里完成几何检查和可重复的变换：
+ASCII DXF 现在会归一为可操作的实体对象，保留 LINE、CIRCLE、ARC、POINT、LWPOLYLINE、TEXT、DIMENSION、图层、坐标和包围盒。常见样式字段（线型、颜色、线宽、厚度、所有者引用）以及未知/代理实体的原始 group code 也会保留，写入接口支持这些实体类型，因此可以在没有 CAD 软件的环境里完成几何检查和可重复的变换：
 
 ```python
 from engineering_agent import EngineeringAgent
@@ -156,9 +159,23 @@ agent.execute_operation("geometry.dxf_transform", {
 
 `geometry.validate` 会检查空实体、零长度线、非法半径、过短闭合折线、非有限坐标和包围盒；Web 的 `/api/asset-view` 对 DXF 返回 2D SVG 语义预览，对结果文件返回指标图。
 
+### 8.1 统一 CAD 文档编辑层
+
+`CadDocument` 位于 `cad_model.py`，为 DXF 提供稳定的 `EntityRef`、`SelectionSet`、
+`Layer`、`Block` 和 `Constraint` 对象。`cad_operations.py` 将 71 个 CAD operation
+统一到同一个执行路径：读取文档副本、应用操作、checkpoint、独立验证、生成 diff，
+验证失败时生成可审计的 repair/replan operation，再通过 `RunTransaction` 提交 DXF
+和 `.cad.json` 元数据；提交后还会重新读取最终文件，验证实体数量、类型、稳定 ID、
+图层、sheet、viewport 和几何完整性。外部软件只需要读取最终 DXF 或通过 Windows bridge 接管后续厂商操作。
+
+新增的 Web `POST /api/cad/operation` 和 MCP `operation.cad.*` 共享这套执行器；DXF
+Viewer 支持实体选择、按图层显隐、逐实体回放和选择集保存，并提供移动、旋转、删除和文字属性编辑。
+编辑请求通过父工作台 `postMessage` 回到同一个 CAD operation endpoint，继续经过事务、
+checkpoint、独立验证、diff、落盘重读和 rollback；选择集和编辑历史存放在 sidecar 中。
+
 ### 9. STEP B-Rep 后端和参数约束
 
-STEP 现在有可选的 OpenCascade/OCP B-Rep 后端。安装 `cadquery-ocp`（它提供 `OCP` Python 模块）或 `pythonocc-core` 后，Agent 可以读取 STEP solid、计算体积/表面积、创建 box/cylinder，并执行 fuse/cut/common；未安装内核时 operation 会返回 `OPENCASCADE_BACKEND_UNAVAILABLE`，不会把实体计数误报成 B-Rep 成功。
+STEP 现在有可选的 OpenCascade/OCP B-Rep 后端。安装 `cadquery-ocp`（它提供 `OCP` Python 模块）或 `pythonocc-core` 后，Agent 可以读取 STEP solid、计算体积/表面积、创建 box/cylinder/sphere/cone，并执行 fuse/cut/common；未安装内核时 operation 会返回 `OPENCASCADE_BACKEND_UNAVAILABLE`，不会把实体计数误报成 B-Rep 成功。
 
 ```bash
 ./.venv/bin/python -m pip install -e '.[brep]'
@@ -176,7 +193,30 @@ agent.execute_operation("brep.solve_constraints", {
 })
 ```
 
-参数约束层目前支持 `equal`、`distance`、`min`、`max`、`range`，可作为后续 CATIA 参数化 feature graph 的输入。
+参数约束层目前支持 `equal`、`distance`、`min`、`max`、`range`，可直接作为 STEP
+feature graph 的参数输入。`brep.build_feature_graph` 可以按特征顺序重建 box、cylinder、
+sphere、cone 和 fuse/cut/common，并在输出旁边保存 `.brep.json` 特征历史与约束结果：
+
+```python
+agent.execute_operation("brep.build_feature_graph", {
+    "project_dir": "./demo",
+    "output_file": "artifacts/bracket.step",
+    "parameters": {"length": 80},
+    "constraints": [{"type": "min", "left": "length", "value": 20}],
+    "features": [
+        {"id": "base", "type": "box", "parameters": {"length": "length", "width": 40, "height": 10}},
+        {"id": "hole", "type": "cylinder", "parameters": {"radius": 4, "height": 10}},
+        {"id": "result", "type": "cut", "left": "base", "right": "hole"},
+    ],
+})
+```
+
+三个 B-Rep 写操作都经过同一条可靠性边界：`project_dir` 下的输入和输出路径会先做项目目录
+校验；内核写入 staging 后，SimLoom 先检查暂存 STEP，再在事务提交阶段从实际目标文件重新读取
+并检查 `valid`、非空拓扑、有限且非负体积。落盘检查结果会写入事务 journal 和返回值；如果
+目标文件读回失败，事务会恢复提交前的文件。覆盖 primitive 或 boolean 输出时，旧的
+`.brep.json` feature graph sidecar 会一起清理，避免工程历史与几何文件不匹配。这个检查针对
+本地 OpenCascade 文件，不能替代 CATIA、Ansys、Adams 或 VI-grade 的真实后端验收。
 
 也可以直接从 CLI 探测或调用 B-Rep 后端：
 
@@ -203,6 +243,24 @@ agent.write_asset("mesh-copy.obj", "obj", {"vertices": vertices, "faces": faces}
 
 类型化 operation registry 和独立 validator 位于 `operations.py`、`validation.py`。它们会检查工具白名单、步骤 ID、依赖关系、环依赖和结果状态。
 
+CAD validator 还会检查实体引用、文字高度、闭合轮廓面积、重复几何、尺寸数值和可选的尺寸
+关联要求。默认重复几何作为警告保留现场；在工程要求中设置 `reject_duplicate_geometry`
+或 `require_dimension_association` 后，才会按错误阻止发布。
+
+带有 `pid_symbol` 和 `process_line` 语义的图纸可以通过 `cad.pid_audit` 只读回读为节点/边，
+检查孤立符号、悬空接点、必需符号和必需连接；这是一层工程关系验证，仍需要真实 P&ID
+标准库和厂商软件中的回读验收。
+
+`cad.process_route_create` 会把起点、终点和可选 waypoints 写成带 `process_line` / `process_route`
+元数据的正交 `LWPOLYLINE`；默认自动生成一个拐角，也会拒绝非正交路线。`cad.pid_valve_cut_pipe`
+可以在带语义的 `LINE`、`LWPOLYLINE` 或 `POLYLINE` 上按 `point`、`fraction` 或 `distance`
+切口，生成两段管线、阀门符号及 inlet/outlet 连接段。返回结果包含阀门 ID、连接段 ID、分割
+管线 ID 和阀门中心；重新读取 DXF 后，`cad.pid_audit` 会把四段连接关系读回为同一张图。
+P&ID 符号可通过 `ports` 参数声明命名端口、方向、坐标和方向向量；审计结果会单独返回端口，
+并检查连接段引用的阀门和端口是否存在。
+这仍是工程对象层的输入准备和关系验证，阀门图形、端口方向、规格和最终符号标准需在目标
+P&ID/CAD 软件中确认。
+
 ## 工程对象、读取、版本和 bridge
 
 ```bash
@@ -223,6 +281,11 @@ PYTHONPATH=src python -m engineering_agent.cli bridge --bridge-config configs/en
 
 `ingest.py` 把 STEP 的实体计数、Cartesian point 包围盒、CSV 数值列统计和 JSON 数值指标归一到 `EngineeringObject`。`versioning.py` 将这些对象保存为不可变快照并生成字段级 diff。Web API 的 `/api/asset-view` 会返回 STEP 包围盒或结果指标的 SVG 预览。
 
+`OperationRegistry.validate_arguments()` 现在会在 Python、HTTP 和 MCP 共用的执行入口检查已发布
+operation schema 的类型、枚举、数值边界、数组长度和对象属性数量；Python API 传入的 `Path`
+会按 JSON 字符串参数兼容处理。CAD 圆角、倒角等操作仍保留自己的几何错误码，便于工程师定位
+具体失败原因。
+
 Windows bridge 默认使用 `shell=False`、项目根目录沙箱、命令白名单和 COM 方法白名单。真实 Windows 机器上再把命令模板替换成已验证的 CATIA/Ansys/Adams/VI-grade 启动方式。
 
 Windows 验收探针：
@@ -242,7 +305,7 @@ PYTHONPATH=src python -m engineering_agent.cli windows-validate --smoke
 PYTHONPATH=src python -m engineering_agent.cli mcp
 ```
 
-工具包括 `engineering_plan`、`engineering_run`、`engineering_generate`、`engineering_doctor`、`engineering_operations`、DXF/OBJ 几何 operation 和项目版本 operation。MCP 支持 `tools/list`、`resources/list`、`resources/templates/list` 和 `prompts/list` 分页，支持资源订阅/取消订阅，并在 initialize、工具 schema 和资源读取中返回 schema version。资源读取失败、参数错误、锁冲突和未知 operation 都统一返回 error envelope。Web API 还提供 artifact 列表、文本/JSON 预览、DXF/OBJ SVG 预览和任务事件时间线。
+工具包括 `engineering_plan`、`engineering_run`、`engineering_generate`、`engineering_doctor`、`engineering_operations`、`engineering_asset_view`、`engineering_inspect_image`、`engineering_measure_image`、DXF/OBJ 几何 operation 和项目版本 operation。MCP 支持 `tools/list`、`resources/list`、`resources/templates/list` 和 `prompts/list` 分页，支持资源订阅/取消订阅，并在 initialize、工具 schema 和资源读取中返回 schema version。`engineering_asset_view` 与 `engineering://asset` 会同时返回结构化资产数据和 SVG image content，`engineering_inspect_image` 会返回按源像素裁切的 PNG image content，`engineering_measure_image` 会返回颜色区域的边界、质心和 PNG overlay，便于 agent 检查图纸与结果细节。资源读取失败、参数错误、锁冲突和未知 operation 都统一返回 error envelope。Web API 还提供 artifact 列表、文本/JSON 预览、DXF/OBJ SVG 预览和任务事件时间线。
 
 ## 当前边界
 
@@ -262,3 +325,27 @@ PYTHONPATH=src python -m engineering_agent.cli mcp
 `execution.commit_outputs` 在原事务中提交最新产物与按 run_id 分隔的历史副本。
 报告保存历史副本相对路径、字节数和生成时 SHA-256。每次运行保留副本会增加磁盘用量，
 当前没有自动清理。执行失败、指标不通过、未判定和缺失证据在界面中分别展示。
+
+## CAD 持久历史与事务验证
+
+`cad.history`、`cad.undo`、`cad.redo` 使用 `input_file` 和可选 `project_dir`，
+通过 Python、Web 的 `/api/cad/operation`、MCP operation 工具及 CLI 访问。
+撤销和重做逐字节恢复 DXF 与 `.cad.json`，并与历史游标一起提交。
+`artifact.write` 的 DXF 创建也进入相同历史。
+
+`cad.visual_diff` 是只读对比入口，输入两个 DXF 后按实体 ID 对齐，返回语义 diff 和可嵌入
+页面的 SVG 叠加图。新增、删除、修改和未变化实体分别使用绿色、红色、橙色和灰色标记。
+
+`cad.script_apply` 是受控的 CAD 辅助脚本入口。它默认关闭；在配置或本次 operation 中
+显式设置 `allow_scripts=true` 后，脚本会收到一个请求 JSON（`sys.argv[1]`），其中包含
+事务工作区内的 `input_file`、白名单 `output_file` 和调用参数。脚本只能发布声明的 DXF
+输出，SimLoom 会在发布前重新读取文件、独立验证、生成 diff 并加入同一套历史。脚本有
+静态导入/调用策略、最长执行时间和输出大小限制；这是一层工程策略保护，生产环境仍应
+在 Windows worker 上使用独立账号或更强的操作系统隔离。
+
+所有这些修改的落盘验证都在项目锁内执行；提交过程中崩溃后，下一次
+项目读取或修改会先恢复未完成的文件组。故障恢复遇到外部修改或损坏快照
+会保留现场并报告错误，不会用旧文件覆盖未知内容。
+
+参见 [恢复契约](docs/CAD_RELIABILITY.md)。逐实体高亮不是历史版本回放；
+复杂图纸保真、独立尺寸验证、纸空间出图及 MCP 完整互通仍未完成验收。

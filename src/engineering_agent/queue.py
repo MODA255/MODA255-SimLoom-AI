@@ -38,11 +38,12 @@ class TaskQueue:
 
             columns = {row[1] for row in db.execute("PRAGMA table_info(tasks)")}
             for name, declaration in (("mode", "TEXT NOT NULL DEFAULT 'rehearsal'"),
-                                      ("input_json", "TEXT"), ("retry_of", "TEXT")):
+                                      ("input_json", "TEXT"), ("retry_of", "TEXT"), ("workflow_id", "TEXT")):
                 if name not in columns:
                     db.execute(f"ALTER TABLE tasks ADD COLUMN {name} {declaration}")
             db.execute("CREATE INDEX IF NOT EXISTS tasks_project ON tasks(project_id, created_at)")
             db.execute("CREATE INDEX IF NOT EXISTS tasks_retry ON tasks(retry_of, status)")
+            db.execute("CREATE INDEX IF NOT EXISTS tasks_workflow ON tasks(workflow_id)")
 
     def create_project(self, name: str, project_dir: str | None = None, metadata: dict[str, Any] | None = None) -> str:
         project_id = str(uuid.uuid4())
@@ -111,6 +112,10 @@ class TaskQueue:
 
     def record_event(self, task_id, event, payload):
         with self._lock, self._connect() as db:
+            if event == "workflow" and payload.get("workflow_id"):
+                db.execute("UPDATE tasks SET workflow_id=? WHERE id=?", (payload["workflow_id"], task_id))
+                if payload.get("status") == "running":
+                    db.execute("UPDATE tasks SET status='running',updated_at=? WHERE id=?", (_now(), task_id))
             db.execute("INSERT INTO task_events(task_id,event,payload_json,created_at) VALUES (?,?,?,?)",
                        (task_id, event, json.dumps(payload, ensure_ascii=False), _now()))
 
@@ -132,6 +137,10 @@ class TaskQueue:
             else:
                 rows = db.execute("SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
         return [self._row(row) for row in rows]
+
+    def find_workflow(self, workflow_id):
+        with self._connect() as db:
+            return self._row(db.execute("SELECT * FROM tasks WHERE workflow_id=? ORDER BY created_at LIMIT 1", (workflow_id,)).fetchone())
 
     def next_queued(self) -> dict[str, Any] | None:
         with self._connect() as db:

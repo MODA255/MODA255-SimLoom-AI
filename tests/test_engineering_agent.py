@@ -1,9 +1,12 @@
+import base64
 import json
 import threading
 import urllib.request
+from io import BytesIO
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from engineering_agent import EngineeringAgent
 from engineering_agent.brep import get_brep_backend
@@ -58,6 +61,26 @@ def test_plan_has_typed_operation_validation():
     assert any(item["name"] == "ansys.mesh_and_solve" for item in OperationRegistry().list())
 
 
+def test_operation_registry_enforces_published_schema_and_accepts_pathlike_inputs(tmp_path):
+    registry = OperationRegistry()
+    errors = registry.validate_arguments("cad.entity_array_rectangular", {
+        "input_file": tmp_path / "part.dxf", "output_file": tmp_path / "out.dxf",
+        "rows": 0, "columns": 2,
+    })
+    assert "rows:MINIMUM" in errors and "columns:MINIMUM" not in errors
+    errors = registry.validate_arguments("cad.plot", {
+        "input_file": tmp_path / "part.dxf", "output_file": tmp_path / "out.pdf", "paper": "A9",
+    })
+    assert "paper:ENUM" in errors
+    errors = registry.validate_arguments("cad.plot", {
+        "input_file": tmp_path / "part.dxf", "output_file": tmp_path / "out.pdf", "scale": "bad",
+    })
+    assert "scale:PATTERN" in errors
+    assert registry.validate_arguments("cad.entity_offset", {
+        "input_file": tmp_path / "part.dxf", "output_file": tmp_path / "out.dxf", "distance": 0,
+    }) == []
+
+
 def test_mcp_surface_lists_and_calls_tools():
     server = MCPServer(EngineeringAgent({"tools": {}}))
     listed = server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
@@ -85,6 +108,104 @@ def test_mcp_pagination_subscription_and_schema_compatibility(tmp_path):
     server.handle({"jsonrpc": "2.0", "id": 5, "method": "resources/unsubscribe", "params": {"uri": uri}})
     unsupported = server.handle({"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {"name": "engineering_plan", "arguments": {"prompt": "用Adams做动力学", "schema_version": "engineering-agent/mcp/v99"}}})
     assert unsupported["error"]["code"] == "SCHEMA_VERSION_UNSUPPORTED"
+
+
+def test_mcp_subscription_queues_resource_update_after_mutation(tmp_path):
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="full")
+    uri = f"engineering://project?root={tmp_path}"
+    subscribed = server.handle({"jsonrpc": "2.0", "id": 1, "method": "resources/subscribe", "params": {"uri": uri}})
+    assert subscribed["result"]["subscribed"] is True
+    created = server.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+        "name": "engineering_version", "arguments": {"project_dir": str(tmp_path), "label": "baseline", "paths": []}}})
+    assert "result" in created
+    notifications = server.drain_notifications()
+    assert notifications == [{"jsonrpc": "2.0", "method": "notifications/resources/updated",
+                              "params": {"uri": uri, "schemaVersion": server.schema_version}}]
+
+
+def test_mcp_asset_view_returns_structured_metadata_and_image_content(tmp_path):
+    drawing = tmp_path / "drawing.dxf"
+    write_dxf(drawing, lines=[{"x1": 0, "y1": 0, "x2": 10, "y2": 5}], texts=[{"x": 1, "y": 1, "text": "mount"}])
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="safe")
+    listed = server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {"limit": 500}})
+    view_schema = next(item for item in listed["result"]["tools"] if item["name"] == "engineering_asset_view")
+    assert view_schema["inputSchema"]["properties"]["include_image"]["default"] is True
+
+    called = server.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+        "name": "engineering_asset_view",
+        "arguments": {"root": str(tmp_path), "path": drawing.name},
+    }})
+    content = called["result"]["content"]
+    assert [item["type"] for item in content] == ["text", "image"]
+    assert "DXF" in content[0]["text"]
+    assert base64.b64decode(content[1]["data"]).startswith(b"<svg")
+    assert content[1]["mimeType"] == "image/svg+xml"
+
+    uri = f"engineering://asset?root={tmp_path}&path={drawing.name}"
+    resource = server.handle({"jsonrpc": "2", "id": 3, "method": "resources/read", "params": {"uri": uri}})
+    contents = resource["result"]["contents"]
+    assert {item["mimeType"] for item in contents} == {"application/json", "image/svg+xml"}
+    assert base64.b64decode(next(item for item in contents if item["mimeType"] == "image/svg+xml")["blob"]).startswith(b"<svg")
+    discovered = server.handle({"jsonrpc": "2.0", "id": 4, "method": "resources/list", "params": {"root": str(tmp_path), "path": drawing.name}})
+    assert any(item["uri"].startswith("engineering://asset?") for item in discovered["result"]["resources"])
+
+
+def test_mcp_inspect_image_returns_read_only_crop_with_source_coordinates(tmp_path):
+    source = tmp_path / "drawing.png"
+    image = Image.new("RGBA", (120, 80), (0, 0, 0, 0))
+    image.paste((0, 0, 255, 255), (20, 10, 60, 30))
+    image.save(source)
+    original = source.read_bytes()
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="full")
+    called = server.handle({"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {
+        "name": "engineering_inspect_image",
+        "arguments": {"root": str(tmp_path), "path": source.name, "region": [20, 10, 100, 50], "max_size": 160, "rotate": 90},
+    }})
+    content = called["result"]["content"]
+    metadata = json.loads(content[0]["text"])
+    preview = Image.open(BytesIO(base64.b64decode(content[1]["data"])))
+    assert [item["type"] for item in content] == ["text", "image"]
+    assert metadata["source_size"] == [120, 80]
+    assert metadata["region"] == [20, 10, 100, 50]
+    assert metadata["preview_size"] == [80, 160]
+    assert metadata["mime_type"] == "image/png"
+    assert preview.size == (80, 160)
+    assert source.read_bytes() == original
+
+
+def test_mcp_measure_image_returns_source_bbox_centroid_and_overlay(tmp_path):
+    source = tmp_path / "drawing.png"
+    image = Image.new("RGBA", (120, 80), (0, 0, 0, 0))
+    image.paste((0, 0, 255, 255), (20, 10, 60, 30))
+    image.save(source)
+    original = source.read_bytes()
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="safe")
+    listed = server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {"limit": 500}})
+    assert any(item["name"] == "engineering_measure_image" for item in listed["result"]["tools"])
+    called = server.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+        "name": "engineering_measure_image", "arguments": {
+            "root": str(tmp_path), "path": source.name, "target_color": [0, 0, 255],
+            "region": [0, 0, 100, 50], "tolerance": 0,
+        }}})
+    content = called["result"]["content"]
+    metadata = json.loads(content[0]["text"])
+    preview = Image.open(BytesIO(base64.b64decode(content[1]["data"])))
+    assert metadata["match_count"] == 800
+    assert metadata["match_bbox"] == [20, 10, 60, 30]
+    assert metadata["centroid"] == [39.5, 19.5]
+    assert preview.size == (1024, 512)
+    assert source.read_bytes() == original
+
+
+def test_mcp_operation_schema_exposes_output_contract_and_side_effects():
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="full")
+    listed = server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {"limit": 500}})
+    cad_move = next(item for item in listed["result"]["tools"] if item["name"] == "operation.cad.entity_move")
+    schema = cad_move["inputSchema"]
+    assert schema["x-engineering-schema-version"] == "1.0"
+    assert schema["x-output-schema"]
+    assert "write_artifacts" in schema["x-side-effects"]
+    assert schema["x-safety"] == "write"
 
 
 def test_ingest_step_csv_and_json(tmp_path):
@@ -120,6 +241,23 @@ def test_version_diff_matches_assets_by_source_path_when_order_changes(tmp_path)
     left = store.ingest_and_create("left", [first, second])
     right = store.create("left", list(reversed([ArtifactReader().read(path) for path in (first, second)])), left["id"])
     assert store.diff(left["id"], right["id"])["change_count"] == 0
+
+
+def test_project_visual_diff_uses_captured_dxf_geometry(tmp_path):
+    drawing = tmp_path / "part.dxf"
+    write_dxf(drawing, lines=[{"x1": 0, "y1": 0, "x2": 10, "y2": 0}])
+    agent = EngineeringAgent({"tools": {}})
+    left = agent.create_version(str(tmp_path), "left", [str(drawing)])
+    agent.execute_operation("cad.entity_move", {
+        "project_dir": str(tmp_path), "input_file": str(drawing), "output_file": str(drawing),
+        "entity_ids": ["e00001"], "delta": [2, 0, 0],
+    })
+    right = agent.create_version(str(tmp_path), "right", [str(drawing)], left["id"])
+    result = agent.execute_operation("project.visual_diff", {
+        "project_dir": str(tmp_path), "left": left["id"], "right": right["id"],
+    })
+    assert result["visual_diff"]["counts"]["changed"] == 1
+    assert "data-cad-visual-diff='v1'" in result["visual_diff"]["svg"]
 
 
 def test_local_formats_and_independent_validators(tmp_path):
@@ -264,6 +402,76 @@ def test_opencascade_brep_primitive_and_boolean_when_available(tmp_path):
     assert result["inspection"]["valid"] is True
     assert result["inspection"]["volume"] == pytest.approx(1000, rel=1e-6)
     assert result["inspection"]["topology"]["solid"] == 1
+
+
+def test_opencascade_additional_primitives_when_available(tmp_path):
+    backend = get_brep_backend()
+    if backend.name != "opencascade":
+        pytest.skip("OpenCascade binding is optional")
+    sphere = backend.create_primitive("sphere", {"radius": 3}, tmp_path / "sphere.step")
+    cone = backend.create_primitive("cone", {"radius1": 4, "radius2": 1, "height": 5}, tmp_path / "cone.step")
+    assert sphere["inspection"]["valid"] is True
+    assert sphere["inspection"]["volume"] == pytest.approx(4 / 3 * 3.141592653589793 * 27, rel=1e-6)
+    assert cone["inspection"]["valid"] is True
+    assert cone["inspection"]["volume"] > 0
+
+
+def test_brep_feature_graph_rebuilds_parameterized_boolean_model(tmp_path):
+    backend = get_brep_backend()
+    if backend.name != "opencascade":
+        pytest.skip("OpenCascade binding is optional")
+    output = tmp_path / "feature-graph.step"
+    result = EngineeringAgent({"tools": {}}).execute_operation("brep.build_feature_graph", {
+        "project_dir": str(tmp_path), "output_file": str(output),
+        "parameters": {"length": 8, "width": 20},
+        "constraints": [{"type": "min", "left": "length", "value": 10}],
+        "features": [
+            {"id": "base", "type": "box", "parameters": {"length": "length", "width": "width", "height": 5}},
+            {"id": "tool", "type": "cylinder", "parameters": {"radius": 2, "height": 5}},
+            {"id": "result", "type": "cut", "left": "base", "right": "tool"},
+        ],
+    })
+    assert result["inspection"]["valid"] is True
+    assert result["constraints"]["parameters"]["length"] == 10
+    assert result["final_feature"] == "result"
+    assert output.is_file()
+    assert Path(str(output) + ".brep.json").is_file()
+
+
+def test_brep_write_rejects_paths_outside_project(tmp_path):
+    outside = tmp_path.parent / "outside.step"
+    with pytest.raises(ValueError, match="PATH_OUTSIDE_PROJECT"):
+        EngineeringAgent({"tools": {}}).execute_operation("brep.create_primitive", {
+            "project_dir": str(tmp_path), "primitive": "box", "output_file": str(outside),
+            "parameters": {"length": 1, "width": 1, "height": 1},
+        })
+
+
+def test_brep_persisted_validation_failure_restores_previous_file(tmp_path, monkeypatch):
+    class FakeBackend:
+        name = "test-brep"
+
+        def create_primitive(self, primitive, parameters, output):
+            Path(output).write_text("new-shape", encoding="utf-8")
+            return {
+                "backend": self.name,
+                "primitive": primitive,
+                "output": str(output),
+                "inspection": {"valid": True, "is_null": False, "volume": 1.0, "topology": {"solid": 1}},
+            }
+
+        def inspect_step(self, path):
+            return {"valid": False, "is_null": True, "volume": 0.0, "topology": {}}
+
+    output = tmp_path / "part.step"
+    output.write_text("previous-shape", encoding="utf-8")
+    monkeypatch.setattr("engineering_agent.agent.get_brep_backend", lambda: FakeBackend())
+    with pytest.raises(ValueError, match="BREP_PERSISTED_VALIDATION_FAILED"):
+        EngineeringAgent({"tools": {}}).execute_operation("brep.create_primitive", {
+            "project_dir": str(tmp_path), "primitive": "box", "output_file": "part.step",
+            "parameters": {"length": 1, "width": 1, "height": 1},
+        })
+    assert output.read_text(encoding="utf-8") == "previous-shape"
 
 
 def test_offline_vehicle_chain_commits_cross_tool_artifacts(tmp_path):

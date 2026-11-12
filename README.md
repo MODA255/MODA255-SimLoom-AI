@@ -18,11 +18,11 @@
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![OpenCascade](https://img.shields.io/badge/OpenCascade-optional-2F6B9A)
 ![MCP](https://img.shields.io/badge/MCP-supported-6E56CF)
-![Offline first](https://img.shields.io/badge/runtime-offline--first-1F8A70)
+![Software automation](https://img.shields.io/badge/focus-software_automation-1F8A70)
 
 </div>
 
-SimLoom AI 是一个离线优先的工程 Agent 原型，面向车辆、底盘、悬架、机构和
+SimLoom AI 是一个以操作工程软件为核心的 AI Agent 原型，面向车辆、底盘、悬架、机构和
 机械零件研发。它把四个软件之间容易丢失的上下文统一起来：同一份工程对象、
 同一套事务边界、同一套验证规则、同一条版本与审计链。
 
@@ -45,9 +45,40 @@ CATIA → Ansys → Adams → VI-grade
 独立几何/结果验证、指标判断、版本 diff、可视化和审计
 ```
 
-商业软件可以通过 Windows bridge 接入；没有商业软件时，离线 surrogate 会使用
-相同的工程对象、事务、验证和报告接口，让团队先验证完整链路，再替换单个软件
-执行阶段。
+当前开发主线是可靠地操作 CATIA、Ansys、Adams 和 VI-grade：理解工程目标、调用软件、
+回收结果并检查是否满足要求。本地 CAD、OpenCascade、Viewer 和离线演示用于输入准备、
+预览、独立检查与流程测试；不以重做建模器或求解器为主线。
+
+产品边界、四款软件与 SimLoom 各自负责的部分，见
+[`docs/PRODUCT_POSITIONING.md`](docs/PRODUCT_POSITIONING.md)。实际使用时，四款软件仍是
+原生几何、网格、求解和专业结果的权威系统；SimLoom 负责控制、传递、观察、验证和追溯。
+
+软件操作采用显式动作和脚本绑定、本机或远程 worker、独立运行目录、输入/输出哈希校验，
+以及同一次事务中的结果和历史发布。远程任务支持持久编号、断线查询、日志、取消、
+同软件排队及原任务结果回收；工作台的环境检查页提供操作入口。仅退出成功、配置了路径或连通了 COM 都不代表
+工程任务成功。目前完成的是执行链路的测试，四款商业软件的实机操作仍未验收。
+自动生成的脚本是待完善模板，不会自动绑定为可执行功能。
+
+CAD 辅助脚本也遵循同一条边界：`cad.script_apply` 默认关闭，显式开启后脚本只处理事务
+工作目录中的 DXF 副本，输出文件经过静态策略检查、时限和大小限制、重新读取验证、diff、
+checkpoint 和跨会话撤销。它用于准备输入和批量辅助编辑；真正的 CATIA、Ansys、Adams、
+VI-grade 建模与求解仍由对应软件完成。
+
+内置软件入口现在提供参数/结果证据契约：CATIA 保存后重新开盘读回，Mechanical 严格检查完成与求值状态；Adams/VI-grade 对已配置的导出命令重读 JSON/CSV，并核对单位及阈值。执行成功与工程指标合格分别记录。通用导出接口不代表所有厂商原生格式或产品版本已接入。
+
+接入配置与限制见 [软件操作与 Windows worker](docs/SOFTWARE_INTEGRATION.md)。
+
+真正启动软件前，可以先运行 `preflight` 检查动作绑定、项目内 runner、启动命令和输出契约：
+
+```bash
+PYTHONPATH=src python -m engineering_agent.cli \
+  --config configs/my-engineering-agent.json \
+  --project-dir ./demo preflight \
+  "CATIA建模，Ansys应力分析，Adams动力学，VI-grade操稳"
+```
+
+这一步只检查启动条件；它不会启动商业软件，也不把连接成功当成许可证、求解收敛或工程指标
+合格。Web 的 `POST /api/preflight` 和 MCP 的 `engineering_preflight` 提供相同检查。
 
 ## 能解决什么问题
 
@@ -55,9 +86,20 @@ CATIA → Ansys → Adams → VI-grade
 - 从一份 vendor-neutral `ModelSpec` 生成四个软件各自需要的输入和脚本模板。
 - 将 STEP、CSV、JSON、DXF、OBJ、SVG、PDF 统一读入工程对象模型。
 - 在结果交付前独立检查几何、网格、指标、文件完整性和规则阈值。
+- 独立检查 CAD 的文字高度、闭合轮廓退化、重复几何和尺寸关联要求。
+- 查询内置 ISO/ASME 图形能力目录，并对需要严格目录校验的符号和紧固件输入给出明确错误；最终标准合规仍由原生 CAD 软件确认。
+- 通过标准库查询 P&ID 符号、GD&T 特征、紧固件、轴承和孔型，并审计图纸中已经放置的标准部件。
+- 将带语义标签的 P&ID 符号和过程线读回为连接图，检查孤立设备和必需连接。
+- 创建正交 P&ID 路线，并可在已有过程线上切断插入阀门；阀门、上下游连接段、服务属性和原始管线关系会一起进入事务、DXF 和审计结果。
 - 用事务 staging、锁、journal、checkpoint、commit 和 rollback 管理写操作。
 - 创建不可变工程快照，比较版本差异，并生成项目时间线。
+- 对两个 DXF 版本生成实体级视觉 diff，直接看出新增、删除和修改的几何。
+- 对已保存的工程快照直接生成 DXF 视觉 diff，保留版本时间线和对象级差异。
 - 通过 CLI、Web API、MCP 或 Python API 使用同一套 runtime。
+
+这里的“生成脚本”和“调用软件”指的是给已安装的软件准备输入并驱动其执行。生成模板、
+离线 fixture 和本地 viewer 都不会被当成 CATIA、Ansys、Adams 或 VI-grade 的真实建模器、
+求解器或结果后处理器。
 
 ## 能力地图
 
@@ -66,17 +108,107 @@ CATIA → Ansys → Adams → VI-grade
 | AI 规划 | ✅ | 确定性 planner；支持 OpenAI 兼容接口的可选 LLM planner |
 | 统一工程对象 | ✅ | 项目、几何、结果、表格、指标和 artifact 归一化 |
 | CATIA / Ansys / Adams / VI-grade 脚本生成 | ✅ | 生成可审计的 CATScript、Mechanical Python、Adams command 和 VI-grade scenario 模板 |
-| 离线四软件闭环 | ✅ | 无商业软件时生成真实本地 STEP、CSV、JSON 产物并完成规则验证 |
+| 离线四软件闭环 | ✅ | 无商业软件时生成本地 fixture（STEP、CSV、JSON）并验证 SimLoom 的流程和规则 |
 | STEP 读取 | ✅ | 保守实体解析；安装 OCP 后启用真实 B-Rep 检查 |
-| B-Rep 几何 | ✅ 可选 | primitive、fuse、cut、common、体积、表面积、拓扑和包围盒 |
+| B-Rep 几何 | ✅ 可选 | box/cylinder/sphere/cone、fuse、cut、common、体积、表面积、拓扑和包围盒 |
 | DXF / OBJ | ✅ | 语义实体、图层、块、填充、坐标系、网格读取与独立校验 |
 | 结果解析 | ✅ | JSON、CSV 和文本结果；支持指标路径和阈值判断 |
 | 事务与恢复 | ✅ | staging、锁、journal、checkpoint、commit、rollback、stale recovery |
 | 版本与 diff | ✅ | 不可变快照、字段级差异、资产路径匹配和时间线 |
-| Viewer | ✅ | SVG 预览和自包含 WebGL 网格/结果云图 viewer |
-| MCP | ✅ | tools、resources、prompts、分页、订阅、schema version 和 error envelope |
+| Viewer | ✅ | DXF 选择、高亮、图层开关、直接编辑和跨会话撤销/重做；自包含 WebGL 网格/结果云图 viewer |
+| MCP | ✅ 基础闭环 | tools、resources、prompts、分页、schema/error envelope；资产预览可返回结构化数据和 SVG image content；写操作后支持 resource update notification |
 | Web 控制台 | ✅ | 规划、任务队列、项目、artifact、资产预览和时间线 API |
-| Windows bridge | ✅ 接口 | COM/命令白名单和验收探针；真实软件求解仍需 Windows 授权环境 |
+
+### 2D CAD 编辑层
+
+DXF 现在可以通过统一的 `CadDocument` 编辑层处理。文档包含稳定的
+`EntityRef`、`SelectionSet`、`Layer`、`Block`、`Constraint` 和操作历史；所有
+`cad.*` 写操作都经过同一个事务、checkpoint、独立验证、自动修复、diff 和
+rollback 路径，并在提交后重新读取 DXF 做落盘验证。当前提供实体创建/更新/删除、
+移动/复制/旋转/缩放/镜像、矩形/极坐标阵列、break/join/purge、trim、offset、
+fillet/chamfer、break/join、explode/reverse/purge、图层、选择集、块、坐标系、sheet、
+viewport、title block、hatch、线性/径向/角度/坐标 dimension、leader、MTEXT、ellipse、table、constraint、audit、diff 和
+原子 batch operation。当前注册表包含绘图、编辑、检查和持久历史等 `cad.*` operation；DXF 旁边会生成 `.cad.json` 元数据文件，保留
+选择集、约束等应用上下文。新建实体的稳定 ID 同时写入 DXF 的应用数据；已有实体继续使用原生 handle，外部重排不会按数组顺序重新分配 ID。
+
+DXF 读写使用 `ezdxf`，在原图纸上更新实体，保留未编辑对象的 handle、外部应用数据、扩展字典、样式、块属性和纸空间。原生标注含定义点和实际图形块；填充可以保留多个边界、孔洞与圆弧/样条边界。保存后会直接读取 DXF 做原生结构审计，并核对实体几何、标注测量值和视口。发现写入丢失或需要结构修复时，事务恢复原文件及历史。
+
+自动化测试覆盖独立库生成的复杂图纸、二进制输入、R12 多段线、自定义填充、嵌套块、SPLINE 和失效元数据。SPLINE 支持创建、原生读回和几何变换；关联 HATCH 在移动或旋转时会自动带上引用的边界实体，并由事务提交后的原生回读再次检查关联句柄。复杂曲线编辑、关联边界重构和厂商专有实体仍会明确拒绝。早期无版本头、含不透明记录的文件使用兼容写入路径，并报告无法执行原生审计；完整 DXF 解析失败时不会悄悄降级。详见 [DXF 读写与验证](docs/NATIVE_DXF.md)。
+
+```python
+agent.execute_operation("cad.batch_apply", {
+    "project_dir": "./project",
+    "input_file": "./project/part.dxf",
+    "output_file": "./project/part-edited.dxf",
+    "operations": [
+        {"operation": "cad.layer_create", "name": "ANNOTATION", "color": "#b35c00"},
+        {"operation": "cad.entity_move", "entity_ids": ["e00001"], "delta": [10, 0, 0]},
+        {"operation": "cad.dimension_create", "definition": {"x": 10, "y": 4}, "measurement": 42.0},
+    ],
+})
+```
+
+验证发现零长度线、非法半径、短多段线、无效填充边界或缺失块引用时，
+`cad.validate_and_repair` 会生成可审计的修复 operation plan，并在验证通过后
+再提交结果。Web 资产预览对 DXF 提供实体选择、图层开关、逐实体高亮、撤销/重做和选择集保存。Viewer 的移动、旋转、删除、文字属性编辑和选择集保存会通过父工作台的 `postMessage` 发回
+`/api/cad/operation`，因此和 Python/MCP 一样经过事务、checkpoint、独立验证、diff、落盘重读和 rollback；外部 CAD
+软件仍然只负责后续的厂商格式和真实求解。
+
+CAD 审计也可以带工程要求，例如 `required_layers`、`required_entity_types`、
+`required_text`、`required_sheets`、`required_viewports`、实体数量和包围盒约束；
+这些要求会同时检查事务暂存文档和提交后重新读取的实际文件。
+
+
+圆角/倒角支持同一 XY 平面内的两条相连直线，圆角按真实切点修剪并生成内部短弧。
+构造后和 DXF 落盘后均检查连接、相切与目标尺寸；不支持的选择或几何会明确拒绝。
+具体参数、批次语义和验证范围见 [圆角与倒角契约](docs/CAD_CORNERS.md)。
+
+### 原生二维几何视图
+
+工作台的 DXF 预览显示原生圆弧、带凸度的多段线、旋转椭圆、嵌套块与属性、
+填充孔洞及尺寸标注。点击块内图形仍选择顶层可编辑实体；滚轮缩放、拖动平移、
+Shift 框选和图层显示开关可直接使用。事务编辑完成后保留世界坐标视角与选择。
+
+暂不支持的图元和缺字会显示提示，预览本身不修改原图。
+详见 [原生二维 CAD 视图](docs/NATIVE_CAD_VIEWER.md)。当前模型视图、纸空间出图、
+历史版本查看是不同能力；尚未完成的目标记录在 [AgentCAD 对齐清单](docs/AGENTCAD_PARITY.md)。
+
+### 工程图纸与出图
+
+在工作台打开 DXF 后，展开「图纸与出图」，即可创建 A4～A0 图纸、填写图号与版本，
+保存原生块属性标题栏，并导出单页矢量 PDF 或 PNG。出图预览包含实际标注、
+填充孔洞和纸空间视口。模型空间可按指定比例出图；放不下会明确报错。
+
+标题栏修改可撤销/重做。导出文件与出图记录成组提交，失败恢复前一版本，
+不修改源 DXF。出图记录包含纸张、比例、源文件哈希和渲染提示。
+
+```bash
+python examples/cad_sheet.py --output ./cad-sheet-example
+```
+
+示例生成带四个通孔与尺寸标注的安装板、可编辑 A3 图纸及 PDF/PNG。
+详见 [图纸与出图使用说明](docs/DRAWING_EXPORT.md)。当前提供通用标题栏模板和
+二维出图；企业制图标准、中文/SHX 字体、打印样式与客户图纸兼容仍需验收。
+
+### 跨会话撤销与重做
+
+新的 CAD 修改会同时保存 DXF、`.cad.json` 和持久历史。关闭程序后仍可撤销与重做；
+工作台预览中也提供两个按钮。命令行入口如下：
+
+```bash
+python -m engineering_agent.cli --project-dir ./project cad-history part.dxf
+python -m engineering_agent.cli --project-dir ./project cad-undo part.dxf
+python -m engineering_agent.cli --project-dir ./project cad-redo part.dxf
+```
+
+修改前读取、文件替换和落盘验证共用同一把项目锁。验证失败会恢复原文件；
+进程在提交中途退出后，下次操作会先按日志恢复。撤销会检查当前文件的哈希，
+遇到外部软件修改或备份损坏时拒绝覆盖。撤销后继续编辑会形成新的历史分支，
+替换尚未重做的分支。旧版本产生、没有历史记录的修改不能追溯撤销。
+
+文件组通过日志恢复一致性；单个文件使用原子替换。外部软件不参与项目锁，
+因此不能保证它在提交过程中读取多个文件时获得同一版本。
+详细契约与测试入口见 [CAD 修改、恢复与历史](docs/CAD_RELIABILITY.md)。
 
 ## 架构
 
@@ -257,6 +389,16 @@ PYTHONPATH=src python -m engineering_agent.cli \
 
 没有 B-Rep 依赖时，系统会明确返回后端不可用，并保留保守 STEP 实体解析能力。
 
+除单个 primitive 和布尔操作外，`brep.build_feature_graph` 可以按参数和约束重建
+box、cylinder、sphere、cone 以及 fuse/cut/common 特征，并生成同名 `.brep.json` 历史文件。
+
+三个 B-Rep 写操作都会把输入和输出限制在项目目录内，并在事务提交前后各检查一次 STEP：
+第一次检查内核写出的 staging 文件，第二次从实际目标文件重新读取，确认形状有效、拓扑非空、
+体积有限且非负。第二次检查失败会自动恢复旧文件，结果会同时进入事务 journal 和 operation
+返回值；当 primitive 或 boolean 覆盖同一路径时，旧的 `.brep.json` feature graph sidecar
+会被清理。这样本地 OpenCascade 可以作为可靠的输入准备和审查后端，但仍不会被当作四款商业
+软件的替代品或实机验收证据。
+
 ## Web 控制台与任务队列
 
 启动本地 Web 控制台：
@@ -280,7 +422,11 @@ Ansys → Adams → VI-grade 流程画布，右侧区域展示验证指标、任
 | `GET/POST` | `/api/projects` | 管理历史项目 |
 | `GET` | `/api/artifacts` | 列出工程产物 |
 | `GET` | `/api/asset-view` | 获取 SVG/WebGL 资产预览 |
+| `POST` | `/api/cad/operation` | 执行统一 `cad.*` 文档操作、原子 batch、自动修复和 Viewer 编辑 |
 | `GET` | `/api/timeline` | 获取版本时间线 |
+| `GET` | `/api/versions?project_id=...` | 获取项目版本摘要、DXF 能力标记和时间线 SVG |
+| `POST` | `/api/version` | 从当前项目资产创建不可变版本快照 |
+| `POST` | `/api/version-visual-diff` | 比较两个项目快照，返回实体统计、语义 diff 和 SVG 叠加图 |
 | `GET` | `/api/doctor` | 检查工具配置 |
 | `GET` | `/api/capabilities` | 返回离线、排练、Windows 连接和真实执行的能力矩阵 |
 
@@ -298,6 +444,12 @@ Ansys → Adams → VI-grade 流程画布，右侧区域展示验证指标、任
 STEP 有 OpenCascade 时会先三角化真实 B-Rep 曲面，然后自动居中、适配尺寸并支持旋转、
 缩放、重置和线框切换；没有内核时会明确显示包围盒预览。CSV 预览最多绘制前四个数值列，
 大文件会抽样显示并保留完整原始文件下载。
+
+项目历史页会加载版本快照和时间线。选择两个包含 DXF 几何的版本后，工作台会显示新增、
+删除、修改和未变化实体的统计，并把语义 diff 与 SVG 叠加图放在同一个对比卡片中。版本接口
+只返回摘要，完整快照仍由服务端按项目目录读取，避免把大型几何一次性传给浏览器。
+也可以直接在历史页保存当前项目版本；服务端会校验路径属于项目目录，并自动排除项目元数据
+和 CAD sidecar 文件。保存后可立即打开快照，浏览其中的几何或结果资产。
 
 也可以使用 SQLite 任务队列：
 
@@ -357,10 +509,16 @@ PYTHONPATH=src python -m engineering_agent.cli mcp --profile full
 - `engineering_offline_run`：运行无商业软件的四软件闭环。
 - `engineering_ingest`：读取 STEP、CSV、JSON 等工程资产。
 - `engineering_project`：查看统一工程对象。
+- `engineering_asset_view`：读取项目资产，同时返回结构化元数据和 SVG 图像内容，让 agent 可以直接检查图纸或结果预览。
+- `engineering_inspect_image`：只读裁切、放大和旋转 PNG/JPEG/WebP，并返回源像素坐标、哈希和 PNG 图像内容。
+- `engineering_measure_image`：按 RGB 颜色和容差测量源像素区域，返回边界、质心和标注 overlay。
 - `engineering_version` / `engineering_diff`：创建快照和比较版本。
 - `operation.*`：访问类型化 operation schema。
 
-MCP 层支持资源发现、资源模板、分页、订阅、schema version 和统一 error envelope。
+MCP 层支持资源发现、资源模板、分页、订阅、schema version、统一 error envelope，以及
+`engineering://asset` 的结构化 JSON + SVG image resource。`engineering_measure_image` 可对
+源像素区域做受限颜色测量并返回 overlay。写操作完成后会发送标准
+`notifications/resources/updated`，便于工作台刷新订阅资源。
 
 ## Windows 软件接入
 
@@ -470,3 +628,17 @@ SimLoom-AI/
 - 真实软件 fixture、模板和跨软件工程案例。
 
 请保持新增能力可离线测试，并为外部软件调用保留清晰的事务、日志和失败边界。
+
+### 软件工程链恢复
+
+含远程软件步骤的多步骤计划会保存原计划、输入快照和每步任务编号。断线后可在工作台的
+“继续未完成的工程链”中恢复，或使用 `engineering-agent --project-dir <项目> workflow resume <编号>`。
+恢复先核对原任务与结果，再继续剩余步骤；文件冲突和状态不明的本机操作会阻止自动继续。
+详见 [工程链恢复](docs/WORKFLOW_RECOVERY.md)。测试使用受控程序，四款商业软件实机验收仍待完成。
+
+
+### 失败后的有界修复
+
+当软件结果读回成功但工程指标未通过时，可以根据动作配置中预先声明的修复策略创建新的尝试。
+修复不会修改原结果、放宽验收规则或猜测软件命令；每次尝试有独立输出目录和完整证据。
+详见 [工程链恢复与修复](docs/WORKFLOW_RECOVERY.md)。

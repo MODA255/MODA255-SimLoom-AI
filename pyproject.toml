@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "simloom-ai"
 version = "0.1.0"
-description = "Offline-first AI engineering agent runtime for CAD and vehicle simulation workflows"
+description = "AI agent runtime for operating engineering software and validating workflow results"
 readme = "README.md"
 authors = [{ name = "MODA255" }]
 keywords = ["engineering", "CAD", "simulation", "CATIA", "Ansys", "Adams", "VI-grade", "MCP", "AI"]
@@ -13,6 +13,10 @@ requires-python = ">=3.10"
 dependencies = [
   "pydantic>=2",
   "httpx>=0.25",
+  "ezdxf>=1.4.5,<2",
+  "matplotlib>=3.8,<4",
+  "Pillow>=10,<13",
+  "pypdf>=5,<7",
 ]
 
 [project.optional-dependencies]

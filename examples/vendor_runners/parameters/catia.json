@@ -1,0 +1,13 @@
+{
+  "input_model": "inputs/part.CATPart",
+  "native_output": "artifacts/updated.CATPart",
+  "step_output": "artifacts/updated.step",
+  "report_output": "artifacts/catia-evidence.json",
+  "parameter_updates": [
+    {
+      "name": "Part1\\Length",
+      "value": "25mm",
+      "tolerance": 1e-06
+    }
+  ]
+}
