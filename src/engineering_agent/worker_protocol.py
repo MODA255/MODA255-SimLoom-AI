@@ -11,6 +11,8 @@ SCHEMA = "simloom-ai/worker/v1"
 MAX_FILES = 128
 MAX_BYTES = 32 * 1024 * 1024
 MAX_HTTP_BYTES = 48 * 1024 * 1024
+MAX_CHUNK_BYTES = 4 * 1024 * 1024
+MAX_TRANSFER_BYTES = 4 * 1024 * 1024 * 1024
 
 
 class WorkerError(ValueError):
@@ -78,6 +80,22 @@ def pack_file(root: Path, name: str) -> dict[str, Any]:
         raise WorkerError("ARTIFACT_TOO_LARGE", name)
     return {"path": name, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(),
             "content_base64": base64.b64encode(data).decode("ascii")}
+
+
+def file_manifest(path: Path, name: str, *, max_bytes: int = MAX_TRANSFER_BYTES) -> dict[str, Any]:
+    """Return a streaming manifest without loading the file into memory."""
+    path = Path(path)
+    relative_path(name)
+    if not path.is_file():
+        raise WorkerError("ARTIFACT_MISSING", name)
+    size = path.stat().st_size
+    if size > max_bytes:
+        raise WorkerError("ARTIFACT_TOO_LARGE", name)
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(MAX_CHUNK_BYTES), b""):
+            digest.update(chunk)
+    return {"path": name, "bytes": size, "sha256": digest.hexdigest()}
 
 
 def decode_files(records: Any) -> dict[str, bytes]:

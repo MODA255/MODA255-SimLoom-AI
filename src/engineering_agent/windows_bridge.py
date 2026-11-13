@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .worker_jobs import JobManager, TERMINAL
+from .artifact_transfer import ArtifactTransferStore
 from .windows_control import WindowsAutomation
 from .worker_protocol import SCHEMA, MAX_HTTP_BYTES, WorkerError, failure
 
@@ -35,6 +36,7 @@ class WindowsBridge:
         self.root = Path(self.config.root_dir).resolve()
         self.com = WindowsAutomation()
         self.jobs = JobManager(self.root, self.config.commands, self.config.timeout_seconds)
+        self.transfers = ArtifactTransferStore(self.root)
 
     def health(self) -> dict[str, Any]:
         checks = {}
@@ -85,6 +87,20 @@ class WindowsBridge:
             return self.run(payload)
         if operation.startswith("job."):
             return self.jobs.handle(payload)
+        if operation == "artifact.upload_begin":
+            return {**self.transfers.begin(payload.get("transfer_id"), payload.get("files")), "schema_version": SCHEMA}
+        if operation == "artifact.upload_status":
+            return {**self.transfers.status(payload.get("transfer_id")), "schema_version": SCHEMA}
+        if operation == "artifact.upload_chunk":
+            return {**self.transfers.put_chunk(payload.get("transfer_id"), payload.get("path"), payload.get("offset"),
+                                               payload.get("content_base64"), payload.get("chunk_sha256")), "schema_version": SCHEMA}
+        if operation == "artifact.upload_complete":
+            return {**self.transfers.complete(payload.get("transfer_id")), "schema_version": SCHEMA}
+        if operation == "artifact.download_chunk":
+            path = self.jobs.store.output_path(payload.get("request_id"), payload.get("path"))
+            result = self.transfers.read_chunk(path, payload.get("offset", 0), payload.get("limit", 1024 * 1024))
+            return {"schema_version": SCHEMA, "request_id": payload.get("request_id"),
+                    "path": payload.get("path"), **result}
         if operation == "com.invoke":
             return self.invoke_com(payload)
         raise WorkerError("UNKNOWN_BRIDGE_OPERATION", str(operation))

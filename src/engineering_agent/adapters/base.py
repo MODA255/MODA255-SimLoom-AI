@@ -5,6 +5,8 @@ import os
 import shutil
 import tempfile
 import uuid
+import base64
+import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -12,7 +14,7 @@ from typing import Any
 from ..models import PlanStep, ToolName, ToolResult
 from ..software_worker import run_job
 from ..software_jobs_client import ReceiptStore, execute_remote
-from ..worker_protocol import (SCHEMA, MAX_HTTP_BYTES, WorkerError, decode_files, manifest,
+from ..worker_protocol import (SCHEMA, MAX_HTTP_BYTES, WorkerError, decode_files, file_manifest, manifest,
                                names, pack_file, safe_file)
 from ..vendor_validation import VendorValidationError, validate_report
 from ..vendor_evidence import SCHEMA as EVIDENCE_SCHEMA, build_contract, requirements, strict_json, validate_evidence
@@ -83,6 +85,66 @@ class CommandAdapter(ToolAdapter):
         if not isinstance(body, dict) or body.get("schema_version") != SCHEMA:
             raise WorkerError("WORKER_SCHEMA_UNSUPPORTED")
         return body
+
+    def _prepare_remote_payload(self, payload, timeout):
+        """Upload large inputs in chunks, leaving small legacy requests unchanged."""
+        records = payload.get("files") or []
+        if not any(record.get("_source_path") and int(record.get("bytes", 0)) > 32 * 1024 * 1024
+                   for record in records if isinstance(record, dict)):
+            return payload
+        transfer_id = payload["request_id"]
+        declared = [{key: record[key] for key in ("path", "bytes", "sha256")} for record in records]
+        self._post({"schema_version": SCHEMA, "operation": "artifact.upload_begin",
+                    "transfer_id": transfer_id, "files": declared}, min(timeout, 30))
+        chunk_size = 1024 * 1024
+        for record in records:
+            source = Path(record["_source_path"])
+            offset = 0
+            with source.open("rb") as stream:
+                while True:
+                    data = stream.read(chunk_size)
+                    if not data:
+                        break
+                    import base64
+                    import hashlib
+                    self._post({"schema_version": SCHEMA, "operation": "artifact.upload_chunk",
+                                "transfer_id": transfer_id, "path": record["path"], "offset": offset,
+                                "chunk_sha256": hashlib.sha256(data).hexdigest(),
+                                "content_base64": base64.b64encode(data).decode("ascii")}, min(timeout, 60))
+                    offset += len(data)
+        self._post({"schema_version": SCHEMA, "operation": "artifact.upload_complete",
+                    "transfer_id": transfer_id}, min(timeout, 60))
+        cleaned = [{key: record[key] for key in ("path", "bytes", "sha256")} for record in records]
+        return {**payload, "files": cleaned, "file_transfer_id": transfer_id}
+
+    def _download_remote_output(self, request_id, record, target, timeout):
+        """Reassemble one output through bounded worker chunks and verify its hash."""
+        offset = 0
+        digest = hashlib.sha256()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("wb") as stream:
+            while offset < int(record["bytes"]):
+                body = self._post({"schema_version": SCHEMA, "operation": "artifact.download_chunk",
+                                   "request_id": request_id, "path": record["path"],
+                                   "offset": offset, "limit": 1024 * 1024}, min(timeout, 60))
+                if body.get("request_id") != request_id or body.get("path") != record["path"] or body.get("offset") != offset:
+                    raise WorkerError("TRANSFER_RESPONSE_MISMATCH")
+                try:
+                    data = base64.b64decode(body.get("content_base64", ""), validate=True)
+                except (ValueError, UnicodeError) as exc:
+                    raise WorkerError("INVALID_ARTIFACT_ENCODING") from exc
+                if not data or hashlib.sha256(data).hexdigest() != body.get("chunk_sha256"):
+                    raise WorkerError("TRANSFER_CHUNK_HASH_MISMATCH", record["path"])
+                next_offset = body.get("next_offset")
+                if type(next_offset) is not int or next_offset != offset + len(data) or next_offset > int(record["bytes"]):
+                    raise WorkerError("TRANSFER_RESPONSE_MISMATCH")
+                stream.write(data)
+                digest.update(data)
+                offset = next_offset
+        if offset != int(record["bytes"]):
+            raise WorkerError("TRANSFER_SIZE_MISMATCH", record["path"])
+        if digest.hexdigest() != record.get("sha256"):
+            raise WorkerError("TRANSFER_FILE_HASH_MISMATCH", record["path"])
 
     def doctor(self, *, probe: bool = True) -> dict[str, Any]:
         actions = self.config.get("actions", {})
@@ -158,8 +220,15 @@ class CommandAdapter(ToolAdapter):
             raise WorkerError("INVALID_WORKER_COMPLETION")
         if body.get("tool") != self.name.value or body.get("action") != step.action:
             raise WorkerError("WORKER_RESPONSE_MISMATCH")
-        decoded = decode_files(body.get("outputs"))
-        if set(decoded) != set(expected_outputs) or any(not data for data in decoded.values()):
+        output_records = body.get("outputs")
+        if not isinstance(output_records, list):
+            raise WorkerError("OUTPUT_MANIFEST_MISMATCH")
+        inline_records = [record for record in output_records if "content_base64" in record]
+        remote_records = [record for record in output_records if "content_base64" not in record]
+        decoded = decode_files(inline_records) if inline_records else {}
+        if remote_records and not self.bridge_url:
+            raise WorkerError("OUTPUT_TRANSFER_REQUIRES_BRIDGE")
+        if set(record.get("path") for record in output_records) != set(expected_outputs):
             raise WorkerError("OUTPUT_MANIFEST_MISMATCH")
         collected = Path(tempfile.mkdtemp(prefix="collected-", dir=workspace))
         output_files = {}
@@ -168,6 +237,15 @@ class CommandAdapter(ToolAdapter):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
             output_files[name] = str(path)
+        for record in remote_records:
+            name = record.get("path")
+            if not isinstance(name, str) or type(record.get("bytes")) is not int or not isinstance(record.get("sha256"), str):
+                raise WorkerError("OUTPUT_MANIFEST_MISMATCH")
+            path = safe_file(collected, name)
+            self._download_remote_output(request_id, record, path, 600)
+            output_files[name] = str(path)
+        if set(output_files) != set(expected_outputs) or any(Path(path).stat().st_size == 0 for path in output_files.values()):
+            raise WorkerError("OUTPUT_MANIFEST_MISMATCH")
         details = {k: v for k, v in body.items() if k != "outputs"}
         details.update(verification="artifact_integrity", vendor_validation="not_run")
         if validation is not None:
@@ -175,7 +253,7 @@ class CommandAdapter(ToolAdapter):
             if not isinstance(report_path, str) or report_path not in decoded:
                 raise WorkerError("VENDOR_REPORT_MISSING")
             try:
-                report = strict_json(decoded[report_path])
+                report = strict_json(Path(output_files[report_path]).read_bytes())
                 if validation.get("schema_version") == EVIDENCE_SCHEMA:
                     report = validate_evidence(report, validation, decoded, request_id=request_id,
                                                tool=self.name.value, action=step.action)
@@ -217,12 +295,25 @@ class CommandAdapter(ToolAdapter):
         for name in dict.fromkeys([script] + inputs):
             if name in context.input_files:
                 source = Path(context.input_files[name])
+            else:
+                source = context.project_dir / name
+            if not source.is_file():
                 record = pack_file(source.parent, source.name)
                 record["path"] = name
+            elif source.stat().st_size > 32 * 1024 * 1024:
+                if not self.bridge_url:
+                    raise WorkerError("TRANSFER_TOO_LARGE", "large local inputs require a worker bridge")
+                record = file_manifest(source, name)
             else:
-                record = pack_file(context.project_dir, name)
+                record = pack_file(source.parent, source.name)
+                record["path"] = name
+            record["_source_path"] = str(source.resolve())
             files.append(record)
-        decode_files(files)  # Validate total transfer size before contacting a worker.
+        # Small inline payloads retain the original request contract. Large
+        # remote files are converted to manifests and uploaded by chunks just
+        # before the durable job is registered.
+        decode_files([{key: value for key, value in record.items() if key != "_source_path"}
+                      for record in files if "content_base64" in record])
         names([r["path"] for r in files] + outputs)
         if kind:
             validation = build_contract(kind, step.parameters, files, outputs, self.name.value, step.action)

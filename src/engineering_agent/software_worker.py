@@ -9,24 +9,27 @@ import json
 import re
 import subprocess
 import time
+import shutil
 from pathlib import Path
 from typing import Any
 
-from .worker_protocol import SCHEMA, MAX_BYTES, WorkerError, decode_files, failure, manifest, names, pack_file, safe_file
+from .artifact_transfer import ArtifactTransferStore
+from .worker_protocol import SCHEMA, MAX_BYTES, WorkerError, decode_files, failure, file_manifest, manifest, names, pack_file, safe_file
 from .vendor_validation import VendorValidationError, read_report
 from .vendor_evidence import SCHEMA as EVIDENCE_SCHEMA, check_contract, strict_json, validate_evidence, requirements
 
 
 def run_job(root: Path, payload: dict[str, Any], commands: dict[str, Any], *, timeout: int = 600,
-            environment: dict[str, str] | None = None, monitor=None) -> dict[str, Any]:
+            environment: dict[str, str] | None = None, monitor=None,
+            transfer_store: ArtifactTransferStore | None = None) -> dict[str, Any]:
     request_id = payload.get("request_id", "")
     try:
-        return _run_job(root.resolve(), payload, commands, timeout, environment, monitor)
+        return _run_job(root.resolve(), payload, commands, timeout, environment, monitor, transfer_store)
     except Exception as exc:
         return failure(exc, request_id if isinstance(request_id, str) else "")
 
 
-def validate_job(payload, commands):
+def validate_job(payload, commands, transfer_store: ArtifactTransferStore | None = None):
     if payload.get("schema_version") != SCHEMA:
         raise WorkerError("WORKER_SCHEMA_UNSUPPORTED")
     request_id = payload.get("request_id")
@@ -44,7 +47,19 @@ def validate_job(payload, commands):
     outputs = names(payload.get("outputs"), output=True)
     if not outputs:
         raise WorkerError("OUTPUT_CONTRACT_REQUIRED")
-    files = decode_files(payload.get("files"))
+    records = payload.get("files")
+    transfer_id = payload.get("file_transfer_id")
+    if transfer_id is not None:
+        if transfer_store is None:
+            raise WorkerError("TRANSFER_STORE_UNAVAILABLE")
+        if not isinstance(records, list) or any("content_base64" in record for record in records if isinstance(record, dict)):
+            raise WorkerError("INVALID_TRANSFER_MANIFEST")
+        declared = [{key: record.get(key) for key in ("path", "bytes", "sha256")} for record in records]
+        if declared != transfer_store.records(transfer_id):
+            raise WorkerError("TRANSFER_MANIFEST_MISMATCH")
+        files = {record["path"]: transfer_store.read_file(transfer_id, record["path"]) for record in declared}
+    else:
+        files = decode_files(records)
     script = payload.get("script")
     if script not in files or set(files) != set(inputs) | {script}:
         raise WorkerError("INPUT_MANIFEST_MISMATCH")
@@ -74,8 +89,8 @@ def validate_job(payload, commands):
     return request_id, tool, action, template, inputs, outputs, files, script, request_text
 
 
-def _run_job(root, payload, commands, timeout, environment, monitor=None):
-    request_id, tool, action, template, inputs, outputs, files, script, request_text = validate_job(payload, commands)
+def _run_job(root, payload, commands, timeout, environment, monitor=None, transfer_store=None):
+    request_id, tool, action, template, inputs, outputs, files, script, request_text = validate_job(payload, commands, transfer_store)
     job = safe_file(root, "jobs/" + request_id)
     job.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -92,7 +107,11 @@ def _run_job(root, payload, commands, timeout, environment, monitor=None):
     for name, data in files.items():
         target = safe_file(job, name)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(data)
+        if isinstance(data, Path):
+            with data.open("rb") as source, target.open("wb") as destination:
+                shutil.copyfileobj(source, destination, length=1024 * 1024)
+        else:
+            target.write_bytes(data)
     for name in outputs:
         safe_file(job, name).parent.mkdir(parents=True, exist_ok=True)
     request_file.write_text(request_text, encoding="utf-8")
@@ -149,13 +168,17 @@ def _run_job(root, payload, commands, timeout, environment, monitor=None):
     try:
         records, total = [], 0
         for name in outputs:
-            record = pack_file(job, name)
+            target = safe_file(job, name)
+            if not target.is_file():
+                raise WorkerError("ARTIFACT_MISSING", name)
+            record = (pack_file(job, name) if target.stat().st_size <= MAX_BYTES
+                      else file_manifest(target, name) | {"transfer_required": True})
             if record["bytes"] == 0:
                 raise WorkerError("OUTPUT_EMPTY", name)
             total += record["bytes"]
-            if total > MAX_BYTES:
-                raise WorkerError("TRANSFER_TOO_LARGE")
             records.append(record)
+        if total > MAX_BYTES:
+            records = [file_manifest(safe_file(job, name), name) | {"transfer_required": True} for name in outputs]
     except WorkerError as exc:
         return details | failure(exc, request_id)
     validation = payload.get("validation")

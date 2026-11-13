@@ -73,6 +73,8 @@ def validate_state(body, receipt):
 
 
 def execute_remote(adapter, payload, context, *, reconnect=False):
+    if not reconnect:
+        payload = adapter._prepare_remote_payload(payload, context.timeout_seconds)
     receipts = ReceiptStore(context.project_dir)
     receipt = receipts.create(payload, adapter.bridge_url)
     identifier = payload["request_id"]

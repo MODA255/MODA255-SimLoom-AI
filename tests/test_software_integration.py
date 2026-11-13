@@ -178,6 +178,38 @@ def test_http_bridge_transfers_script_input_and_result_without_shared_paths(proj
     assert adapter.doctor()["real_machine_verified"] is False
 
 
+def test_http_bridge_chunks_large_input_without_shared_paths(project, bridge, tmp_path):
+    url, worker = bridge
+    large = project / "large.step"
+    large.write_bytes((b"STEP-DATA-" * ((33 * 1024 * 1024 + 7) // 10))[:33 * 1024 * 1024 + 7])
+    request_step = step()
+    request_step.inputs = ["large.step"]
+    adapter = CatiaAdapter(config(url, "contract-test-token")["tools"]["catia"])
+    result = adapter.execute(request_step, AdapterContext(project, False, timeout_seconds=30,
+                                                          workspace_dir=tmp_path / "stage"))
+    assert result.status == "completed", result.to_dict()
+    output = json.loads(Path(result.details["output_files"]["artifacts/model.step"]).read_text())
+    assert output["inputs"]["large.step"] == hashlib.sha256(large.read_bytes()).hexdigest()
+    transfer_root = worker / "control" / "transfers"
+    assert any(path.is_dir() for path in transfer_root.iterdir())
+
+
+def test_http_bridge_downloads_large_output_in_chunks(project, bridge, tmp_path):
+    url, _worker = bridge
+    (project / "scripts" / "large_runner.py").write_text(
+        "import json, sys\nfrom pathlib import Path\nrequest=json.loads(Path(sys.argv[1]).read_text())\ntarget=Path(request['outputs'][0]); target.parent.mkdir(parents=True, exist_ok=True)\ntarget.write_bytes((b'RESULT-DATA-' * ((33 * 1024 * 1024 + 23) // 12))[:33 * 1024 * 1024 + 11])\n",
+        encoding="utf-8")
+    cfg = config(url, "contract-test-token")
+    cfg["tools"]["catia"]["actions"][ACTIONS["catia"]]["script"] = "scripts/large_runner.py"
+    adapter = CatiaAdapter(cfg["tools"]["catia"])
+    result = adapter.execute(step(), AdapterContext(project, False, timeout_seconds=60,
+                                                     workspace_dir=tmp_path / "stage"))
+    assert result.status == "completed", result.to_dict()
+    output = Path(result.details["output_files"]["artifacts/model.step"])
+    assert output.stat().st_size == 33 * 1024 * 1024 + 11
+    assert result.details["output_manifest"][0]["sha256"] == hashlib.sha256(output.read_bytes()).hexdigest()
+
+
 def test_http_authentication_and_schema_errors_are_explicit(project, bridge):
     url, _ = bridge
     assert httpx.get(url + "/health").status_code == 401

@@ -19,7 +19,8 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from .software_worker import run_job, validate_job
-from .worker_protocol import SCHEMA, WorkerError, failure, manifest, pack_file, safe_file
+from .artifact_transfer import ArtifactTransferStore
+from .worker_protocol import MAX_BYTES, SCHEMA, WorkerError, failure, file_manifest, manifest, pack_file, safe_file
 
 TERMINAL = frozenset({"completed", "failed", "cancelled", "interrupted"})
 ACTIVE = frozenset({"accepted", "queued", "running", "cancelling"})
@@ -91,6 +92,7 @@ class JobStore:
         self.control = safe_file(self.root, "control")
         self.control.mkdir(parents=True, exist_ok=True)
         self.database = safe_file(self.root, "control/jobs.sqlite3")
+        self.transfers = ArtifactTransferStore(self.root)
         with self.db() as db:
             db.executescript('''
                 CREATE TABLE IF NOT EXISTS jobs (
@@ -140,7 +142,7 @@ class JobStore:
         return dict(row)
 
     def register(self, payload, commands, timeout):
-        validate_job(payload, commands)
+        validate_job(payload, commands, self.transfers)
         digest, identifier = request_digest(payload), payload["request_id"]
         if isinstance(timeout, bool) or not isinstance(timeout, (float, int)) or not 0 < timeout <= 604800:
             raise WorkerError("INVALID_JOB_TIMEOUT")
@@ -275,13 +277,37 @@ class JobStore:
             records = []
             root = safe_file(self.root, "jobs/" + identifier)
             for receipt in result["outputs"]:
-                record = pack_file(root, receipt["path"])
-                if manifest([record])[0] != receipt:
+                target = safe_file(root, receipt["path"])
+                current = file_manifest(target, receipt["path"])
+                if current != receipt:
                     raise WorkerError("RESULT_CHANGED_AFTER_COMPLETION", receipt["path"])
+                if current["bytes"] <= MAX_BYTES:
+                    record = pack_file(root, receipt["path"])
+                else:
+                    record = {**current, "transfer_required": True}
                 records.append(record)
             result["outputs"] = records
         return result | {"request_digest": row["digest"], "job_status": status["status"],
                          "requires_review": status["requires_review"]}
+
+    def output_path(self, identifier, path):
+        """Return a completed output path for bounded chunk download."""
+        identifier = job_id(identifier)
+        status = self.status(identifier)
+        if status["status"] != "completed":
+            raise WorkerError("JOB_NOT_COMPLETED")
+        row = self.row(identifier)
+        result = json.loads(row["result_json"]) if row["result_json"] else {}
+        expected = next((item for item in result.get("outputs", []) if item.get("path") == path), None)
+        if expected is None:
+            raise WorkerError("OUTPUT_NOT_DECLARED", str(path))
+        target = safe_file(self.root, "jobs/" + identifier + "/" + path)
+        if not target.is_file():
+            raise WorkerError("ARTIFACT_MISSING", str(path))
+        actual = file_manifest(target, path)
+        if actual != {key: expected[key] for key in ("path", "bytes", "sha256")}:
+            raise WorkerError("RESULT_CHANGED_AFTER_COMPLETION", str(path))
+        return target
 
 
 class JobManager:
@@ -405,7 +431,8 @@ def supervise(root, identifier):
                 return bool(current["cancel_requested"])
 
         payload, config = json.loads(row["request_json"]), json.loads(row["config_json"])
-        result = run_job(store.root, payload, config["commands"], timeout=config["timeout"], monitor=monitor)
+        result = run_job(store.root, payload, config["commands"], timeout=config["timeout"], monitor=monitor,
+                         transfer_store=store.transfers)
         if result["status"] == "completed":
             result["outputs"] = manifest(result["outputs"])
         code = result.get("error", {}).get("code")
