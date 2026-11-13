@@ -52,13 +52,72 @@ def _options(arguments):
             "drawing_units": units, "color_mode": colors, "strict": arguments.get("strict", True)}
 
 
+def _page_arguments(arguments):
+    """Normalize single-page and multi-page plot requests.
+
+    ``pages`` is deliberately a list of complete page overrides so every PDF
+    page can choose its own layout, paper, orientation, scale and rendering
+    options.  Top-level rendering options are inherited by each page, while a
+    page entry wins when it supplies the same key.  PNG remains single-page.
+    """
+    pages = arguments.get("pages")
+    if pages is None:
+        return [dict(arguments)]
+    if not isinstance(pages, list) or not pages:
+        raise ValueError("INVALID_PLOT_PAGES")
+    if len(pages) > 64:
+        raise ValueError("INVALID_PLOT_PAGES: maximum 64 pages")
+    if str(arguments.get("output_file", "")).lower().endswith(".png"):
+        raise ValueError("PLOT_MULTI_PAGE_REQUIRES_PDF")
+    inherited = {key: value for key, value in arguments.items() if key != "pages"}
+    normalized = []
+    for index, page in enumerate(pages, start=1):
+        if not isinstance(page, dict):
+            raise ValueError(f"INVALID_PLOT_PAGE:{index}")
+        if "pages" in page:
+            raise ValueError(f"INVALID_PLOT_PAGE:{index}:nested pages")
+        item = dict(inherited)
+        item.update(page)
+        item["page_index"] = index
+        normalized.append(item)
+    return normalized
+
+
 def render_drawing(source: Path, target: Path, arguments):
-    """Render primitives, native dimensions, INSERTs and paper-space viewports."""
+    """Render one PNG or one/multiple PDF pages from a DXF drawing."""
     with _RENDER_LOCK:
-        return _render_drawing(source, target, arguments)
+        pages = _page_arguments(arguments)
+        if len(pages) == 1 and "pages" not in arguments:
+            return _render_single_page(source, target, pages[0])
+        if target.suffix.lower() != ".pdf":
+            raise ValueError("PLOT_MULTI_PAGE_REQUIRES_PDF")
+        from matplotlib.backends.backend_pdf import PdfPages
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        page_reports = []
+        try:
+            with PdfPages(target, metadata={"Title": source.stem, "Creator": "SimLoom AI"}) as pdf:
+                for page in pages:
+                    page_reports.append(_render_single_page(source, target, page, pdf_pages=pdf))
+        except Exception:
+            target.unlink(missing_ok=True)
+            raise
+        return {
+            "layout": None,
+            "pages": page_reports,
+            "page_count": len(page_reports),
+            "page_mm": [item["page_mm"] for item in page_reports],
+            "dpi": [item["dpi"] for item in page_reports],
+            "color_mode": [item["color_mode"] for item in page_reports],
+            "scale": [item["scale"] for item in page_reports],
+            "warnings": [warning for item in page_reports for warning in item["warnings"]],
+            "renderer": "ezdxf/matplotlib",
+            "format": "pdf",
+            "multi_page": True,
+        }
 
 
-def _render_drawing(source, target, arguments):
+def _render_single_page(source, target, arguments, *, pdf_pages=None):
     import ezdxf
     from ezdxf import units
     import matplotlib
@@ -193,8 +252,12 @@ def _render_drawing(source, target, arguments):
         target.parent.mkdir(parents=True, exist_ok=True)
         metadata = {"Title": source.stem, "Creator": "SimLoom AI"} if target.suffix.lower() == ".pdf" else {"Software": "SimLoom AI"}
         # No bbox_inches='tight': trimming would silently change paper size and scale.
-        figure.savefig(target, format=target.suffix[1:].lower(), dpi=options["dpi"], facecolor="white", metadata=metadata)
-        return {"layout": layout.name, "page_mm": {"width": width, "height": height}, "dpi": options["dpi"],
+        if pdf_pages is None:
+            figure.savefig(target, format=target.suffix[1:].lower(), dpi=options["dpi"], facecolor="white", metadata=metadata)
+        else:
+            pdf_pages.savefig(figure, facecolor="white", metadata=metadata)
+        return {"layout": layout.name, "page_index": arguments.get("page_index", 1),
+                "page_mm": {"width": width, "height": height}, "dpi": options["dpi"],
                 "color_mode": options["color_mode"], "scale": arguments.get("scale", "1:1" if paper_space else "fit"),
                 "model_to_paper_scale": mm_per_unit / unit_mm if unit_mm else None,
                 "mm_per_drawing_unit": mm_per_unit, "world_bounds": list(limits),
@@ -206,20 +269,33 @@ def _render_drawing(source, target, arguments):
 
 def validate_plot(path: Path, report):
     """Decode the exported artifact, independently from the drawing renderer."""
-    width, height = report["page_mm"]["width"], report["page_mm"]["height"]
     if report["format"] == "pdf":
         from pypdf import PdfReader
         pdf = PdfReader(path, strict=True)
-        if len(pdf.pages) != 1:
+        page_reports = report.get("pages") or [report]
+        if not isinstance(page_reports, list) or not page_reports:
+            raise ValueError("PLOT_PAGE_REPORT_MISSING")
+        if len(pdf.pages) != len(page_reports):
             raise ValueError("PLOT_PDF_PAGE_COUNT_MISMATCH")
-        page = pdf.pages[0]
-        actual = (float(page.mediabox.width) * 25.4 / 72, float(page.mediabox.height) * 25.4 / 72)
-        if not all(math.isclose(a, b, abs_tol=.01) for a, b in zip(actual, (width, height))):
-            raise ValueError("PLOT_PDF_PAGE_SIZE_MISMATCH")
-        contents = page.get_contents()
-        if contents is None or not contents.get_data():
-            raise ValueError("PLOT_PDF_EMPTY")
-        return {"valid": True, "pages": 1, "page_mm": list(actual), "bytes": path.stat().st_size}
+        actual_pages = []
+        for index, (page, expected_report) in enumerate(zip(pdf.pages, page_reports), start=1):
+            expected = expected_report.get("page_mm")
+            if not isinstance(expected, dict) or "width" not in expected or "height" not in expected:
+                raise ValueError(f"PLOT_PAGE_SIZE_MISSING:{index}")
+            actual = (float(page.mediabox.width) * 25.4 / 72, float(page.mediabox.height) * 25.4 / 72)
+            if not all(math.isclose(a, float(expected[key]), abs_tol=.01) for a, key in zip(actual, ("width", "height"))):
+                raise ValueError(f"PLOT_PDF_PAGE_SIZE_MISMATCH:{index}")
+            contents = page.get_contents()
+            if contents is None or not contents.get_data():
+                raise ValueError(f"PLOT_PDF_EMPTY:{index}")
+            actual_pages.append(list(actual))
+        result = {"valid": True, "pages": len(actual_pages), "page_mm": actual_pages, "bytes": path.stat().st_size}
+        if len(actual_pages) == 1 and not report.get("multi_page"):
+            result["page_mm"] = actual_pages[0]
+        return result
+    if report.get("multi_page"):
+        raise ValueError("PLOT_MULTI_PAGE_REQUIRES_PDF")
+    width, height = report["page_mm"]["width"], report["page_mm"]["height"]
     from PIL import Image, ImageChops
     with Image.open(path) as image:
         image.load()

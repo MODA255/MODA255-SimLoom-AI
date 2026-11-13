@@ -38,6 +38,7 @@ def _parser() -> argparse.ArgumentParser:
     plot.add_argument("--dpi", type=int, default=150)
     plot.add_argument("--margin-mm", type=float, default=10)
     plot.add_argument("--color-mode", choices=["monochrome", "color"], default="monochrome")
+    plot.add_argument("--pages", help="PDF 页面 JSON 数组；每项可覆盖 layout/paper/orientation/scale 等参数")
     plot.add_argument("--overwrite", action="store_true")
     plan = sub.add_parser("plan", help="根据自然语言生成工具链计划")
     plan.add_argument("prompt")
@@ -178,6 +179,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "cad-plot":
         arguments = {key: value for key, value in vars(args).items() if key not in {"command", "config"} and value is not None}
+        if arguments.get("pages"):
+            try:
+                arguments["pages"] = json.loads(arguments["pages"])
+            except json.JSONDecodeError as exc:
+                raise SystemExit("--pages must be a JSON array") from exc
         print(json.dumps(agent.execute_operation("cad.plot", arguments), ensure_ascii=False, indent=2))
         return 0
     if args.command == "desktop":

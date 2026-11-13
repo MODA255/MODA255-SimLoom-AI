@@ -112,6 +112,47 @@ def test_pdf_is_vector_drawing_on_exact_a3_sheet(drawing):
     assert Path(result["report_path"]).is_file()
 
 
+def test_multi_page_pdf_uses_independent_model_page_sizes(drawing):
+    result = operation(drawing, "cad.plot", output_file="exports/multi-model.pdf", pages=[
+        {"layout": "Model", "paper": "A4", "orientation": "portrait", "scale": "fit"},
+        {"layout": "Model", "paper": "A3", "orientation": "landscape", "scale": "fit"},
+    ])
+    reader = PdfReader(result["path"], strict=True)
+    assert len(reader.pages) == 2
+    sizes = [
+        (float(page.mediabox.width) * 25.4 / 72, float(page.mediabox.height) * 25.4 / 72)
+        for page in reader.pages
+    ]
+    assert sizes[0] == pytest.approx((210, 297), abs=.01)
+    assert sizes[1] == pytest.approx((420, 297), abs=.01)
+    assert result["report"]["multi_page"] is True
+    assert result["report"]["page_count"] == 2
+    assert [page["page_index"] for page in result["report"]["pages"]] == [1, 2]
+    assert result["validation"]["pages"] == 2
+    assert result["validation"]["page_mm"][0] == pytest.approx([210, 297], abs=.01)
+    assert result["validation"]["page_mm"][1] == pytest.approx([420, 297], abs=.01)
+
+
+def test_multi_page_pdf_reads_each_paperspace_layout(drawing):
+    sheet(drawing)
+    second = operation(drawing, "cad.sheet_prepare", name="A4", paper="A4", fields={"TITLE": "Second sheet"})
+    assert second["persisted_validation"]["valid"]
+    result = operation(drawing, "cad.plot", output_file="exports/multi-layout.pdf", pages=[
+        {"layout": "A3"},
+        {"layout": "A4"},
+    ])
+    reader = PdfReader(result["path"], strict=True)
+    assert len(reader.pages) == 2
+    sizes = [
+        (float(page.mediabox.width) * 25.4 / 72, float(page.mediabox.height) * 25.4 / 72)
+        for page in reader.pages
+    ]
+    assert sizes[0] == pytest.approx((420, 297), abs=.01)
+    assert sizes[1] == pytest.approx((297, 210), abs=.01)
+    assert [page["layout"] for page in result["report"]["pages"]] == ["A3", "A4"]
+    assert result["validation"]["pages"] == 2
+
+
 def test_paperspace_png_contains_model_viewport_and_title_block(drawing):
     sheet(drawing)
     result = plot(drawing, "png", layout="A3", dpi=100)
@@ -233,10 +274,17 @@ def test_cli_plot_and_mcp_discovery(drawing):
     tools = server.handle({"id": 1, "method": "tools/list", "params": {"limit": 500}})["result"]["tools"]
     spec = next(t for t in tools if t["name"] == "operation.cad.plot")
     assert spec["inputSchema"]["properties"]["scale"]["type"] == "string"
+    assert spec["inputSchema"]["properties"]["pages"]["maxItems"] == 64
     result = subprocess.run([sys.executable, "-m", "engineering_agent.cli", "--project-dir", str(drawing.parent),
                              "cad-plot", drawing.name, "cli.pdf", "--paper", "A3"], capture_output=True, text=True, timeout=60, env=os.environ)
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["validation"]["valid"]
+    multi = subprocess.run([sys.executable, "-m", "engineering_agent.cli", "--project-dir", str(drawing.parent),
+                           "cad-plot", drawing.name, "multi-cli.pdf", "--pages",
+                           '[{"layout":"Model","paper":"A4","orientation":"portrait"},{"layout":"Model","paper":"A3"}]'],
+                          capture_output=True, text=True, timeout=60, env=os.environ)
+    assert multi.returncode == 0, multi.stderr
+    assert json.loads(multi.stdout)["validation"]["pages"] == 2
 
 
 def test_prepare_uses_current_batch_geometry_and_skips_nonplot_layers(tmp_path):
