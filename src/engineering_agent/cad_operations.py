@@ -241,16 +241,45 @@ def _line_polyline_intersections(line: dict[str, Any], boundary: dict[str, Any],
     if len(vertices) < 2:
         raise ValueError("TRIM_BOUNDARY_TOO_SHORT")
     bulges = boundary.get("bulges") or []
-    if any(abs(float(value)) > tolerance for value in bulges):
-        raise ValueError("TRIM_BULGED_BOUNDARY_UNSUPPORTED")
     count = len(vertices) if boundary.get("closed") else len(vertices) - 1
     points: list[dict[str, float]] = []
     for index in range(count):
-        segment = {"start": vertices[index], "end": vertices[(index + 1) % len(vertices)]}
-        point = _segment_intersection(line, segment, tolerance)
-        if point is not None and not any(_distance(point, existing) <= tolerance for existing in points):
-            points.append(point)
+        start, end = vertices[index], vertices[(index + 1) % len(vertices)]
+        bulge = float(bulges[index]) if index < len(bulges) else 0.0
+        if not math.isfinite(bulge):
+            raise ValueError("TRIM_INVALID_BULGE")
+        if abs(bulge) > tolerance:
+            intersections = _line_bulge_segment_intersections(line, start, end, bulge, tolerance)
+        else:
+            intersections = [_segment_intersection(line, {"start": start, "end": end}, tolerance)]
+        for point in intersections:
+            if point is not None and not any(_distance(point, existing) <= tolerance for existing in points):
+                points.append(point)
     return points
+
+
+def _line_bulge_segment_intersections(line: dict[str, Any], start: dict[str, Any], end: dict[str, Any],
+                                       bulge: float, tolerance: float = 1e-9) -> list[dict[str, float]]:
+    """Intersect a finite line with one DXF bulge arc segment."""
+    chord = math.hypot(end["x"] - start["x"], end["y"] - start["y"])
+    if chord <= tolerance:
+        raise ValueError("TRIM_INVALID_BULGE")
+    radius = chord * (1.0 + bulge * bulge) / (4.0 * abs(bulge))
+    normal = {"x": -(end["y"] - start["y"]) / chord, "y": (end["x"] - start["x"]) / chord}
+    offset = chord * (1.0 - bulge * bulge) / (4.0 * bulge)
+    midpoint = {"x": (start["x"] + end["x"]) / 2.0, "y": (start["y"] + end["y"]) / 2.0,
+                "z": (start.get("z", 0.0) + end.get("z", 0.0)) / 2.0}
+    center = {"x": midpoint["x"] + normal["x"] * offset, "y": midpoint["y"] + normal["y"] * offset, "z": midpoint["z"]}
+    intersections = _line_circle_intersections(line, {"center": center, "radius": radius}, tolerance)
+    start_angle = _angle(start, center)
+    sweep = abs(math.degrees(4.0 * math.atan(bulge)))
+    filtered: list[dict[str, float]] = []
+    for point in intersections:
+        value = _angle(point, center)
+        travelled = (value - start_angle) % 360.0 if bulge > 0 else (start_angle - value) % 360.0
+        if travelled <= sweep + 1e-7:
+            filtered.append(point)
+    return filtered
 
 
 def _line_circle_intersections(line: dict[str, Any], circle: dict[str, Any], tolerance: float = 1e-9) -> list[dict[str, float]]:

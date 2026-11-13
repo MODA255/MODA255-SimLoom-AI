@@ -316,11 +316,14 @@ def test_trim_supports_finite_polyline_cutting_boundaries(tmp_path):
         {"type": "LINE", "start": {"x": -5, "y": 0}, "end": {"x": 15, "y": 0}},
         {"type": "LWPOLYLINE", "vertices": [{"x": 4, "y": -2}, {"x": 4, "y": 2}], "bulges": [1], "closed": False},
     ])
-    with pytest.raises(ValueError, match="TRIM_BULGED_BOUNDARY_UNSUPPORTED"):
-        EngineeringAgent({"tools": {}}).execute_operation("cad.entity_trim", {
-            "project_dir": str(tmp_path), "input_file": bulged, "output_file": tmp_path / "rejected.dxf",
-            "entity_id": "e00001", "boundary_entity_id": "e00002", "keep": "start",
-        })
+    bulged_output = tmp_path / "bulged-trim.dxf"
+    bulged_result = EngineeringAgent({"tools": {}}).execute_operation("cad.entity_trim", {
+        "project_dir": str(tmp_path), "input_file": bulged, "output_file": bulged_output,
+        "entity_id": "e00001", "boundary_entity_id": "e00002", "keep": "start",
+    })
+    assert bulged_result["persisted_validation"]["valid"]
+    bulged_line = CadDocument.open(bulged_output).entities[0]
+    assert bulged_line["start"]["x"] == -5 and bulged_line["end"]["x"] == pytest.approx(6)
 
 
 def test_trim_supports_rotated_ellipse_cutting_boundaries(tmp_path):

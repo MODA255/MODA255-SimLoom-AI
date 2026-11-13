@@ -19,7 +19,7 @@ SimLoom 原有的 CATIA / Ansys / Adams / VI-grade 工程链、B-Rep 和仿真�
 
 | 能力 | 本地证据及现状 | 完成所需证据 / 下一步 |
 | --- | --- | --- |
-| 真实二维绘图、编辑与 typed operations | 已有统一对象、原生 DXF 保存与多类编辑；`cad_operations.py`、CAD 回归测试；直线/圆弧/圆和直线多段线 offset 现在支持有符号左右侧、连接拐角和明确拒绝 bulge 曲线；SPLINE 已支持创建、读回和变换；关联 HATCH 移动会自动扩展到 source boundary entities；`cad.entity_trim` 现在支持有限 LINE/CIRCLE/ARC/ELLIPSE/polyline 边界并拒绝 bulge 曲线；两相连直线的圆角/等距倒角已补真实切点、短弧与独立检查，见 `CAD_CORNERS.md`、`CAD_TRIM.md` | 对照上游每种操作的几何语义逐项验收，不能仅比较操作名称。复杂曲线修剪、关联边界重构和其他退化输入仍需继续复核 |
+| 真实二维绘图、编辑与 typed operations | 已有统一对象、原生 DXF 保存与多类编辑；`cad_operations.py`、CAD 回归测试；直线/圆弧/圆和直线多段线 offset 现在支持有符号左右侧、连接拐角和明确拒绝 bulge 曲线；SPLINE 已支持创建、读回和变换；关联 HATCH 移动会自动扩展到 source boundary entities；`cad.entity_trim` 现在支持有限 LINE/CIRCLE/ARC/ELLIPSE/polyline 边界和 bulge 圆弧段；两相连线的圆角/等距倒角已补真实切点、短弧与独立检查，见 `CAD_CORNERS.md`、`CAD_TRIM.md` | 对照上游每种操作的几何语义逐项验收，不能仅比较操作名称。复杂 spline 曲线修剪、关联边界重构和其他退化输入仍需继续复核 |
 | 原子批次、checkpoint、diff、跨会话恢复 | `cad_history.py`、`transactions.py`；已有真实子进程中断和恢复测试 | 扩充外部编辑冲突及各写入口的覆盖；核对脚本等新增入口遵守同一契约 |
 | STEP B-Rep 写入可靠性 | `brep.boolean`、`brep.create_primitive`、`brep.build_feature_graph` 现在把输入和输出限制在项目目录，写入后先检查暂存文件，再从提交目标重新读取 STEP，验证形状、拓扑和体积；失败由事务恢复原文件；feature graph sidecar 随输出一起提交并在覆盖时清理 | 仍需在更多 OpenCascade 版本和真实复杂 STEP 数据上验收；布尔退化、装配、多实体和外部文件冲突的工程规则还需扩展 |
 | 受控脚本执行 | 已有 `cad.script_apply`：默认关闭；显式启用后在事务 staging 工作目录运行，静态检查高风险导入/调用，限制脚本时长、输出大小和输出文件，重新读取 DXF 做独立验证、diff、checkpoint、历史和失败恢复；`tests/test_controlled_cad_scripts.py` | 在 Windows worker 上把同一策略映射到受控脚本宿主，并补 OS 级隔离和真实项目脚本验收；当前策略不是完整安全沙箱 |
