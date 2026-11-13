@@ -15,6 +15,8 @@ viewer、architecture、limitations-roadmap 文档与实现。后续对齐应重
 SimLoom 原有的 CATIA / Ansys / Adams / VI-grade 工程链、B-Rep 和仿真查看功能继续保留，
 真实后端验证仍须单独完成。
 
+`cad.draw_order` 现已补齐：它通过 DXF `SORTENTS` 持久化置前、置后、前移、后移和相对定位，沿用事务、锁层、独立读回、diff、历史和 rollback；细节见 `CAD_DRAW_ORDER.md`。这缩小了二维 typed operation 差距，但不改变四款商业软件实机验证仍待 Windows 的事实。
+
 ## 必须逐项证明的能力
 
 | 能力 | 本地证据及现状 | 完成所需证据 / 下一步 |

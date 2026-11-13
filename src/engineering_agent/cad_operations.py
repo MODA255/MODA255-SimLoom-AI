@@ -823,6 +823,106 @@ class CadOperationEngine:
             for selection in document.selection_sets.values():
                 selection.refs = [ref for ref in selection.refs if ref not in ids]
             return {"deleted": sorted(ids)}
+        if name == "draw_order":
+            requested_ids = _refs(arguments, document)
+            if not requested_ids:
+                raise ValueError("DRAW_ORDER_SELECTION_REQUIRED")
+            selected_ids = list(dict.fromkeys(requested_ids))
+            selected = {str(identifier) for identifier in selected_ids}
+            for identifier in selected_ids:
+                document.entity(identifier)
+            action = str(arguments.get("action", arguments.get("mode", ""))).strip().lower()
+            aliases = {
+                "bring_to_front": "front", "send_to_back": "back",
+                "move_forward": "forward", "move_backward": "backward",
+                "above_entity": "above", "below_entity": "below",
+            }
+            action = aliases.get(action, action)
+            if action not in {"front", "back", "forward", "backward", "above", "below"}:
+                raise ValueError("DRAW_ORDER_ACTION_INVALID")
+            try:
+                steps = int(arguments.get("steps", 1))
+            except (TypeError, ValueError) as exc:
+                raise ValueError("DRAW_ORDER_STEPS_INVALID") from exc
+            if steps < 1:
+                raise ValueError("DRAW_ORDER_STEPS_INVALID")
+            layout_filter = str(arguments.get("layout", "")).strip()
+            reference_id = arguments.get("relative_to") or arguments.get("reference_entity_id")
+            reference = None
+            if action in {"above", "below"}:
+                if not reference_id:
+                    raise ValueError("DRAW_ORDER_REFERENCE_REQUIRED")
+                reference = document.entity(str(reference_id))
+                if str(reference.get("id")) in selected:
+                    raise ValueError("DRAW_ORDER_REFERENCE_SELECTED")
+            if reference is not None:
+                reference_layout = str(reference.get("sheet", reference.get("layout", "Model")))
+                if layout_filter and layout_filter.lower() not in {"auto", reference_layout.lower()}:
+                    raise ValueError("DRAW_ORDER_LAYOUT_MISMATCH")
+            for identifier in selected_ids:
+                entity = document.entity(identifier)
+                layer = document.layers.get(str(entity.get("layer", "0")))
+                if layer and layer.locked:
+                    raise ValueError("CAD_LAYER_LOCKED:" + layer.name)
+                entity_layout = str(entity.get("sheet", entity.get("layout", "Model")))
+                if layout_filter and layout_filter.lower() not in {"auto", entity_layout.lower()}:
+                    raise ValueError("DRAW_ORDER_LAYOUT_MISMATCH")
+                if reference is not None and entity_layout.lower() != reference_layout.lower():
+                    raise ValueError("DRAW_ORDER_LAYOUT_MISMATCH")
+
+            def reorder(items: list[dict[str, Any]], *, target: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+                ids = [str(item.get("id")) for item in items]
+                if not selected.intersection(ids):
+                    return items
+                chosen = {identifier for identifier in selected if identifier in ids}
+                if action == "front":
+                    return [item for item in items if str(item.get("id")) not in chosen] + [item for item in items if str(item.get("id")) in chosen]
+                if action == "back":
+                    return [item for item in items if str(item.get("id")) in chosen] + [item for item in items if str(item.get("id")) not in chosen]
+                if action in {"forward", "backward"}:
+                    output = list(items)
+                    for _ in range(steps):
+                        if action == "forward":
+                            for index in range(len(output) - 2, -1, -1):
+                                if str(output[index].get("id")) in chosen and str(output[index + 1].get("id")) not in chosen:
+                                    output[index], output[index + 1] = output[index + 1], output[index]
+                        else:
+                            for index in range(1, len(output)):
+                                if str(output[index].get("id")) in chosen and str(output[index - 1].get("id")) not in chosen:
+                                    output[index], output[index - 1] = output[index - 1], output[index]
+                    return output
+                target_id = str(target.get("id")) if target else ""
+                remaining = [item for item in items if str(item.get("id")) not in chosen]
+                target_index = next((index for index, item in enumerate(remaining) if str(item.get("id")) == target_id), None)
+                if target_index is None:
+                    raise ValueError("DRAW_ORDER_REFERENCE_NOT_FOUND")
+                insert_at = target_index + (1 if action == "above" else 0)
+                return remaining[:insert_at] + [item for item in items if str(item.get("id")) in chosen] + remaining[insert_at:]
+
+            before_order = [str(item.get("id")) for item in document.entities]
+            layouts: dict[str, list[int]] = {}
+            selected_layouts = {
+                str(document.entity(identifier).get("sheet", document.entity(identifier).get("layout", "Model")))
+                for identifier in selected_ids
+            }
+            for index, entity in enumerate(document.entities):
+                layout = str(entity.get("sheet", entity.get("layout", "Model")))
+                if layout_filter and layout_filter.lower() not in {"auto", layout.lower()}:
+                    continue
+                is_reference_layout = reference is not None and layout.lower() == reference_layout.lower()
+                if layout in selected_layouts or (action in {"above", "below"} and is_reference_layout):
+                    layouts.setdefault(layout, []).append(index)
+            for layout, indices in layouts.items():
+                segment = [document.entities[index] for index in indices]
+                target = reference if reference is not None and layout.lower() == reference_layout.lower() else None
+                reordered = reorder(segment, target=target)
+                for index, entity in zip(indices, reordered):
+                    document.entities[index] = entity
+            after_order = [str(item.get("id")) for item in document.entities]
+            affected_layouts = sorted({str(document.entity(identifier).get("sheet", document.entity(identifier).get("layout", "Model"))) for identifier in selected_ids})
+            return {"action": action, "entity_ids": selected_ids, "layouts": affected_layouts,
+                    "changed": before_order != after_order, "order_before": before_order,
+                    "order_after": after_order}
         if name == "entity_stretch":
             window = arguments.get("window")
             if not isinstance(window, (list, tuple)) or len(window) != 2:

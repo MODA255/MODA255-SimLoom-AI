@@ -206,13 +206,13 @@ def parse_dxf(text: str) -> dict[str, Any]:
     return {"format": "DXF", "entities": entities, "entity_count": len(entities), "entity_types": _counts(entities), "layers": layers, "bbox": bbox(entities), "blocks": blocks, "coordinate_systems": coordinate_systems, "topology": {"nodes": nodes, "relations": relations}}
 
 
-def read_dxf(path: str | Path) -> dict[str, Any]:
+def read_dxf(path: str | Path, *, respect_redraw_order: bool = True) -> dict[str, Any]:
     path = Path(path)
     with path.open("rb") as stream:
         header = stream.read(16384)
     if b"$ACADVER" in header or header.startswith(b"AutoCAD Binary DXF"):
         from .native_dxf import read_native
-        return read_native(path)
+        return read_native(path, respect_redraw_order=respect_redraw_order)
     # Compatibility with the headerless ASCII fixtures emitted by early
     # SimLoom versions. Full DXFs never silently fall back after a parse error.
     payload = parse_dxf(path.read_text(encoding="utf-8", errors="strict"))

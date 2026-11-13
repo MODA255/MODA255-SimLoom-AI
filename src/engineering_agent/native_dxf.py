@@ -189,7 +189,7 @@ def entity_model(entity) -> dict[str, Any]:
     return item
 
 
-def read_native(path: str | Path) -> dict[str, Any]:
+def read_native(path: str | Path, *, respect_redraw_order: bool = True) -> dict[str, Any]:
     drawing = ezdxf.readfile(path)
     entities, sheets, viewports = [], {}, {}
     for layout in drawing.layouts:
@@ -199,7 +199,8 @@ def read_native(path: str | Path) -> dict[str, Any]:
             unit = "in" if properties.plot_paper_units == 0 else "mm"
             factor = 25.4 if unit == "in" else 1.
             sheets[layout.name] = {"name": layout.name, "width": float(properties.paper_width) / factor, "height": float(properties.paper_height) / factor, "units": unit}
-        for entity in layout:
+        ordered_entities = layout.entities_in_redraw_order() if respect_redraw_order else layout
+        for entity in ordered_entities:
             if entity.dxftype() == "VIEWPORT":
                 if int(entity.dxf.id) == 1:
                     continue
@@ -594,7 +595,9 @@ def build_native(*, entities: list[dict[str, Any]], blocks=(), coordinate_system
         layout = drawing.blocks.get(block["name"])
         layout.block.dxf.base_point = xyz(block.get("base_point"))
         _sync_entities(drawing, block.get("entities", []), {block["name"]: layout}, block["name"])
-    _sync_entities(drawing, entities, {layout.name: layout for layout in drawing.layouts}, "Model")
+    layouts = {layout.name: layout for layout in drawing.layouts}
+    _sync_entities(drawing, entities, layouts, "Model")
+    _set_redraw_order(drawing, entities, layouts)
     if source is not None:
         keep_blocks = {b["name"] for b in blocks}
         for block in list(drawing.blocks):
@@ -640,6 +643,32 @@ def build_native(*, entities: list[dict[str, Any]], blocks=(), coordinate_system
             if system.dxf.name not in keep_systems:
                 drawing.ucs.remove(system.dxf.name)
     return drawing
+
+
+def _set_redraw_order(drawing, models, layouts):
+    """Persist canonical entity order through DXF SORTENTS tables.
+
+    DXF entity storage order and visual redraw order are separate.  Keeping
+    the canonical order in the layout's redraw table makes draw-order edits
+    survive a native write/read cycle without rebuilding or changing entity
+    handles.  The model list is already grouped by layout by ``_sync_entities``.
+    """
+    grouped = {}
+    for item in models:
+        grouped.setdefault(str(item.get("sheet", "Model")), []).append(item)
+    for layout_name, items in grouped.items():
+        layout = layouts.get(layout_name)
+        if layout is None:
+            raise ValueError("CAD_LAYOUT_NOT_FOUND:" + layout_name)
+        handles = [str(item.get("handle", "")) for item in items if item.get("handle")]
+        if not handles:
+            continue
+        # Sort handles provide deterministic numeric slots.  Assigning those
+        # slots in the requested model order creates a valid SORTENTS table
+        # even when the desired order differs from native handle order.
+        slots = sorted(handles, key=lambda value: int(value, 16) if value else -1)
+        layout.set_redraw_order([(handle, slot) for handle, slot in zip(handles, slots)])
+        drawing.header["$SORTENTS"] = int(drawing.header.get("$SORTENTS", 0)) | 16
 
 
 def _sync_entities(drawing, models, layouts, default):

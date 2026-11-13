@@ -44,6 +44,63 @@ def test_cad_batch_is_transactional_and_emits_diff_and_sidecar(tmp_path):
     assert CadDocument.open(output).entities[0]["start"]["x"] == 2
 
 
+def test_draw_order_reorders_persisted_entities_and_preserves_selection_order(tmp_path):
+    source = tmp_path / "draw-order-source.dxf"
+    write_dxf(source, entities=[
+        {"type": "LINE", "layer": "A", "start": {"x": 0, "y": 0}, "end": {"x": 1, "y": 0}},
+        {"type": "LINE", "layer": "A", "start": {"x": 2, "y": 0}, "end": {"x": 3, "y": 0}},
+        {"type": "CIRCLE", "layer": "A", "center": {"x": 5, "y": 0}, "radius": 1},
+        {"type": "TEXT", "layer": "A", "insert": {"x": 7, "y": 0}, "text": "label", "height": 1},
+    ])
+    agent = EngineeringAgent({"tools": {}})
+    front = tmp_path / "front.dxf"
+    result = agent.execute_operation("cad.draw_order", {
+        "project_dir": str(tmp_path), "input_file": source, "output_file": front,
+        "entity_ids": ["e00002", "e00001"], "action": "front",
+    })
+    assert result["persisted_validation"]["valid"]
+    assert [item["id"] for item in CadDocument.open(front).entities] == ["e00003", "e00004", "e00001", "e00002"]
+    assert result["results"][0]["changed"] is True
+
+    above = tmp_path / "above.dxf"
+    result = agent.execute_operation("cad.draw_order", {
+        "project_dir": str(tmp_path), "input_file": source, "output_file": above,
+        "entity_ids": ["e00004"], "action": "below", "relative_to": "e00002",
+    })
+    assert result["persisted_validation"]["valid"]
+    assert [item["id"] for item in CadDocument.open(above).entities] == ["e00001", "e00004", "e00002", "e00003"]
+
+    forward = tmp_path / "forward.dxf"
+    result = agent.execute_operation("cad.draw_order", {
+        "project_dir": str(tmp_path), "input_file": source, "output_file": forward,
+        "entity_ids": ["e00001", "e00003"], "action": "forward",
+    })
+    assert result["persisted_validation"]["valid"]
+    assert [item["id"] for item in CadDocument.open(forward).entities] == ["e00002", "e00001", "e00004", "e00003"]
+
+
+def test_draw_order_rejects_locked_layers_and_invalid_references(tmp_path):
+    source = _source(tmp_path)
+    agent = EngineeringAgent({"tools": {}})
+    locked = tmp_path / "locked.dxf"
+    agent.execute_operation("cad.layer_update", {
+        "project_dir": str(tmp_path), "input_file": source, "output_file": locked,
+        "name": "FRAME", "locked": True,
+    })
+    with pytest.raises(ValueError, match="CAD_LAYER_LOCKED:FRAME"):
+        agent.execute_operation("cad.draw_order", {
+            "project_dir": str(tmp_path), "input_file": locked, "output_file": tmp_path / "rejected.dxf",
+            "entity_ids": ["e00001"], "action": "front",
+        })
+    with pytest.raises(ValueError, match="DRAW_ORDER_REFERENCE_REQUIRED"):
+        agent.execute_operation("cad.draw_order", {
+            "project_dir": str(tmp_path), "input_file": source, "output_file": tmp_path / "missing-ref.dxf",
+            "entity_ids": ["e00001"], "action": "above",
+        })
+    spec = agent.operations.get("cad.draw_order").schema()
+    assert spec["parameters_schema"]["action"]["enum"] == ["front", "back", "forward", "backward", "above", "below"]
+
+
 def test_cad_repair_replans_invalid_geometry(tmp_path):
     source = tmp_path / "invalid.dxf"
     output = tmp_path / "repaired.dxf"

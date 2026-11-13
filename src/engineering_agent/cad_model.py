@@ -133,15 +133,20 @@ class CadDocument:
     @classmethod
     def open(cls, path: str | Path) -> "CadDocument":
         path = Path(path)
-        native = read_dxf(path)
+        sidecar_path = Path(str(path) + ".cad.json")
+        sidecar_payload = None
+        stale_sidecar = False
+        if sidecar_path.is_file():
+            sidecar_payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+            expected_hash = sidecar_payload.get("source_sha256")
+            stale_sidecar = bool(expected_hash and hashlib.sha256(path.read_bytes()).hexdigest() != expected_hash)
+        native = read_dxf(path, respect_redraw_order=not stale_sidecar)
         document = cls.from_dxf(native, name=path.name)
         document._source_path = str(path) if native.get("backend") == "ezdxf" else None
-        sidecar = Path(str(path) + ".cad.json")
-        if sidecar.is_file():
-            import json
-            payload = json.loads(sidecar.read_text(encoding="utf-8"))
+        if sidecar_payload is not None:
+            payload = sidecar_payload
             expected_hash = payload.get("source_sha256")
-            if expected_hash and hashlib.sha256(path.read_bytes()).hexdigest() != expected_hash:
+            if stale_sidecar:
                 document.metadata["sidecar_warning"] = "CAD_SIDECAR_STALE"
                 return document
             document.document_id = str(payload.get("document_id", document.document_id))
