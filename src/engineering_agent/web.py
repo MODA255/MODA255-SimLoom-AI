@@ -279,6 +279,10 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
                     raise ValueError("watch_id 是必填项")
                 return self._send(200, agent.execute_operation("project.watch_status", {
                     "project_dir": root, "watch_id": watch_id}))
+            if parsed.path == "/api/dependencies":
+                paths = query.get("path") or None
+                return self._send(200, agent.execute_operation("project.dependency_scan", {
+                    "project_dir": root, "paths": paths}))
             self._send(404, {"error": "接口不存在"})
 
         def _post(self):

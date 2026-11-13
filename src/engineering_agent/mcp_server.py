@@ -237,6 +237,7 @@ class MCPServer:
             {"uri": "engineering://operations", "name": "Operation schemas", "mimeType": "application/json"},
             {"uri": f"engineering://versions?root={root}", "name": "Project versions", "mimeType": "application/json"},
             {"uri": f"engineering://project?root={root}", "name": "Canonical project object", "mimeType": "application/json"},
+            {"uri": f"engineering://dependencies?root={root}", "name": "Project dependency graph", "mimeType": "application/json"},
         ]
         path = params.get("path")
         if isinstance(path, str) and path:
@@ -254,6 +255,7 @@ class MCPServer:
         return [
             {"uriTemplate": "engineering://project?root={root}", "name": "Canonical project object", "mimeType": "application/json"},
             {"uriTemplate": "engineering://versions?root={root}", "name": "Project versions and timeline", "mimeType": "application/json"},
+            {"uriTemplate": "engineering://dependencies?root={root}", "name": "Project dependency graph", "mimeType": "application/json"},
             {"uriTemplate": "engineering://cad?root={root}&path={path}", "name": "CAD document context", "mimeType": "application/json"},
             {"uriTemplate": "engineering://asset?root={root}&path={path}", "name": "Project asset preview and image", "mimeType": "image/svg+xml"},
             {"uriTemplate": "engineering://watch?root={root}&watch_id={watch_id}", "name": "External file watch status", "mimeType": "application/json"},
@@ -271,6 +273,8 @@ class MCPServer:
             value = {"versions": VersionStore(root).list(), "timeline": VersionStore(root).timeline(), "schemaVersion": self.schema_version}
         elif parsed.netloc == "project":
             value = self.agent.inspect_project(root)
+        elif parsed.netloc == "dependencies":
+            value = self.agent.execute_operation("project.dependency_scan", {"project_dir": root})
         elif parsed.netloc == "watch":
             watch_id = query.get("watch_id", [""])[0]
             if not watch_id:

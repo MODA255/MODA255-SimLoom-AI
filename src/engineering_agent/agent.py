@@ -32,6 +32,7 @@ from .worker_protocol import SCHEMA as WORKER_SCHEMA, WorkerError, safe_file
 from .cad_diff_view import visual_diff
 from .software_preflight import preflight_plan
 from .file_watch import FileWatchStore
+from .dependencies import DependencyScanner
 
 
 def _project_path(project_root: Path, value: str | Path, *, must_exist: bool = False,
@@ -333,6 +334,8 @@ class EngineeringAgent:
             return FileWatchStore(arguments.get("project_dir", ".")).status(arguments["watch_id"])
         if name == "project.watch_stop":
             return FileWatchStore(arguments.get("project_dir", ".")).stop(arguments["watch_id"])
+        if name == "project.dependency_scan":
+            return DependencyScanner(arguments.get("project_dir", ".")).scan(arguments.get("paths"))
         if name == "project.diff":
             return self.diff_versions(arguments.get("project_dir", "."), arguments["left"], arguments["right"])
         if name == "project.visual_diff":

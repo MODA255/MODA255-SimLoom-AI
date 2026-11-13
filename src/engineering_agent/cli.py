@@ -151,6 +151,9 @@ def _parser() -> argparse.ArgumentParser:
     watch_stop = sub.add_parser("watch-stop", help="停止工程文件监测并保留历史")
     watch_stop.add_argument("watch_id")
     watch_stop.add_argument("--root", default=".")
+    dependencies = sub.add_parser("dependencies", help="扫描工程文件之间的可审计依赖")
+    dependencies.add_argument("paths", nargs="*", help="可选的项目内文件或目录")
+    dependencies.add_argument("--root", default=".")
     write = sub.add_parser("write", help="将 JSON payload 写入 STEP/CSV/JSON/DXF/OBJ/SVG/PDF")
     write.add_argument("format", choices=["step", "csv", "json", "dxf", "obj", "svg", "pdf"])
     write.add_argument("path")
@@ -250,6 +253,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "watch-stop":
         print(json.dumps(agent.execute_operation("project.watch_stop", {"project_dir": args.root, "watch_id": args.watch_id}), ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "dependencies":
+        print(json.dumps(agent.execute_operation("project.dependency_scan", {"project_dir": args.root, "paths": args.paths or None}), ensure_ascii=False, indent=2))
         return 0
     if args.command == "write":
         payload = json.loads(Path(args.payload).read_text(encoding="utf-8"))
