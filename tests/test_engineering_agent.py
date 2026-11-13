@@ -1,5 +1,8 @@
 import base64
 import json
+import os
+import subprocess
+import sys
 import threading
 import urllib.request
 from io import BytesIO
@@ -163,6 +166,31 @@ def test_mcp_pagination_subscription_and_schema_compatibility(tmp_path):
     unsupported = server.handle({"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {"name": "engineering_plan", "arguments": {"prompt": "用Adams做动力学", "schema_version": "engineering-agent/mcp/v99"}}})
     assert unsupported["result"]["isError"] is True
     assert unsupported["result"]["structuredContent"]["error"]["code"] == "SCHEMA_VERSION_UNSUPPORTED"
+
+
+def test_mcp_stdio_notifications_ping_and_real_subprocess_round_trip(tmp_path):
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    process = subprocess.Popen([sys.executable, "-m", "engineering_agent.cli", "mcp", "--profile", "safe"],
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               text=True, env=environment, cwd=str(Path(__file__).resolve().parents[1]))
+    assert process.stdin and process.stdout
+    process.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                                    "params": {"protocolVersion": "2024-11-05"}}) + "\n")
+    process.stdin.flush()
+    initialized = json.loads(process.stdout.readline())
+    assert initialized["result"]["protocolVersion"] == "2024-11-05"
+    process.stdin.write(json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n")
+    process.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 2, "method": "ping"}) + "\n")
+    process.stdin.flush()
+    assert json.loads(process.stdout.readline()) == {"jsonrpc": "2.0", "id": 2, "result": {}}
+    process.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {"limit": 1}}) + "\n")
+    process.stdin.flush()
+    listed = json.loads(process.stdout.readline())
+    assert len(listed["result"]["tools"]) == 1
+    process.stdin.close()
+    process.terminate()
+    process.wait(timeout=5)
 
 
 def test_mcp_subscription_queues_resource_update_after_mutation(tmp_path):

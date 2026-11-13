@@ -76,9 +76,15 @@ class MCPServer:
                 "params": {"uri": uri, "schemaVersion": self.schema_version},
             })
 
-    def handle(self, request: dict[str, Any]) -> dict[str, Any]:
+    def handle(self, request: dict[str, Any]) -> dict[str, Any] | None:
         method = request.get("method")
         request_id = request.get("id")
+        if method in {"notifications/initialized", "notifications/cancelled", "notifications/progress"}:
+            # MCP notifications are one-way messages and must not produce a
+            # JSON-RPC response on stdout.
+            return None
+        if method == "ping":
+            return {"jsonrpc": "2.0", "id": request_id, "result": {}}
         if method == "initialize":
             params = request.get("params") or {}
             requested = params.get("protocolVersion")
@@ -515,6 +521,8 @@ def serve_stdio(agent: EngineeringAgent, profile: str = "safe"):
             response = server.handle(parse_json_line(line))
         except ProtocolError as exc:
             response = {"jsonrpc": "2.0", "id": None, "error": failure(exc)["error"]}
+        if response is None:
+            continue
         sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
         if hasattr(server, "drain_notifications"):
             for notification in server.drain_notifications():
