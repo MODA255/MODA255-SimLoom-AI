@@ -178,6 +178,69 @@ def _entity_change_ids(before: CadDocument, after: CadDocument) -> dict[str, lis
             "entity_ids": sorted(set(added) | set(removed) | set(changed))}
 
 
+def _duplicate_key(entity: dict[str, Any], tolerance: float) -> str:
+    """Build a stable geometric key for duplicate cleanup.
+
+    Entity IDs and DXF handles are deliberately excluded.  The key keeps layer
+    and layout because deleting geometry from a different drawing context is
+    surprising, while common line, circle, arc and polyline representations are
+    normalized so reversed LINEs and cyclic closed polylines compare equal.
+    """
+    kind = str(entity.get("type", "")).upper()
+
+    def number(value: Any) -> int | str:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return str(value)
+        if not math.isfinite(numeric):
+            return str(numeric)
+        return int(round(numeric / tolerance))
+
+    def point(value: Any) -> tuple[int | str, int | str, int | str]:
+        value = value or {}
+        return number(value.get("x", 0)), number(value.get("y", 0)), number(value.get("z", 0))
+
+    context = (kind, str(entity.get("layer", "0")), str(entity.get("sheet", entity.get("layout", "Model"))))
+    if kind == "LINE":
+        return repr(context + tuple(sorted((point(entity.get("start")), point(entity.get("end"))))))
+    if kind in {"CIRCLE", "ARC"}:
+        payload: tuple[Any, ...] = context + (point(entity.get("center")), number(entity.get("radius", 0)))
+        if kind == "ARC":
+            payload += (number(float(entity.get("start_angle", 0)) % 360.0),
+                        number(float(entity.get("end_angle", 360)) % 360.0))
+        return repr(payload)
+    if kind in {"LWPOLYLINE", "POLYLINE"}:
+        vertices = [point(item) for item in entity.get("vertices", [])]
+        bulges = [number(item) for item in entity.get("bulges", [])]
+        forward = tuple(vertices), tuple(bulges), bool(entity.get("closed"))
+        reverse = tuple(reversed(vertices)), tuple(-float(item) if isinstance(item, (int, float)) else item for item in reversed(bulges)), bool(entity.get("closed"))
+        if entity.get("closed") and vertices:
+            rotations = []
+            for offset in range(len(vertices)):
+                rotations.append((tuple(vertices[offset:] + vertices[:offset]), tuple(bulges[offset:] + bulges[:offset]), True))
+            reversed_vertices = list(reversed(vertices))
+            reversed_bulges = list(reversed(bulges))
+            rotations.extend((tuple(reversed_vertices[offset:] + reversed_vertices[:offset]), tuple(reversed_bulges[offset:] + reversed_bulges[:offset]), True) for offset in range(len(vertices)))
+            forward = min(rotations)
+        else:
+            forward = min(forward, reverse)
+        return repr(context + (forward,))
+
+    def normalize(value: Any, key: str = "") -> Any:
+        if key in {"id", "handle", "raw_tags"}:
+            return None
+        if isinstance(value, dict):
+            return {name: normalize(child, name) for name, child in sorted(value.items()) if name not in {"id", "handle", "raw_tags"}}
+        if isinstance(value, list):
+            return [normalize(child) for child in value]
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return number(value)
+        return value
+
+    return repr(normalize(entity))
+
+
 def _chain_lines(lines: list[dict[str, Any]], tolerance: float) -> list[dict[str, float]]:
     """Build one ordered vertex chain from connected LINE entities."""
     if not lines:
@@ -867,6 +930,58 @@ class CadOperationEngine:
             before_constraints = len(document.constraints)
             document.constraints = [constraint for constraint in document.constraints if all(ref in valid_ids for ref in constraint.refs)]
             return {"removed_layers": removed_layers, "removed_blocks": removed_blocks, "removed_constraints": before_constraints - len(document.constraints)}
+        if name == "entity_remove_duplicates":
+            tolerance_value = arguments.get("tolerance", 1e-7)
+            if isinstance(tolerance_value, bool):
+                raise ValueError("DUPLICATE_TOLERANCE_INVALID")
+            try:
+                tolerance = float(tolerance_value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("DUPLICATE_TOLERANCE_INVALID") from exc
+            if not math.isfinite(tolerance) or tolerance <= 0:
+                raise ValueError("DUPLICATE_TOLERANCE_INVALID")
+            ids = _refs(arguments, document)
+            if not ids:
+                ids = [str(item.get("id")) for item in document.entities]
+            seen: dict[str, str] = {}
+            duplicate_to_keep: dict[str, str] = {}
+            groups: dict[str, list[str]] = {}
+            for entity_id in ids:
+                entity = document.entity(entity_id)
+                key = _duplicate_key(entity, tolerance)
+                groups.setdefault(key, []).append(entity_id)
+                if key in seen:
+                    duplicate_to_keep[entity_id] = seen[key]
+                else:
+                    seen[key] = entity_id
+            if not duplicate_to_keep:
+                return {"removed": [], "groups": [], "count": 0, "tolerance": tolerance}
+            by_id = {str(item.get("id")): item for item in document.entities}
+            handle_map: dict[str, str] = {}
+            for duplicate_id, keep_id in duplicate_to_keep.items():
+                duplicate, keep = by_id[duplicate_id], by_id[keep_id]
+                if duplicate.get("handle") and keep.get("handle"):
+                    handle_map[str(duplicate["handle"])] = str(keep["handle"])
+            if handle_map:
+                for entity in document.entities:
+                    if str(entity.get("type", "")).upper() != "HATCH":
+                        continue
+                    for path in entity.get("boundary_paths", []):
+                        path["source_handles"] = [handle_map.get(str(handle), str(handle)) for handle in path.get("source_handles", [])]
+            removed_ids = set(duplicate_to_keep)
+            document.entities = [item for item in document.entities if str(item.get("id")) not in removed_ids]
+            for selection in document.selection_sets.values():
+                selection.refs = [duplicate_to_keep.get(ref, ref) for ref in selection.refs]
+                selection.refs = list(dict.fromkeys(selection.refs))
+            for constraint in document.constraints:
+                constraint.refs = [duplicate_to_keep.get(ref, ref) for ref in constraint.refs]
+                constraint.refs = list(dict.fromkeys(constraint.refs))
+            duplicate_groups = []
+            for key, group in groups.items():
+                if len(group) > 1:
+                    duplicate_groups.append({"kept": group[0], "removed": group[1:]})
+            return {"removed": sorted(removed_ids), "groups": duplicate_groups,
+                    "count": len(removed_ids), "tolerance": tolerance}
         if name == "entity_reverse":
             ids = _refs(arguments, document)
             if not ids:

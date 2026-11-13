@@ -313,6 +313,8 @@ class EngineeringAgent:
                     raise ValueError("INVALID_FILLET_RADIUS")
                 if name.endswith("entity_chamfer") and any(error.startswith("distance:") for error in schema_errors):
                     raise ValueError("INVALID_CHAMFER_DISTANCE")
+            if name == "cad.entity_remove_duplicates" and any(error.startswith("tolerance:") for error in schema_errors):
+                raise ValueError("DUPLICATE_TOLERANCE_INVALID")
             raise ValueError("INVALID_OPERATION_ARGUMENTS:" + ",".join(schema_errors))
         if name == "results.parse":
             return self.ingest(arguments["result_file"], "result")

@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from engineering_agent import EngineeringAgent
-from engineering_agent.cad_model import CadDocument, EntityRef, validate_cad_document
+from engineering_agent.cad_model import CadDocument, Constraint, EntityRef, SelectionSet, validate_cad_document
 from engineering_agent.formats import write_dxf
 from engineering_agent.dxf import read_dxf
 from engineering_agent.viewer import asset_view
@@ -481,6 +481,48 @@ def test_center_mark_create_is_editable_tagged_and_idempotent(tmp_path):
     from engineering_agent.mcp_server import MCPServer
     listed = MCPServer(agent, profile="full").handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {"limit": 500}})
     assert any(item["name"] == "operation.cad.center_mark_create" for item in listed["result"]["tools"])
+
+
+def test_remove_duplicates_preserves_references_and_layout_context(tmp_path):
+    source = tmp_path / "duplicates.dxf"
+    output = tmp_path / "duplicates-clean.dxf"
+    write_dxf(source, entities=[
+        {"type": "LINE", "layer": "FRAME", "start": {"x": 0, "y": 0}, "end": {"x": 10, "y": 0}},
+        {"type": "LINE", "layer": "FRAME", "start": {"x": 10.00000001, "y": 0}, "end": {"x": 0, "y": 0}},
+        {"type": "CIRCLE", "layer": "FRAME", "center": {"x": 5, "y": 5}, "radius": 2},
+        {"type": "CIRCLE", "layer": "FRAME", "center": {"x": 5.00000001, "y": 5}, "radius": 2},
+        {"type": "LINE", "layer": "OTHER", "start": {"x": 0, "y": 0}, "end": {"x": 10, "y": 0}},
+    ])
+    document = CadDocument.open(source)
+    document.selection_sets["picked"] = SelectionSet("picked", ["e00002", "e00005"])
+    document.constraints.append(Constraint("coincident", ["e00002", "e00003"]))
+    Path(str(source) + ".cad.json").write_text(json.dumps(document.sidecar(), ensure_ascii=False), encoding="utf-8")
+    agent = EngineeringAgent({"tools": {}})
+    result = agent.execute_operation("cad.entity_remove_duplicates", {
+        "project_dir": str(tmp_path), "input_file": source, "output_file": output, "tolerance": 1e-6,
+    })
+    assert result["validation"]["valid"] and result["persisted_validation"]["valid"]
+    assert result["results"][0]["count"] == 2
+    assert set(result["results"][0]["removed"]) == {"e00002", "e00004"}
+    cleaned = CadDocument.open(output)
+    assert {item["id"] for item in cleaned.entities} == {"e00001", "e00003", "e00005"}
+    assert cleaned.selection_sets["picked"].refs == ["e00001", "e00005"]
+    assert cleaned.constraints[0].refs == ["e00001", "e00003"]
+    assert cleaned.entities[-1]["layer"] == "OTHER"
+
+    unchanged = agent.execute_operation("cad.entity_remove_duplicates", {
+        "project_dir": str(tmp_path), "input_file": output, "output_file": output, "tolerance": 1e-6,
+    })
+    assert unchanged["results"][0]["count"] == 0
+    with pytest.raises(ValueError, match="DUPLICATE_TOLERANCE_INVALID"):
+        agent.execute_operation("cad.entity_remove_duplicates", {
+            "project_dir": str(tmp_path), "input_file": output, "output_file": tmp_path / "bad.dxf", "tolerance": 0,
+        })
+    spec = agent.operations.get("cad.entity_remove_duplicates").schema()
+    assert "tolerance" in spec["parameters_schema"]
+    from engineering_agent.mcp_server import MCPServer
+    listed = MCPServer(agent, profile="full").handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {"limit": 500}})
+    assert any(item["name"] == "operation.cad.entity_remove_duplicates" for item in listed["result"]["tools"])
 
 
 def test_offset_uses_signed_side_and_preserves_polyline_connectivity(tmp_path):
