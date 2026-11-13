@@ -255,7 +255,9 @@ class CommandAdapter(ToolAdapter):
             try:
                 report = strict_json(Path(output_files[report_path]).read_bytes())
                 if validation.get("schema_version") == EVIDENCE_SCHEMA:
-                    report = validate_evidence(report, validation, decoded, request_id=request_id,
+                    output_values = {name: (Path(path) if name not in decoded else decoded[name])
+                                     for name, path in output_files.items()}
+                    report = validate_evidence(report, validation, output_values, request_id=request_id,
                                                tool=self.name.value, action=step.action)
                 else:
                     report = validate_report(report, request_id=request_id, tool=self.name.value,

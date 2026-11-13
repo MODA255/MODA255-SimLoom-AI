@@ -185,10 +185,15 @@ def _run_job(root, payload, commands, timeout, environment, monitor=None, transf
     if validation is not None:
         try:
             if validation.get("schema_version") == EVIDENCE_SCHEMA:
-                if any(pack_file(job, r["path"])["sha256"] != r["sha256"] for r in payload["files"]):
+                if any(file_manifest(safe_file(job, r["path"]), r["path"])["sha256"] != r["sha256"] for r in payload["files"]):
                     raise WorkerError("VENDOR_INPUT_CHANGED")
-                decoded = decode_files(records)
-                report = validate_evidence(strict_json(decoded[validation["report"]]), validation, decoded,
+                if all("content_base64" in record for record in records):
+                    outputs_for_validation = decode_files(records)
+                else:
+                    outputs_for_validation = {name: safe_file(job, name) for name in outputs}
+                report_value = outputs_for_validation[validation["report"]]
+                report_bytes = report_value.read_bytes() if isinstance(report_value, Path) else report_value
+                report = validate_evidence(strict_json(report_bytes), validation, outputs_for_validation,
                                            request_id=request_id, tool=tool, action=action)
             else:
                 report = read_report(job, validation["report"], request_id=request_id, tool=tool, action=action,

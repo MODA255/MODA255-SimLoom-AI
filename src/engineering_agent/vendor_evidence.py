@@ -13,6 +13,7 @@ import json
 import math
 import operator
 import re
+from pathlib import Path
 
 from .worker_protocol import WorkerError, names
 
@@ -251,7 +252,19 @@ def validate_evidence(report, contract, outputs, *, request_id, tool, action):
         fail('VENDOR_REPORT_MISMATCH')
     if report.get('inputs_after') != contract['input_hashes']:
         fail('VENDOR_INPUT_CHANGED')
-    hashes = {name: hashlib.sha256(data).hexdigest() for name, data in outputs.items() if name != contract['report']}
+    def content(value):
+        return value.read_bytes() if isinstance(value, Path) else value
+
+    def digest(value):
+        if isinstance(value, Path):
+            result = hashlib.sha256()
+            with value.open('rb') as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                    result.update(chunk)
+            return result.hexdigest()
+        return hashlib.sha256(value).hexdigest()
+
+    hashes = {name: digest(data) for name, data in outputs.items() if name != contract['report']}
     if report.get('artifacts') != hashes:
         fail('VENDOR_ARTIFACT_MISMATCH')
     observation = report.get('observations')
@@ -269,12 +282,12 @@ def validate_evidence(report, contract, outputs, *, request_id, tool, action):
                 value = converted(observed.get(phase), target['unit'])
                 if abs(value - target['value']) > number(update.get('tolerance', 1e-6)):
                     fail('PARAMETER_READBACK_MISMATCH', update['name'] + ':' + phase)
-        step = outputs[expected['step_output']]
+        step = content(outputs[expected['step_output']])
         if not step.lstrip().startswith(b'ISO-10303-21;') or b'END-ISO-10303-21;' not in step:
             fail('STEP_EXPORT_INVALID')
     else:
         result_path = expected.get('result_output', expected.get('metrics_output'))
-        metrics = read_export(outputs[result_path], '.' + result_path.rsplit('.', 1)[-1], expected)
+        metrics = read_export(content(outputs[result_path]), '.' + result_path.rsplit('.', 1)[-1], expected)
         if contract['kind'] == 'mechanical_solve':
             if observation.get('solution_status') != 'Done' or observation.get('analysis_name') != expected['analysis_name']:
                 fail('MECHANICAL_SOLUTION_INCOMPLETE')
