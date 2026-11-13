@@ -378,6 +378,88 @@ def _filter_ellipse_intersections(points: list[dict[str, float]], ellipse: dict[
     return output
 
 
+def _line_spline_intersections(line: dict[str, Any], spline: dict[str, Any], tolerance: float = 1e-7) -> list[dict[str, float]]:
+    """Find finite line intersections with a DXF spline using adaptive chords.
+
+    The spline is evaluated by ezdxf's B-spline implementation. Chord hits are
+    refined in parameter space, and a conservative sampling limit keeps a
+    malformed drawing from turning a trim request into an unbounded loop.
+    """
+    fit_points = spline.get("fit_points") or []
+    control_points = spline.get("control_points") or []
+    degree = int(spline.get("degree", 3))
+    if len(fit_points) < 2 and len(control_points) < 2:
+        raise ValueError("TRIM_INVALID_SPLINE")
+    try:
+        from ezdxf.math import BSpline
+        def vector_values(items):
+            return [(float(item.get("x", 0)), float(item.get("y", 0)), float(item.get("z", 0)))
+                    if isinstance(item, dict) else tuple(item) for item in items]
+        if control_points:
+            knots = spline.get("knots") or None
+            weights = spline.get("weights") or None
+            curve = BSpline(vector_values(control_points), order=degree + 1, knots=knots, weights=weights)
+        else:
+            curve = BSpline.from_fit_points(vector_values(fit_points), degree=max(1, min(degree, len(fit_points) - 1)))
+    except (TypeError, ValueError, ArithmeticError) as exc:
+        raise ValueError("TRIM_INVALID_SPLINE") from exc
+    try:
+        params = [float(value) for value in curve.approximation_params()]
+    except (TypeError, ValueError, ArithmeticError) as exc:
+        raise ValueError("TRIM_INVALID_SPLINE") from exc
+    if len(params) < 2 or any(not math.isfinite(value) for value in params):
+        raise ValueError("TRIM_INVALID_SPLINE")
+    dense: list[float] = []
+    subdivisions = 32
+    for first, second in zip(params, params[1:]):
+        if second <= first:
+            continue
+        dense.extend(first + (second - first) * index / subdivisions for index in range(subdivisions))
+    dense.append(params[-1])
+    try:
+        points = list(curve.points(dense))
+    except (TypeError, ValueError, ArithmeticError) as exc:
+        raise ValueError("TRIM_INVALID_SPLINE") from exc
+    intersections: list[dict[str, float]] = []
+    for index, (first, second) in enumerate(zip(points, points[1:])):
+        segment = {"start": {"x": float(first.x), "y": float(first.y), "z": float(first.z)},
+                   "end": {"x": float(second.x), "y": float(second.y), "z": float(second.z)}}
+        hit = _segment_intersection(line, segment, tolerance)
+        if hit is None:
+            continue
+        t0, t1 = dense[index], dense[index + 1]
+        start, end = _line_point(line, "start"), _line_point(line, "end")
+        dx, dy = end["x"] - start["x"], end["y"] - start["y"]
+        def signed_distance(parameter: float) -> float:
+            point = curve.point(parameter)
+            return (float(point.x) - start["x"]) * dy - (float(point.y) - start["y"]) * dx
+        f0, f1 = signed_distance(t0), signed_distance(t1)
+        if abs(f0) <= tolerance:
+            refined = t0
+        elif abs(f1) <= tolerance:
+            refined = t1
+        elif f0 * f1 < 0:
+            low, high = t0, t1
+            for _ in range(48):
+                middle = (low + high) / 2.0
+                fm = signed_distance(middle)
+                if abs(fm) <= tolerance:
+                    low = high = middle
+                    break
+                if f0 * fm <= 0:
+                    high, f1 = middle, fm
+                else:
+                    low, f0 = middle, fm
+            refined = (low + high) / 2.0
+        else:
+            refined = (t0 + t1) / 2.0
+        point = curve.point(refined)
+        result = {"x": float(point.x), "y": float(point.y), "z": float(point.z)}
+        if not any(_distance(result, existing) <= tolerance * 10 for existing in intersections):
+            intersections.append(result)
+    return intersections
+
+
 def _angle(point: dict[str, Any], center: dict[str, Any]) -> float:
     return math.degrees(math.atan2(float(point.get("y", 0)) - float(center.get("y", 0)),
                                    float(point.get("x", 0)) - float(center.get("x", 0)))) % 360.0
@@ -1110,10 +1192,12 @@ class CadOperationEngine:
                         point = _line_intersection(entity, boundary)
                         if point is None:
                             raise ValueError("TRIM_LINES_PARALLEL")
-                    elif boundary_kind in {"CIRCLE", "ARC", "ELLIPSE"}:
+                    elif boundary_kind in {"CIRCLE", "ARC", "ELLIPSE", "SPLINE"}:
                         if boundary_kind == "ELLIPSE":
                             intersections = _line_ellipse_intersections(entity, boundary)
                             intersections = _filter_ellipse_intersections(intersections, boundary)
+                        elif boundary_kind == "SPLINE":
+                            intersections = _line_spline_intersections(entity, boundary)
                         else:
                             intersections = _line_circle_intersections(entity, boundary)
                             if boundary_kind == "ARC":
