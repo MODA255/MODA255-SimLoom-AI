@@ -444,6 +444,45 @@ def test_entity_extend_rejects_inside_intersections_locked_targets_and_invalid_s
     assert tool["inputSchema"]["properties"]["end"]["enum"] == ["start", "end", "auto"]
 
 
+def test_center_mark_create_is_editable_tagged_and_idempotent(tmp_path):
+    source = tmp_path / "center-source.dxf"
+    output = tmp_path / "center-output.dxf"
+    write_dxf(source, circles=[{"x": 10, "y": 20, "radius": 5}],
+              arcs=[{"x": 30, "y": 20, "radius": 3, "start_angle": 0, "end_angle": 90}])
+    agent = EngineeringAgent({"tools": {}})
+    result = agent.execute_operation("cad.center_mark_create", {
+        "project_dir": str(tmp_path), "input_file": source, "output_file": output,
+        "entity_ids": ["e00001", "e00002"], "extension": 1, "tag": "centers",
+    })
+    assert result["validation"]["valid"] and result["persisted_validation"]["valid"]
+    document = CadDocument.open(output)
+    marks = [item for item in document.entities if item.get("center_mark")]
+    assert len(marks) == 4
+    assert {item["center_mark"]["axis"] for item in marks} == {"horizontal", "vertical"}
+    horizontal = next(item for item in marks if item["center_mark"]["target_id"] == "e00001" and item["center_mark"]["axis"] == "horizontal")
+    assert horizontal["start"]["x"] == pytest.approx(4) and horizontal["end"]["x"] == pytest.approx(16)
+    assert {item["center_mark"]["tag"] for item in marks} == {"centers.1", "centers.2"}
+
+    skipped = agent.execute_operation("cad.center_mark_create", {
+        "project_dir": str(tmp_path), "input_file": output, "output_file": output,
+        "entity_ids": ["e00001", "e00002"], "tag": "centers", "if_tag_exists": "skip",
+    })
+    assert skipped["results"][0]["count"] == 4
+    replaced = agent.execute_operation("cad.center_mark_create", {
+        "project_dir": str(tmp_path), "input_file": output, "output_file": output,
+        "target": "e00001", "tag": "centers", "if_tag_exists": "replace", "extension": 2,
+    })
+    assert replaced["persisted_validation"]["valid"]
+    current = [item for item in CadDocument.open(output).entities if item.get("center_mark")]
+    assert len(current) == 2 and all(item["center_mark"]["tag"] == "centers" for item in current)
+
+    spec = agent.operations.get("cad.center_mark_create").schema()
+    assert spec["parameter_alternatives"] == [["target", "entity_ids", "selection_set"]]
+    from engineering_agent.mcp_server import MCPServer
+    listed = MCPServer(agent, profile="full").handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {"limit": 500}})
+    assert any(item["name"] == "operation.cad.center_mark_create" for item in listed["result"]["tools"])
+
+
 def test_offset_uses_signed_side_and_preserves_polyline_connectivity(tmp_path):
     source = tmp_path / "offset.dxf"
     write_dxf(source, entities=[

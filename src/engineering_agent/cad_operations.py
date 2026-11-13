@@ -1583,6 +1583,100 @@ class CadOperationEngine:
                                                "vertices": [point | {"bulge": 0.0} for point in boundary]}]
             document.ensure_layer(entity["layer"]); document.entities.append(entity)
             return {"entity": entity}
+        if name == "center_mark_create":
+            target_values = arguments.get("target")
+            if target_values is None:
+                target_values = arguments.get("entity_ids")
+            if target_values is None and arguments.get("selection_set"):
+                selection = document.selection_sets.get(str(arguments["selection_set"]))
+                if selection is None:
+                    raise ValueError("SELECTION_NOT_FOUND:" + str(arguments["selection_set"]))
+                target_values = selection.refs
+            if isinstance(target_values, (str, dict)):
+                target_values = [target_values]
+            target_ids = []
+            for value in target_values or []:
+                if isinstance(value, dict):
+                    value = value.get("entity_id") or value.get("id") or value.get("ref")
+                if value:
+                    target_ids.append(str(value))
+            if not target_ids:
+                raise ValueError("CENTER_MARK_TARGET_REQUIRED")
+            layer_name = str(arguments.get("layer", "CENTER"))
+            output_layer = document.layers.get(layer_name)
+            if output_layer and output_layer.locked:
+                raise ValueError("CAD_LAYER_LOCKED:" + output_layer.name)
+            document.ensure_layer(layer_name)
+            extension_value = arguments.get("extension")
+            if extension_value is None:
+                extension = None
+            elif isinstance(extension_value, bool):
+                raise ValueError("CENTER_MARK_EXTENSION_INVALID")
+            else:
+                try:
+                    extension = float(extension_value)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("CENTER_MARK_EXTENSION_INVALID") from exc
+                if not math.isfinite(extension) or extension < 0:
+                    raise ValueError("CENTER_MARK_EXTENSION_INVALID")
+            tag = str(arguments.get("tag", ""))
+            tag_mode = str(arguments.get("if_tag_exists", "error")).lower()
+            if tag_mode not in {"error", "skip", "replace"}:
+                raise ValueError("CENTER_MARK_TAG_MODE_INVALID")
+            existing = [item for item in document.entities
+                        if tag and (str((item.get("center_mark") or {}).get("tag", "")) == tag
+                                    or str((item.get("center_mark") or {}).get("tag", "")).startswith(tag + "."))]
+            if existing and tag_mode == "error":
+                raise ValueError("CENTER_MARK_TAG_EXISTS:" + tag)
+            if existing and tag_mode == "skip":
+                return {"entities": [str(item.get("id")) for item in existing], "count": len(existing),
+                        "targets": sorted({str((item.get("center_mark") or {}).get("target_id")) for item in existing})}
+            if existing and tag_mode == "replace":
+                document.entities = [item for item in document.entities if item not in existing]
+            linetype = str(arguments.get("linetype", "CENTER"))
+            created: list[str] = []
+            target_results: list[str] = []
+            requested_layout = str(arguments.get("layout", "")).strip()
+            for index, target_id in enumerate(target_ids, start=1):
+                target = document.entity(target_id)
+                kind = str(target.get("type", "")).upper()
+                if kind not in {"CIRCLE", "ARC"}:
+                    raise ValueError("CENTER_MARK_TARGET_UNSUPPORTED:" + kind)
+                target_layout = str(target.get("sheet", target.get("layout", "Model")))
+                if requested_layout and requested_layout.lower() not in {"auto", target_layout.lower()}:
+                    raise ValueError("CENTER_MARK_LAYOUT_MISMATCH")
+                center = _point(target.get("center"))
+                try:
+                    radius = float(target.get("radius", 0))
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("CENTER_MARK_RADIUS_INVALID") from exc
+                if not math.isfinite(radius) or radius <= 0:
+                    raise ValueError("CENTER_MARK_RADIUS_INVALID")
+                overshoot = max(2.0, radius / 2.0) if extension is None else extension
+                half_length = radius + overshoot
+                base_tag = f"{tag}.{index}" if tag and len(target_ids) > 1 else tag
+                common = {"layer": layer_name, "linetype": linetype}
+                if "color" in arguments:
+                    common["color"] = int(arguments["color"])
+                if "lineweight" in arguments:
+                    common["lineweight"] = int(arguments["lineweight"])
+                if target.get("sheet") is not None:
+                    common["sheet"] = target["sheet"]
+                horizontal = {"id": document.next_id("center"), "type": "LINE",
+                              "start": {"x": center["x"] - half_length, "y": center["y"], "z": center["z"]},
+                              "end": {"x": center["x"] + half_length, "y": center["y"], "z": center["z"]},
+                              **copy.deepcopy(common),
+                              "center_mark": {"target_id": target_id, "axis": "horizontal", "extension": overshoot, "tag": base_tag}}
+                document.entities.append(horizontal)
+                vertical = {"id": document.next_id("center"), "type": "LINE",
+                            "start": {"x": center["x"], "y": center["y"] - half_length, "z": center["z"]},
+                            "end": {"x": center["x"], "y": center["y"] + half_length, "z": center["z"]},
+                            **copy.deepcopy(common),
+                            "center_mark": {"target_id": target_id, "axis": "vertical", "extension": overshoot, "tag": base_tag}}
+                document.entities.append(vertical)
+                created.extend((horizontal["id"], vertical["id"]))
+                target_results.append(target_id)
+            return {"entities": created, "count": len(created), "targets": target_results}
         if name == "dimension_create":
             entity = {"id": document.next_id(), "type": "DIMENSION", "layer": str(arguments.get("layer", "ANNOTATION")), "definition": _point(arguments.get("definition")), "text": str(arguments.get("text", "")), "measurement": float(arguments.get("measurement", 0)), "block_name": arguments.get("block_name")}
             document.ensure_layer(entity["layer"]); document.entities.append(entity)
