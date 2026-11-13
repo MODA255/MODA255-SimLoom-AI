@@ -94,6 +94,20 @@ def test_viewer_exposes_object_snap_controls(drawing):
     assert "value='center'" in viewer
 
 
+def test_viewer_exposes_semantic_grip_metadata_and_edit_hooks(drawing):
+    path, handles, scene = drawing
+    arc = next(e for e in ET.fromstring(scene['svg']).iter()
+               if e.get('data-entity-id') == handles['arc'] and e.get('data-draw-kind') != 'hit')
+    entity = json.loads(arc.get('data-entity-json'))
+    assert entity['type'] == 'ARC'
+    result = asset_view(path.parent, path.name)
+    viewer = result['viewer']
+    assert "'cad-grips'" in viewer
+    assert "'cad-grip'" in viewer
+    assert 'source:\'viewer-grip\'' in viewer
+    assert 'data-entity-json' in viewer
+
+
 def test_unsupported_entity_is_reported_instead_of_silently_removed(tmp_path):
     path = tmp_path / 'unsupported.dxf'
     native = ezdxf.new()

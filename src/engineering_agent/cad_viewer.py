@@ -74,6 +74,6 @@ def render_cad_viewer(geometry, *, asset_path=None, history=None, source_path=No
         f"<script type='application/json' id='revisionHistory'>{history_json}</script>",
         "<div class='canvas-wrap'>", scene['svg'], '</div>',
         f"<div class='view-footer'><span id='entityCount'>{scene['rendered_entities']} / {scene['entity_count']} 个模型实体{sheets}</span><span id='coordinates'></span><span id='zoom'></span></div>",
-        "<div class='view-help'>滚轮缩放 · 中键或空白处拖动平移 · Shift 从左向右框选完整对象、从右向左交叉选择 · 点击切换选择 · 双击对象放大</div>",
+        "<div class='view-help'>滚轮缩放 · 中键或空白处拖动平移 · Shift 从左向右框选完整对象、从右向左交叉选择 · 点击切换选择 · 选中单个实体后拖动蓝色夹点编辑几何 · 双击对象放大</div>",
         '<script>', (STATIC / 'cad_viewer.js').read_text(encoding='utf-8'), '</script>',
     ])

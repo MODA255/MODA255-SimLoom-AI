@@ -82,6 +82,11 @@ def _native_model_scene(geometry, source_path):
             element.set('data-layers', json.dumps(info['layers'], ensure_ascii=False))
             element.set('data-draw-kind', kind)
             element.set('data-handle', item['handle'])
+            # Keep the semantic entity close to its rendered primitive so the
+            # browser can offer geometry-aware grips without reverse
+            # engineering an SVG path.  The parent operation still validates
+            # and commits the resulting patch; this is display metadata only.
+            element.set('data-entity-json', json.dumps(item, ensure_ascii=False, separators=(',', ':')))
             label = item['text'] or item['type'] + ' ' + item['id']
             ET.SubElement(element, 'title').text = label
             if not all(layers.get(name, {'visible': True})['visible'] for name in info['layers']):

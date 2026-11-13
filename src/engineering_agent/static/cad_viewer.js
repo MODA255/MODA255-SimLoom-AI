@@ -1,7 +1,7 @@
 const svg=document.getElementById('cad'), selected=new Set(), status=document.getElementById('selection'), editStatus=document.getElementById('editStatus');
 const snapToggle=document.getElementById('snap'), snapMode=document.getElementById('snapMode'), snapStatus=document.getElementById('snapStatus');
 const viewer=document.querySelector('[data-cad-viewer]'), assetPath=viewer?.dataset.assetPath||'';
-let pending=null, requestSequence=0, drag=null, suppressClick=false, spaceDown=false, snapMarker=null, activeSnap=null;
+let pending=null, requestSequence=0, drag=null, gripDrag=null, suppressClick=false, spaceDown=false, snapMarker=null, activeSnap=null, gripLayer=null, gripPreview=null;
 let initialView=svg.dataset.initialViewbox.split(/\s+/).map(Number);
 let worldMatrix=new DOMMatrix(JSON.parse(svg.dataset.worldTransform));
 let inverseWorld=worldMatrix.inverse();
@@ -34,7 +34,133 @@ function refreshControls(){
   document.querySelector('.operations').hidden=readOnly;
   viewer.dataset.readOnly=String(readOnly);
 }
-function paint(){svg.querySelectorAll('.entity').forEach(e=>e.classList.toggle('selected',selected.has(e.dataset.entityId)));status.textContent=selected.size?`已选择 ${selected.size} 个实体：${[...selected].join(', ')}`:'未选择实体';}
+function entityData(id){
+  const element=primitives.find(item=>item.dataset.entityId===id);
+  if(!element)return null;
+  try{return JSON.parse(element.dataset.entityJson||'{}');}catch{return null;}
+}
+function finitePoint(value,fallback={x:0,y:0,z:0}){
+  const source=value&&typeof value==='object'?value:fallback;
+  return {x:Number(source.x||0),y:Number(source.y||0),z:Number(source.z||0)};
+}
+function gripPoint(x,y,z=0){return {x:Number(x),y:Number(y),z:Number(z||0)};}
+function polarPoint(center,radius,angle){
+  const radians=Number(angle)*Math.PI/180;
+  return gripPoint(center.x+radius*Math.cos(radians),center.y+radius*Math.sin(radians),center.z);
+}
+function gripDefinitions(entity){
+  if(!entity)return [];
+  const type=String(entity.type||'').toUpperCase(), center=finitePoint(entity.center), grips=[];
+  const add=(kind,point,extra={})=>{if(Number.isFinite(point?.x)&&Number.isFinite(point?.y))grips.push({kind,point:finitePoint(point),...extra});};
+  if(type==='LINE'){add('start',entity.start);add('end',entity.end);}
+  else if(type==='LWPOLYLINE'||type==='POLYLINE'||type==='LEADER'){
+    (entity.vertices||[]).forEach((point,index)=>add('vertex',point,{index}));
+  } else if(type==='SPLINE'){
+    const key=Array.isArray(entity.fit_points)?'fit_points':'control_points';
+    (entity[key]||[]).forEach((point,index)=>add('vertex',point,{index,key}));
+  } else if(type==='CIRCLE'){
+    const radius=Math.abs(Number(entity.radius||0));add('center',center);add('radius',gripPoint(center.x+radius,center.y,center.z));
+  } else if(type==='ARC'){
+    const radius=Math.abs(Number(entity.radius||0));
+    add('center',center);add('start',polarPoint(center,radius,Number(entity.start_angle||0)));
+    add('end',polarPoint(center,radius,Number(entity.end_angle||0)));
+    add('radius',polarPoint(center,radius,(Number(entity.start_angle||0)+Number(entity.end_angle||0))/2));
+  } else if(type==='ELLIPSE'){
+    const axis=finitePoint(entity.major_axis,{x:1,y:0,z:0}), length=Math.hypot(axis.x,axis.y,axis.z)||1;
+    const ratio=Number(entity.ratio||1), ux=axis.x/length, uy=axis.y/length;
+    add('center',center);add('major',gripPoint(center.x+axis.x,center.y+axis.y,center.z+axis.z));
+    add('minor',gripPoint(center.x-uy*length*ratio,center.y+ux*length*ratio,center.z));
+  } else if(type==='TEXT'||type==='MTEXT'||type==='INSERT')add('insert',entity.insert);
+  return grips;
+}
+function ensureGripLayer(){
+  if(gripLayer?.isConnected)return gripLayer;
+  gripLayer=document.createElementNS('http://www.w3.org/2000/svg','g');
+  gripLayer.setAttribute('class','cad-grips');svg.append(gripLayer);return gripLayer;
+}
+function worldToSvg(point){return new DOMPoint(point.x,point.y).matrixTransform(worldMatrix);}
+function clearGripPreview(){gripPreview?.remove();gripPreview=null;}
+function renderGrips(){
+  const layer=ensureGripLayer();layer.replaceChildren();clearGripPreview();
+  if(readOnly||pending!==null||selected.size!==1)return;
+  const entityId=[...selected][0], entity=entityData(entityId);if(!entity)return;
+  for(const definition of gripDefinitions(entity)){
+    const point=worldToSvg(definition.point), group=document.createElementNS('http://www.w3.org/2000/svg','g');
+    group.setAttribute('class','cad-grip');group.dataset.entityId=entityId;group.dataset.gripKind=definition.kind;
+    if(definition.index!==undefined)group.dataset.gripIndex=String(definition.index);
+    if(definition.key)group.dataset.gripKey=definition.key;
+    group.setAttribute('transform',`translate(${point.x} ${point.y})`);group.setAttribute('role','button');
+    group.setAttribute('aria-label',`${entity.type} ${definition.kind} grip`);
+    const circle=document.createElementNS('http://www.w3.org/2000/svg','circle');circle.setAttribute('r','5');group.append(circle);layer.append(group);
+  }
+}
+function patchForGrip(entity,definition,point){
+  const type=String(entity?.type||'').toUpperCase(), p=finitePoint(point), patch={};
+  if(type==='LINE')patch[definition.kind==='start'?'start':'end']=p;
+  else if(type==='LWPOLYLINE'||type==='POLYLINE'||type==='LEADER'||type==='SPLINE'){
+    const key=type==='SPLINE'?(definition.key||'fit_points'):'vertices';
+    patch[key]=(entity[key]||[]).map((item,index)=>index===definition.index?p:finitePoint(item));
+  } else if(type==='CIRCLE'){
+    if(definition.kind==='center')patch.center=p;
+    else patch.radius=Math.max(1e-9,Math.hypot(p.x-finitePoint(entity.center).x,p.y-finitePoint(entity.center).y));
+  } else if(type==='ARC'){
+    const center=finitePoint(entity.center), radius=Math.max(1e-9,Math.hypot(p.x-center.x,p.y-center.y));
+    if(definition.kind==='center')patch.center=p;
+    else {patch.radius=radius;const angle=Math.atan2(p.y-center.y,p.x-center.x)*180/Math.PI;if(definition.kind==='start')patch.start_angle=angle;else if(definition.kind==='end')patch.end_angle=angle;}
+  } else if(type==='ELLIPSE'){
+    const center=finitePoint(entity.center), axis=finitePoint(entity.major_axis,{x:1,y:0,z:0}), length=Math.hypot(axis.x,axis.y,axis.z)||1;
+    if(definition.kind==='center')patch.center=p;
+    else if(definition.kind==='major')patch.major_axis={x:p.x-center.x,y:p.y-center.y,z:p.z-center.z};
+    else patch.ratio=Math.max(1e-9,Math.hypot(p.x-center.x,p.y-center.y)/length);
+  } else if(type==='TEXT'||type==='MTEXT'||type==='INSERT')patch.insert=p;
+  return patch;
+}
+function previewEntity(entity,patch){
+  const updated={...entity,...patch}, type=String(updated.type||'').toUpperCase(), group=document.createElementNS('http://www.w3.org/2000/svg','g');
+  group.setAttribute('class','grip-preview');
+  const point=(value)=>worldToSvg(finitePoint(value)), setStroke=(element)=>{element.setAttribute('fill','none');element.setAttribute('vector-effect','non-scaling-stroke');group.append(element);};
+  const screenRadius=(center,radius)=>{const origin=point(center),edge=point(gripPoint(center.x+radius,center.y,center.z));return Math.hypot(edge.x-origin.x,edge.y-origin.y);};
+  if(type==='LINE'){
+    const start=point(updated.start),end=point(updated.end),line=document.createElementNS('http://www.w3.org/2000/svg','line');
+    line.setAttribute('x1',start.x);line.setAttribute('y1',start.y);line.setAttribute('x2',end.x);line.setAttribute('y2',end.y);setStroke(line);
+  } else if(type==='LWPOLYLINE'||type==='POLYLINE'||type==='LEADER'||type==='SPLINE'){
+    const points=(updated.vertices||updated.fit_points||updated.control_points||[]).map(point).map(item=>`${item.x},${item.y}`).join(' ');
+    if(points){const poly=document.createElementNS('http://www.w3.org/2000/svg','polyline');poly.setAttribute('points',points);if(updated.closed)poly.setAttribute('data-closed','true');setStroke(poly);}
+  } else if(type==='CIRCLE'){
+    const center=point(updated.center), circle=document.createElementNS('http://www.w3.org/2000/svg','circle');circle.setAttribute('cx',center.x);circle.setAttribute('cy',center.y);circle.setAttribute('r',screenRadius(finitePoint(updated.center),Math.abs(Number(updated.radius||0))));setStroke(circle);
+  } else if(type==='ARC'){
+    const center=finitePoint(updated.center), radius=Math.abs(Number(updated.radius||0));
+    const start=worldToSvg(polarPoint(center,radius,Number(updated.start_angle||0))),end=worldToSvg(polarPoint(center,radius,Number(updated.end_angle||0)));
+    const sweep=Math.max(0,Number(updated.end_angle||0)-Number(updated.start_angle||0)), path=document.createElementNS('http://www.w3.org/2000/svg','path');
+    const radiusOnScreen=screenRadius(center,radius);path.setAttribute('d',`M ${start.x} ${start.y} A ${radiusOnScreen} ${radiusOnScreen} 0 ${sweep>180?1:0} 1 ${end.x} ${end.y}`);setStroke(path);
+  } else if(type==='ELLIPSE'){
+    const center=point(updated.center), axis=finitePoint(updated.major_axis,{x:1,y:0,z:0}), length=Math.hypot(axis.x,axis.y)||1;
+    const ellipse=document.createElementNS('http://www.w3.org/2000/svg','ellipse');ellipse.setAttribute('cx',center.x);ellipse.setAttribute('cy',center.y);ellipse.setAttribute('rx',screenRadius(finitePoint(updated.center),length));ellipse.setAttribute('ry',screenRadius(finitePoint(updated.center),length*Math.abs(Number(updated.ratio||1))));setStroke(ellipse);
+  }
+  return group;
+}
+function updateGripPreview(entity,definition,point){
+  clearGripPreview();const patch=patchForGrip(entity,definition,point);if(!Object.keys(patch).length)return;
+  gripPreview=previewEntity(entity,patch);ensureGripLayer().append(gripPreview);
+  const marker=worldToSvg(point), circle=document.createElementNS('http://www.w3.org/2000/svg','circle');circle.setAttribute('class','grip-preview-point');circle.setAttribute('cx',marker.x);circle.setAttribute('cy',marker.y);circle.setAttribute('r','5');gripPreview.append(circle);
+  return patch;
+}
+function beginGripDrag(event,grip){
+  if(readOnly||pending!==null||selected.size!==1)return;
+  const id=grip.dataset.entityId, entity=entityData(id), definition=gripDefinitions(entity).find(item=>item.kind===grip.dataset.gripKind&&String(item.index??'')===String(grip.dataset.gripIndex??''));
+  if(!entity||!definition)return;
+  event.preventDefault();event.stopPropagation();selected.clear();selected.add(id);paint();
+  gripDrag={id,entity,definition,pointerId:event.pointerId,start:definition.point,current:definition.point,patch:{}};
+  svg.setPointerCapture(event.pointerId);editStatus.textContent='拖动夹点预览，松开后提交…';
+}
+function finishGripDrag(event,cancel=false){
+  if(!gripDrag)return;
+  const current=gripDrag, distance=Math.hypot(current.current.x-current.start.x,current.current.y-current.start.y);
+  clearGripPreview();hideSnap();if(svg.hasPointerCapture(current.pointerId))svg.releasePointerCapture(current.pointerId);gripDrag=null;
+  if(cancel||distance<1e-9){renderGrips();return;}
+  requestEdit('cad.entity_update',{entity_id:current.id,patch:current.patch,source:'viewer-grip',grip_kind:current.definition.kind});
+}
+function paint(){svg.querySelectorAll('.entity').forEach(e=>e.classList.toggle('selected',selected.has(e.dataset.entityId)));status.textContent=selected.size?`已选择 ${selected.size} 个实体：${[...selected].join(', ')}`:'未选择实体';renderGrips();}
 function selectedIds(){return [...selected];}
 function requestEdit(operation, arguments_){
   if(readOnly){editStatus.textContent='历史图纸只读，请先返回当前文件';return;}
@@ -42,7 +168,7 @@ function requestEdit(operation, arguments_){
   if(window.parent===window){editStatus.textContent='请在工作台中打开文件后编辑';return;}
   if(!['cad.undo','cad.redo'].includes(operation) && !selected.size){editStatus.textContent='请先选择实体';return;}
   if(operation==='cad.entity_update' && selected.size!==1){editStatus.textContent='属性编辑一次只能选择一个实体';return;}
-  if(operation==='cad.entity_update'){
+  if(operation==='cad.entity_update'&&arguments_.source!=='viewer-grip'){
     const item=[...svg.querySelectorAll('.entity')].find(e=>selected.has(e.dataset.entityId));
     if(!['TEXT','MTEXT'].includes(item?.dataset.entityType)){editStatus.textContent='请选择 TEXT 或 MTEXT 文字实体';return;}
   }
@@ -173,9 +299,11 @@ function replaceScene(scene){
   const parsed=new DOMParser().parseFromString(scene.svg,'image/svg+xml'), replacement=parsed.documentElement;
   if(replacement.localName!=='svg'||parsed.querySelector('parsererror'))throw new Error('历史图纸预览格式错误');
   if(drag){drag.rect?.remove();if(svg.hasPointerCapture(drag.id))svg.releasePointerCapture(drag.id);drag=null;}
+  if(gripDrag){if(svg.hasPointerCapture(gripDrag.pointerId))svg.releasePointerCapture(gripDrag.pointerId);gripDrag=null;}
+  clearGripPreview();gripLayer=null;
   svg.classList.remove('panning');
   svg.replaceChildren(...[...replacement.childNodes].map(node=>document.importNode(node,true)));
-  snapMarker=null;activeSnap=null;ensureSnapMarker();
+  snapMarker=null;activeSnap=null;ensureSnapMarker();ensureGripLayer();
   for(const name of ['viewBox','data-world-transform','data-initial-viewbox'])svg.setAttribute(name,replacement.getAttribute(name));
   initialView=svg.dataset.initialViewbox.split(/\s+/).map(Number);
   worldMatrix=new DOMMatrix(JSON.parse(svg.dataset.worldTransform));inverseWorld=worldMatrix.inverse();
@@ -272,6 +400,8 @@ svg.addEventListener('wheel',e=>{
 svg.addEventListener('pointerdown',e=>{
   suppressClick=false;
   if(pending||![0,1].includes(e.button))return;
+  const grip=e.target.closest?.('.cad-grip');
+  if(grip&&e.button===0){beginGripDrag(e,grip);return;}
   const item=e.target.closest('.entity'), snapped=activeSnap&&activeSnap.entityId;
   if(e.button===0&&(item||snapped)&&!e.shiftKey&&!spaceDown)return;
   e.preventDefault();svg.setPointerCapture(e.pointerId);
@@ -285,6 +415,11 @@ svg.addEventListener('pointermove',e=>{
   updateSnap(e);
   const snappedWorld=activeSnap?.world||world;
   document.getElementById('coordinates').textContent=`X ${snappedWorld.x.toFixed(3)} · Y ${snappedWorld.y.toFixed(3)}${activeSnap?' · 已捕捉':''}`;
+  if(gripDrag){
+    gripDrag.current=gripPoint(snappedWorld.x,snappedWorld.y,snappedWorld.z);
+    gripDrag.patch=updateGripPreview(gripDrag.entity,gripDrag.definition,gripDrag.current)||{};
+    return;
+  }
   if(!drag)return;
   const p=localPoint(e,drag.matrix);
   if(drag.mode==='pan')setView([drag.view[0]+drag.start.x-p.x,drag.view[1]+drag.start.y-p.y,drag.view[2],drag.view[3]]);
@@ -315,8 +450,8 @@ function finishDrag(e,cancel=false){
   if(svg.hasPointerCapture(drag.id))svg.releasePointerCapture(drag.id);
   drag=null;
 }
-svg.addEventListener('pointerup',e=>finishDrag(e));
-svg.addEventListener('pointercancel',e=>finishDrag(e,true));
+svg.addEventListener('pointerup',e=>{if(gripDrag){finishGripDrag(e);return;}finishDrag(e);});
+svg.addEventListener('pointercancel',e=>{if(gripDrag){finishGripDrag(e,true);return;}finishDrag(e,true);});
 window.addEventListener('keydown',e=>{
   if(['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName))return;
   if(e.code==='Space'){spaceDown=true;e.preventDefault();}
@@ -331,7 +466,7 @@ snapMode?.addEventListener('change',()=>{activeSnap=null;});
 document.getElementById('fit').onclick=()=>fit(visiblePaths());
 document.getElementById('fitSelection').onclick=()=>fit(visiblePaths().filter(el=>selected.has(el.dataset.entityId)));
 document.getElementById('clear').onclick=clearSelection;
-ensureSnapMarker();setView(initialView);
+ensureSnapMarker();ensureGripLayer();setView(initialView);
 document.getElementById('undo').onclick=()=>requestEdit('cad.undo',{});
 document.getElementById('redo').onclick=()=>requestEdit('cad.redo',{});
 document.getElementById('move').onclick=()=>requestEdit('cad.entity_move',{delta:[Number(document.getElementById('dx').value||0),Number(document.getElementById('dy').value||0),0]});
@@ -343,5 +478,5 @@ operationButtons.forEach(button=>button.onclick=()=>{if(!readOnly)showOperation(
 window.addEventListener('message',event=>{
   if(event.source===window.parent&&event.data?.type==='cad-view-restore'&&event.data.assetPath===assetPath)restoreView(event.data.state);
 });
-window.addEventListener('message',event=>{if(event.source!==window.parent || event.data?.type!=='cad-operation-result' || event.data.requestId!==pending)return;pending=null;document.querySelectorAll('button').forEach(button=>button.disabled=false);if(event.data.history)historyState=event.data.history;refreshControls();if(event.data.deleted){svg.replaceChildren();selected.clear();paint();}editStatus.textContent=event.data.ok?(event.data.deleted?'文件创建已撤销，可以重做':'已保存并刷新'):'保存失败：'+(event.data.error||'未知错误');});
+window.addEventListener('message',event=>{if(event.source!==window.parent || event.data?.type!=='cad-operation-result' || event.data.requestId!==pending)return;pending=null;clearGripPreview();document.querySelectorAll('button').forEach(button=>button.disabled=false);if(event.data.history)historyState=event.data.history;refreshControls();if(event.data.deleted){svg.replaceChildren();gripLayer=null;snapMarker=null;selected.clear();paint();}else renderGrips();editStatus.textContent=event.data.ok?(event.data.deleted?'文件创建已撤销，可以重做':'已保存并刷新'):'保存失败：'+(event.data.error||'未知错误');});
 if(readOnly){historyStatus.textContent='历史图纸只读';editStatus.textContent='历史图纸只读';}refreshControls();
