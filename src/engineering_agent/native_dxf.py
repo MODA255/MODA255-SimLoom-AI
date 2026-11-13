@@ -200,7 +200,20 @@ def read_native(path: str | Path, *, respect_redraw_order: bool = True) -> dict[
             properties = layout.dxf_layout.dxf
             unit = "in" if properties.plot_paper_units == 0 else "mm"
             factor = 25.4 if unit == "in" else 1.
-            sheets[layout.name] = {"name": layout.name, "width": float(properties.paper_width) / factor, "height": float(properties.paper_height) / factor, "units": unit}
+            page_setup = {
+                "margins": [float(properties.get("left_margin", 0)) / factor,
+                            float(properties.get("bottom_margin", 0)) / factor,
+                            float(properties.get("right_margin", 0)) / factor,
+                            float(properties.get("top_margin", 0)) / factor],
+                "offset": [float(properties.get("plot_origin_x_offset", 0)) / factor,
+                           float(properties.get("plot_origin_y_offset", 0)) / factor],
+                "rotation": int(properties.get("plot_rotation", 0)),
+                "device": str(properties.get("plot_configuration_file", "")),
+            }
+            numerator, denominator = float(properties.get("scale_numerator", 1)), float(properties.get("scale_denominator", 1))
+            if math.isfinite(numerator) and math.isfinite(denominator) and numerator > 0 and denominator > 0:
+                page_setup["scale"] = [numerator, denominator]
+            sheets[layout.name] = {"name": layout.name, "width": float(properties.paper_width) / factor, "height": float(properties.paper_height) / factor, "units": unit, "page_setup": page_setup}
         ordered_entities = layout.entities_in_redraw_order() if respect_redraw_order else layout
         for entity in ordered_entities:
             if entity.dxftype() == "VIEWPORT":
@@ -640,8 +653,23 @@ def build_native(*, entities: list[dict[str, Any]], blocks=(), coordinate_system
         existing = layout.dxf_layout.dxf
         size = (float(properties["width"]), float(properties["height"]))
         factor = 25.4 if properties.get("units") == "in" else 1.
-        if not all(math.isclose(a, b * factor) for a, b in zip((existing.paper_width, existing.paper_height), size)):
-            layout.page_setup(size=size, units="inch" if properties.get("units") == "in" else properties.get("units", "mm"))
+        setup = properties.get("page_setup") or {}
+        margins = setup.get("margins", [0, 0, 0, 0])
+        if isinstance(margins, dict):
+            margins = [margins.get(key, 0) for key in ("left", "bottom", "right", "top")]
+        # ezdxf.page_setup expects (top, right, bottom, left), while the
+        # SimLoom document contract is (left, bottom, right, top).
+        margins = tuple(float(value) for value in (margins[3], margins[2], margins[1], margins[0]))
+        offset = tuple(float(value) for value in setup.get("offset", [0, 0]))
+        scale = setup.get("scale", 1)
+        if isinstance(scale, list):
+            scale = tuple(float(value) for value in scale)
+        rotation = int(setup.get("rotation", 1 if str(setup.get("orientation", "")).lower() == "portrait" else 0))
+        device = str(setup.get("device", existing.get("plot_configuration_file", "ezdxf")))
+        dimensions_changed = not all(math.isclose(a, b * factor) for a, b in zip((existing.paper_width, existing.paper_height), size))
+        if setup.get("managed") or dimensions_changed:
+            layout.page_setup(size=size, margins=margins, units="inch" if properties.get("units") == "in" else properties.get("units", "mm"),
+                              offset=offset, rotation=rotation, scale=scale, device=device)
     for block in blocks:
         if block["name"] not in drawing.blocks:
             drawing.blocks.new(block["name"], base_point=xyz(block.get("base_point")))

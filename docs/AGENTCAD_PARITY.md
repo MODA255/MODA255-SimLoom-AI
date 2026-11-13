@@ -39,6 +39,9 @@ SimLoom 原有的 CATIA / Ansys / Adams / VI-grade 工程链、B-Rep 和仿真�
 `cad.change_space` 现已补齐：可把选定实体事务化移动到模型空间或已有纸空间，并在原生 DXF
 回读时验证 layout 归属，细节见 `CAD_CHANGE_SPACE.md`。
 
+`cad.set_page_setup` 现已补齐：为纸空间写入原生纸张尺寸、方向、边距、偏移、比例和输出设备，
+并在回读时验证 layout 设置，细节见 `CAD_PAGE_SETUP.md`。
+
 ## 必须逐项证明的能力
 
 | 能力 | 本地证据及现状 | 完成所需证据 / 下一步 |

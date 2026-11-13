@@ -1473,6 +1473,69 @@ class CadOperationEngine:
         if name == "sheet_prepare":
             from .drawing_sheets import prepare_sheet
             return prepare_sheet(document, arguments)
+        if name == "set_page_setup":
+            sheet_name = str(arguments.get("sheet", "")).strip()
+            if sheet_name not in document.sheets:
+                raise ValueError("SHEET_NOT_FOUND:" + sheet_name)
+            raw = arguments.get("setup")
+            if not isinstance(raw, dict):
+                raise ValueError("PAGE_SETUP_REQUIRED")
+            setup = copy.deepcopy(raw)
+            paper_sizes = {
+                "A0": (841.0, 1189.0), "A1": (594.0, 841.0), "A2": (420.0, 594.0),
+                "A3": (297.0, 420.0), "A4": (210.0, 297.0),
+            }
+            paper = str(setup.get("paper", "")).upper()
+            orientation = str(setup.get("orientation", "landscape")).lower()
+            if orientation not in {"landscape", "portrait"}:
+                raise ValueError("PAGE_ORIENTATION_INVALID")
+            if paper:
+                if paper not in paper_sizes:
+                    raise ValueError("PAGE_PAPER_INVALID")
+                width, height = paper_sizes[paper]
+                if orientation == "landscape":
+                    width, height = max(width, height), min(width, height)
+                else:
+                    width, height = min(width, height), max(width, height)
+                document.sheets[sheet_name]["width"], document.sheets[sheet_name]["height"] = width, height
+                document.sheets[sheet_name]["units"] = "mm"
+                setup["paper"] = paper
+            else:
+                width = _finite_cad_number(setup.get("width", document.sheets[sheet_name].get("width", 420)), "PAGE_WIDTH_INVALID")
+                height = _finite_cad_number(setup.get("height", document.sheets[sheet_name].get("height", 297)), "PAGE_HEIGHT_INVALID")
+                if width <= 0 or height <= 0:
+                    raise ValueError("PAGE_SIZE_INVALID")
+                document.sheets[sheet_name]["width"], document.sheets[sheet_name]["height"] = width, height
+            margins = setup.get("margins", document.sheets[sheet_name].get("page_setup", {}).get("margins", [0, 0, 0, 0]))
+            if isinstance(margins, dict):
+                margins = [margins.get(key, 0) for key in ("left", "bottom", "right", "top")]
+            if not isinstance(margins, (list, tuple)) or len(margins) != 4:
+                raise ValueError("PAGE_MARGINS_INVALID")
+            margins = [_finite_cad_number(value, "PAGE_MARGINS_INVALID") for value in margins]
+            if any(value < 0 for value in margins):
+                raise ValueError("PAGE_MARGINS_INVALID")
+            setup["margins"] = margins
+            setup["orientation"] = orientation
+            if "offset" in setup:
+                offset = setup["offset"]
+                if not isinstance(offset, (list, tuple)) or len(offset) != 2:
+                    raise ValueError("PAGE_OFFSET_INVALID")
+                setup["offset"] = [_finite_cad_number(value, "PAGE_OFFSET_INVALID") for value in offset]
+            if "scale" in setup:
+                scale = setup["scale"]
+                if isinstance(scale, (list, tuple)):
+                    if len(scale) != 2:
+                        raise ValueError("PAGE_SCALE_INVALID")
+                    setup["scale"] = [_finite_cad_number(value, "PAGE_SCALE_INVALID") for value in scale]
+                    if setup["scale"][0] <= 0 or setup["scale"][1] <= 0:
+                        raise ValueError("PAGE_SCALE_INVALID")
+                else:
+                    setup["scale"] = _finite_cad_number(scale, "PAGE_SCALE_INVALID")
+                    if setup["scale"] <= 0:
+                        raise ValueError("PAGE_SCALE_INVALID")
+            setup["managed"] = True
+            document.sheets[sheet_name]["page_setup"] = setup
+            return {"sheet": copy.deepcopy(document.sheets[sheet_name]), "page_setup": setup}
         if name in {"sheet_create", "sheet_update", "sheet_delete"}:
             sheet_name = str(arguments.get("name", ""))
             if not sheet_name:

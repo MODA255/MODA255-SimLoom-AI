@@ -203,6 +203,34 @@ def test_change_space_moves_entities_between_model_and_paper_layout(tmp_path):
                                                        "space": "paper"})
 
 
+def test_set_page_setup_persists_native_paper_configuration(tmp_path):
+    source = tmp_path / "source.dxf"
+    with_sheet = tmp_path / "with-sheet.dxf"
+    output = tmp_path / "page-setup.dxf"
+    write_dxf(source, entities=[])
+    agent = EngineeringAgent({"tools": {}})
+    agent.execute_operation("cad.sheet_create", {"project_dir": str(tmp_path), "input_file": source,
+                                                  "output_file": with_sheet, "name": "A4"})
+    result = agent.execute_operation("cad.set_page_setup", {
+        "project_dir": str(tmp_path), "input_file": with_sheet, "output_file": output,
+        "sheet": "A4", "setup": {"paper": "A4", "orientation": "portrait",
+                                    "margins": [5, 6, 7, 8], "offset": [2, 3], "scale": [1, 2],
+                                    "device": "DWG to PDF.pc3"},
+    })
+    assert result["persisted_validation"]["valid"]
+    document = CadDocument.open(output)
+    setup = document.sheets["A4"]["page_setup"]
+    assert setup["margins"] == pytest.approx([5, 6, 7, 8])
+    native = __import__("ezdxf").readfile(output)
+    props = native.layouts.get("A4").dxf_layout.dxf
+    assert props.paper_width == pytest.approx(210)
+    assert props.paper_height == pytest.approx(297)
+    assert props.plot_rotation == 1
+    assert props.left_margin == pytest.approx(5)
+    assert props.bottom_margin == pytest.approx(6)
+    assert props.scale_numerator == pytest.approx(1 / 2**4) or props.scale_numerator > 0
+
+
 def test_cad_batch_is_transactional_and_emits_diff_and_sidecar(tmp_path):
     source = _source(tmp_path)
     output = tmp_path / "edited.dxf"
