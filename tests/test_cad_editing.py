@@ -323,6 +323,22 @@ def test_trim_supports_finite_polyline_cutting_boundaries(tmp_path):
         })
 
 
+def test_trim_supports_rotated_ellipse_cutting_boundaries(tmp_path):
+    source = tmp_path / "ellipse-boundary.dxf"
+    write_dxf(source, entities=[
+        {"type": "LINE", "start": {"x": -5, "y": 0}, "end": {"x": 5, "y": 0}},
+        {"type": "ELLIPSE", "center": {"x": 0, "y": 0}, "major_axis": {"x": 0, "y": 4}, "ratio": 0.5},
+    ])
+    output = tmp_path / "ellipse-trim.dxf"
+    result = EngineeringAgent({"tools": {}}).execute_operation("cad.entity_trim", {
+        "project_dir": str(tmp_path), "input_file": source, "output_file": output,
+        "entity_id": "e00001", "boundary_entity_id": "e00002", "keep": "start",
+    })
+    assert result["persisted_validation"]["valid"]
+    line = CadDocument.open(output).entities[0]
+    assert line["start"]["x"] == -5 and line["end"]["x"] == pytest.approx(-2)
+
+
 def test_offset_uses_signed_side_and_preserves_polyline_connectivity(tmp_path):
     source = tmp_path / "offset.dxf"
     write_dxf(source, entities=[

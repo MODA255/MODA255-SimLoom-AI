@@ -282,6 +282,73 @@ def _line_circle_intersections(line: dict[str, Any], circle: dict[str, Any], tol
     return output
 
 
+def _line_ellipse_intersections(line: dict[str, Any], ellipse: dict[str, Any], tolerance: float = 1e-9) -> list[dict[str, float]]:
+    """Return finite line/ellipse intersections in deterministic order.
+
+    DXF stores the major-axis vector from the ellipse center, plus a positive
+    minor-to-major ratio. Solving in that local orthonormal basis keeps this
+    operation correct for rotated ellipses while retaining finite-segment
+    semantics used by the other trim boundaries.
+    """
+    start, end = _line_point(line, "start"), _line_point(line, "end")
+    center = _point(ellipse.get("center"))
+    major = _point(ellipse.get("major_axis"))
+    semi_major = math.hypot(major["x"], major["y"])
+    ratio = float(ellipse.get("ratio", 0))
+    if semi_major <= tolerance or not math.isfinite(ratio) or ratio <= tolerance:
+        raise ValueError("TRIM_INVALID_ELLIPSE")
+    semi_minor = semi_major * ratio
+    ux, uy = major["x"] / semi_major, major["y"] / semi_major
+    vx, vy = -uy, ux
+    dx, dy = end["x"] - start["x"], end["y"] - start["y"]
+    px, py = start["x"] - center["x"], start["y"] - center["y"]
+    local_p = (px * ux + py * uy, px * vx + py * vy)
+    local_d = (dx * ux + dy * uy, dx * vx + dy * vy)
+    aa = (local_d[0] / semi_major) ** 2 + (local_d[1] / semi_minor) ** 2
+    bb = 2.0 * ((local_p[0] * local_d[0]) / (semi_major * semi_major) +
+                (local_p[1] * local_d[1]) / (semi_minor * semi_minor))
+    cc = (local_p[0] / semi_major) ** 2 + (local_p[1] / semi_minor) ** 2 - 1.0
+    if aa <= tolerance * tolerance:
+        return []
+    discriminant = bb * bb - 4.0 * aa * cc
+    if discriminant < -tolerance:
+        return []
+    roots = [(-bb - math.sqrt(max(0.0, discriminant))) / (2.0 * aa)]
+    if discriminant > tolerance:
+        roots.append((-bb + math.sqrt(discriminant)) / (2.0 * aa))
+    output: list[dict[str, float]] = []
+    for factor in sorted(roots):
+        if -tolerance <= factor <= 1.0 + tolerance:
+            factor = min(1.0, max(0.0, factor))
+            point = {"x": start["x"] + factor * dx, "y": start["y"] + factor * dy,
+                     "z": start["z"] + factor * (end["z"] - start["z"])}
+            if not output or _distance(output[-1], point) > tolerance:
+                output.append(point)
+    return output
+
+
+def _filter_ellipse_intersections(points: list[dict[str, float]], ellipse: dict[str, Any], tolerance: float = 1e-7) -> list[dict[str, float]]:
+    center = _point(ellipse.get("center"))
+    major = _point(ellipse.get("major_axis"))
+    semi_major = math.hypot(major["x"], major["y"])
+    ratio = float(ellipse.get("ratio", 0))
+    if semi_major <= tolerance or not math.isfinite(ratio) or ratio <= tolerance:
+        raise ValueError("TRIM_INVALID_ELLIPSE")
+    ux, uy = major["x"] / semi_major, major["y"] / semi_major
+    vx, vy = -uy, ux
+    start = math.degrees(float(ellipse.get("start_param", 0)))
+    end = math.degrees(float(ellipse.get("end_param", 2 * math.pi)))
+    full_sweep = abs(end - start) >= 360.0 - tolerance
+    output = []
+    for point in points:
+        dx, dy = point["x"] - center["x"], point["y"] - center["y"]
+        local_x, local_y = dx * ux + dy * uy, dx * vx + dy * vy
+        parameter = math.degrees(math.atan2(local_y / (semi_major * ratio), local_x / semi_major))
+        if full_sweep or _angle_on_sweep(parameter, start, end, tolerance):
+            output.append(point)
+    return output
+
+
 def _angle(point: dict[str, Any], center: dict[str, Any]) -> float:
     return math.degrees(math.atan2(float(point.get("y", 0)) - float(center.get("y", 0)),
                                    float(point.get("x", 0)) - float(center.get("x", 0)))) % 360.0
@@ -1014,10 +1081,14 @@ class CadOperationEngine:
                         point = _line_intersection(entity, boundary)
                         if point is None:
                             raise ValueError("TRIM_LINES_PARALLEL")
-                    elif boundary_kind in {"CIRCLE", "ARC"}:
-                        intersections = _line_circle_intersections(entity, boundary)
-                        if boundary_kind == "ARC":
-                            intersections = _filter_arc_intersections(intersections, boundary)
+                    elif boundary_kind in {"CIRCLE", "ARC", "ELLIPSE"}:
+                        if boundary_kind == "ELLIPSE":
+                            intersections = _line_ellipse_intersections(entity, boundary)
+                            intersections = _filter_ellipse_intersections(intersections, boundary)
+                        else:
+                            intersections = _line_circle_intersections(entity, boundary)
+                            if boundary_kind == "ARC":
+                                intersections = _filter_arc_intersections(intersections, boundary)
                         if not intersections:
                             raise ValueError("TRIM_NO_INTERSECTION")
                         anchor = _line_point(entity, "start" if keep == "start" else "end")
