@@ -27,7 +27,7 @@ SimLoom 原有的 CATIA / Ansys / Adams / VI-grade 工程链、B-Rep 和仿真�
 | 原生几何交互视图 | `cad_render.py`、`cad_viewer.py`、`test_cad_viewer.py`、真实浏览器几何检查 | 原生模型视图这一子项已有实现；客户图纸、复杂字体、性能和其他交互能力仍待验收 |
 | 历史版本查看、视觉 diff、实时查看 agent 修改 | 有持久撤销/重做、字段 diff、SVG 叠加和项目时间线。`cad.history_view` 校验并只读渲染事务保存的 DXF/sidecar，支持前后步和播放/暂停。项目版本 schema 2 在同一事务中保存原始文件与配套元数据，支持历史原件下载、真实文件预览和向新目录导出。`project.watch_*` 现在可持久保存项目内文件指纹，跨进程轮询并识别 added/modified/touched/deleted/unstable，Web 工作台也可直接开始、轮询和停止；`project.dependency_scan` 可从显式清单、可读文本引用和配套文件生成保守依赖图；见 `PROJECT_VERSION_FILES.md`、`FILE_WATCH.md` 与 `DEPENDENCY_SCAN.md` | 依赖扫描仍不能解析专有二进制装配拓扑，也没有更大工程的回放验收；批次按整次提交回放，子步骤没有独立几何快照。文件监测和依赖图只提供可审计证据，不等于厂商软件打开、求解成功或工程语义验收 |
 | 工程图排版和文件交付 | 原生标题栏、纸空间/视口、单页 PDF/PNG、比例校验；`DRAWING_EXPORT.md` | 标准比例、中文/SHX 字体、多纸张 PDF、打印可读性和原生 SVG 导出契约仍需补齐 |
-| Agent 能直接看图与检查源图细节 | Web/本地 viewer 已有 SVG/PNG；MCP `engineering_asset_view`、`engineering://asset`、`engineering_inspect_image` 和 `engineering_measure_image` 可返回结构化数据、局部 PNG 预览、颜色区域的源像素边界/质心及 overlay | 继续补通用安全图像脚本、尺寸证据标注、源像素坐标与图纸坐标的明确映射，以及客户端互操作验收 |
+| Agent 能直接看图与检查源图细节 | Web/本地 viewer 已有 SVG/PNG；MCP `engineering_asset_view`、`engineering://asset`、`engineering_inspect_image` 和 `engineering_measure_image` 可返回结构化数据、局部 PNG 预览、颜色区域的源像素边界/质心、overlay，以及可选的源像素到工程图纸坐标映射（见 `IMAGE_INSPECTION.md`） | 继续补通用安全图像脚本、尺寸证据标注和客户端互操作验收 |
 | 行业图形库 | 已有符号/紧固件/表格等基础生成操作；新增 `cad.standard_catalog`、`cad.standard_library`、`cad.standard_parts_audit`，覆盖 P&ID 符号、14 类 GD&T 特征、M3～M24 紧固件、常用轴承系列和孔型查询，严格模式会拒绝未知输入 | 当前目录是可查询的规划与输入校验契约，不能视为 ISO P&ID、GD&T、标准紧固件/轴承/孔系尺寸库的合规实现；仍需有来源的尺寸表、符号几何和原生软件验收 |
 | 工程工作流 | 四软件离线链和基本 CAD 批次可运行；`cad.pid_audit` 可把 tagged P&ID 符号、端口和过程线读回为节点/边并检查孤立符号、连接段引用和要求连接；`cad.process_route_create` 支持正交路线，`cad.pid_valve_cut_pipe` 可在带语义管线上切断并插入带 inlet/outlet 关系的阀门 | 继续补有来源的 P&ID 标准符号几何、端口方向/规格约束、房间面积、回转件视图/BOM 等端到端工程任务；当前阀门操作仍是 vendor-neutral 关系模型，不是厂商 P&ID 对象 |
 | DWG、AutoCAD AUDIT 与实时同步 | 尚无等价实机验收 | 实现可选 AutoCAD 后端、版本/文件锁/冲突/回读契约，并在 Windows 真机验证 |
@@ -79,6 +79,10 @@ error envelope。图像脚本测量和尺寸证据仍未实现。
 2026-11-12 后续：增加只读 `engineering_measure_image`。调用方提供目标 RGB 和容差，
 SimLoom 返回源像素区域内的匹配数量、边界、质心、比例和可选的 PNG 标注预览；源图不被
 修改。这先建立了可审计的图像测量契约，仍不等同于任意 Python 图像脚本执行。
+
+2026-11-13 后续：`engineering_measure_image` 增加可选 `coordinate_system`，按完整源图像
+尺寸把匹配边界和质心映射到工程图纸坐标，并严格校验有限范围值与 y 轴方向；同时保留源像素
+证据和 overlay。映射只描述图纸坐标关系，不宣称从图像自动识别比例或图框。
 
 2026-11-12 后续：增加 `cad.script_apply`。脚本默认关闭，显式开启后只能在事务 staging
 目录中读取请求和 DXF 副本，输出文件必须在白名单内；脚本完成后由 SimLoom 重新解析、独立

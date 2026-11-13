@@ -197,6 +197,48 @@ def test_mcp_measure_image_returns_source_bbox_centroid_and_overlay(tmp_path):
     assert source.read_bytes() == original
 
 
+def test_mcp_measure_image_maps_source_pixels_to_drawing_coordinates(tmp_path):
+    source = tmp_path / "drawing.png"
+    image = Image.new("RGBA", (120, 80), (0, 0, 0, 0))
+    image.paste((0, 0, 255, 255), (20, 10, 60, 30))
+    image.save(source)
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="safe")
+    called = server.handle({"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {
+        "name": "engineering_measure_image", "arguments": {
+            "root": str(tmp_path), "path": source.name, "target_color": [0, 0, 255],
+            "tolerance": 0, "coordinate_system": {
+                "x_min": 0, "x_max": 120, "y_min": 0, "y_max": 80, "y_axis": "up",
+            },
+        }}})
+    metadata = json.loads(called["result"]["content"][0]["text"])
+    assert metadata["coordinate_transform"]["pixel_origin"] == "top_left"
+    assert metadata["world_match_bbox"] == [20.0, 50.0, 60.0, 70.0]
+    assert metadata["world_centroid"] == [39.5, 60.5]
+
+    called_down = server.handle({"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {
+        "name": "engineering_measure_image", "arguments": {
+            "root": str(tmp_path), "path": source.name, "target_color": [0, 0, 255],
+            "tolerance": 0, "coordinate_system": {
+                "x_min": -10, "x_max": 50, "y_min": 100, "y_max": 180, "y_axis": "down",
+            },
+        }}})
+    metadata_down = json.loads(called_down["result"]["content"][0]["text"])
+    assert metadata_down["world_match_bbox"] == [0.0, 110.0, 20.0, 130.0]
+    assert metadata_down["world_centroid"] == [9.75, 119.5]
+
+
+def test_measure_image_rejects_invalid_coordinate_system(tmp_path):
+    source = tmp_path / "drawing.png"
+    Image.new("RGBA", (12, 8), (0, 0, 255, 255)).save(source)
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="safe")
+    called = server.handle({"jsonrpc": "2.0", "id": 8, "method": "tools/call", "params": {
+        "name": "engineering_measure_image", "arguments": {
+            "root": str(tmp_path), "path": source.name, "target_color": [0, 0, 255],
+            "coordinate_system": {"x_min": 0, "x_max": 1, "y_min": 0, "y_max": 1, "y_axis": "sideways"},
+        }}})
+    assert called["error"]["code"] == "BAD_IMAGE_COORDINATE_SYSTEM"
+
+
 def test_mcp_operation_schema_exposes_output_contract_and_side_effects():
     server = MCPServer(EngineeringAgent({"tools": {}}), profile="full")
     listed = server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {"limit": 500}})

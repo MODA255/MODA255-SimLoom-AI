@@ -525,7 +525,7 @@ PYTHONPATH=src python -m engineering_agent.cli mcp --profile full
 - `engineering_project`：查看统一工程对象。
 - `engineering_asset_view`：读取项目资产，同时返回结构化元数据和 SVG 图像内容，让 agent 可以直接检查图纸或结果预览。
 - `engineering_inspect_image`：只读裁切、放大和旋转 PNG/JPEG/WebP，并返回源像素坐标、哈希和 PNG 图像内容。
-- `engineering_measure_image`：按 RGB 颜色和容差测量源像素区域，返回边界、质心和标注 overlay。
+- `engineering_measure_image`：按 RGB 颜色和容差测量源像素区域，返回边界、质心和标注 overlay；传入 `coordinate_system` 后还会返回工程图纸坐标下的边界和质心。详见 [`docs/IMAGE_INSPECTION.md`](docs/IMAGE_INSPECTION.md)。
 - `engineering_version` / `engineering_diff`：创建快照和比较版本。
 - `operation.*`：访问类型化 operation schema。
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import math
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,74 @@ FORMATS = {"PNG", "JPEG", "WEBP"}
 
 def _error(code: ErrorCode, message: str, *, details: dict[str, Any] | None = None) -> ProtocolError:
     return ProtocolError(code, message, details=details or {})
+
+
+def _coordinate_transform(coordinate_system: dict[str, Any] | None, width: int, height: int) -> dict[str, Any] | None:
+    """Validate a paper-space mapping and describe its source-pixel transform.
+
+    Pixel coordinates use the full, EXIF-corrected source image with an origin
+    at the top-left. Bounds are image edges, so ``x == width`` and ``y ==
+    height`` map to the far edge of the engineering drawing.
+    """
+    if coordinate_system is None:
+        return None
+    if not isinstance(coordinate_system, dict):
+        raise _error(ErrorCode.BAD_IMAGE_COORDINATE_SYSTEM, "coordinate_system must be an object")
+    required = ("x_min", "x_max", "y_min", "y_max", "y_axis")
+    missing = [key for key in required if key not in coordinate_system]
+    if missing:
+        raise _error(ErrorCode.BAD_IMAGE_COORDINATE_SYSTEM,
+                     "coordinate_system is missing required fields", details={"missing": missing})
+    values: dict[str, float] = {}
+    for key in required[:-1]:
+        value = coordinate_system[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+            raise _error(ErrorCode.BAD_IMAGE_COORDINATE_SYSTEM,
+                         f"coordinate_system.{key} must be a finite number")
+        values[key] = float(value)
+    if values["x_min"] >= values["x_max"] or values["y_min"] >= values["y_max"]:
+        raise _error(ErrorCode.BAD_IMAGE_COORDINATE_SYSTEM,
+                     "coordinate_system bounds must be strictly increasing")
+    y_axis = coordinate_system["y_axis"]
+    if not isinstance(y_axis, str) or y_axis not in {"up", "down"}:
+        raise _error(ErrorCode.BAD_IMAGE_COORDINATE_SYSTEM,
+                     "coordinate_system.y_axis must be 'up' or 'down'")
+    return {
+        "source_size": [width, height],
+        "pixel_origin": "top_left",
+        "pixel_extent": "full_image_edges",
+        "coordinate_system": {
+            "x_min": values["x_min"], "x_max": values["x_max"],
+            "y_min": values["y_min"], "y_max": values["y_max"], "y_axis": y_axis,
+        },
+        "x": {"pixel_start": 0, "pixel_end": width, "world_start": values["x_min"], "world_end": values["x_max"]},
+        "y": {
+            "pixel_start": 0, "pixel_end": height,
+            "world_start": values["y_max"] if y_axis == "up" else values["y_min"],
+            "world_end": values["y_min"] if y_axis == "up" else values["y_max"],
+        },
+    }
+
+
+def _world_point(point: list[float] | tuple[float, ...], transform: dict[str, Any]) -> list[float]:
+    width, height = transform["source_size"]
+    system = transform["coordinate_system"]
+    x = system["x_min"] + (float(point[0]) / width) * (system["x_max"] - system["x_min"])
+    if system["y_axis"] == "up":
+        y = system["y_max"] - (float(point[1]) / height) * (system["y_max"] - system["y_min"])
+    else:
+        y = system["y_min"] + (float(point[1]) / height) * (system["y_max"] - system["y_min"])
+    return [x, y]
+
+
+def _world_bbox(pixel_bbox: list[int] | None, transform: dict[str, Any] | None) -> list[float] | None:
+    if pixel_bbox is None or transform is None:
+        return None
+    left, top, right, bottom = pixel_bbox
+    corners = [_world_point((left, top), transform), _world_point((right, top), transform),
+               _world_point((left, bottom), transform), _world_point((right, bottom), transform)]
+    return [min(point[0] for point in corners), min(point[1] for point in corners),
+            max(point[0] for point in corners), max(point[1] for point in corners)]
 
 
 def _inside(root: Path, path: Path) -> bool:
@@ -107,7 +176,8 @@ def inspect_image(root: str | Path, relative: str, region: list[int] | tuple[int
 
 def measure_image(root: str | Path, relative: str, *, region: list[int] | tuple[int, ...] | None = None,
                   target_color: list[int] | tuple[int, ...] | None = None, tolerance: int = 16,
-                  alpha_threshold: int = 1, max_size: int = 1024, overlay: bool = True) -> dict[str, Any]:
+                  alpha_threshold: int = 1, max_size: int = 1024, overlay: bool = True,
+                  coordinate_system: dict[str, Any] | None = None) -> dict[str, Any]:
     """Measure a color region in source pixel coordinates without writing files.
 
     This is a deterministic, safe foundation for drawing callout checks: the
@@ -141,6 +211,7 @@ def measure_image(root: str | Path, relative: str, *, region: list[int] | tuple[
                 raise _error(ErrorCode.IMAGE_TOO_LARGE, f"source image exceeds {MAX_PIXELS} pixels")
             image = ImageOps.exif_transpose(opened).convert("RGBA")
             width, height = image.size
+            transform = _coordinate_transform(coordinate_system, width, height)
             box = [0, 0, width, height] if region is None else list(region)
             if len(box) != 4 or any(isinstance(value, bool) or not isinstance(value, int) for value in box):
                 raise _error(ErrorCode.BAD_IMAGE_REGION, "region must be [left, top, right, bottom] in source pixels")
@@ -180,6 +251,8 @@ def measure_image(root: str | Path, relative: str, *, region: list[int] | tuple[
     if len(png) > MAX_PREVIEW_BYTES:
         raise _error(ErrorCode.IMAGE_PREVIEW_TOO_LARGE, "preview exceeds 2 MB", details={"bytes": len(png)})
     region_area = (right - left) * (bottom - top)
+    world_bbox = _world_bbox(match_bbox, transform)
+    world_centroid = _world_point(centroid, transform) if centroid is not None and transform is not None else None
     return {
         "source": source.relative_to(project_root).as_posix(),
         "source_sha256": hashlib.sha256(raw).hexdigest(),
@@ -187,6 +260,7 @@ def measure_image(root: str | Path, relative: str, *, region: list[int] | tuple[
         "target_color": list(target_color), "tolerance": tolerance, "alpha_threshold": alpha_threshold,
         "match_count": len(matches), "match_fraction": len(matches) / region_area,
         "match_bbox": match_bbox, "centroid": centroid, "preview_size": list(preview_size),
+        "coordinate_transform": transform, "world_match_bbox": world_bbox, "world_centroid": world_centroid,
         "pixel_scale": scale, "mime_type": "image/png", "image_base64": base64.b64encode(png).decode("ascii"),
         "schema_version": "simloom-ai/image-measurement/v1",
     }

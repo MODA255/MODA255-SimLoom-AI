@@ -305,7 +305,7 @@ PYTHONPATH=src python -m engineering_agent.cli windows-validate --smoke
 PYTHONPATH=src python -m engineering_agent.cli mcp
 ```
 
-工具包括 `engineering_plan`、`engineering_run`、`engineering_generate`、`engineering_doctor`、`engineering_operations`、`engineering_asset_view`、`engineering_inspect_image`、`engineering_measure_image`、DXF/OBJ 几何 operation 和项目版本 operation。MCP 支持 `tools/list`、`resources/list`、`resources/templates/list` 和 `prompts/list` 分页，支持资源订阅/取消订阅，并在 initialize、工具 schema 和资源读取中返回 schema version。`engineering_asset_view` 与 `engineering://asset` 会同时返回结构化资产数据和 SVG image content，`engineering_inspect_image` 会返回按源像素裁切的 PNG image content，`engineering_measure_image` 会返回颜色区域的边界、质心和 PNG overlay，便于 agent 检查图纸与结果细节。资源读取失败、参数错误、锁冲突和未知 operation 都统一返回 error envelope。Web API 还提供 artifact 列表、文本/JSON 预览、DXF/OBJ SVG 预览和任务事件时间线。
+工具包括 `engineering_plan`、`engineering_run`、`engineering_generate`、`engineering_doctor`、`engineering_operations`、`engineering_asset_view`、`engineering_inspect_image`、`engineering_measure_image`、DXF/OBJ 几何 operation 和项目版本 operation。MCP 支持 `tools/list`、`resources/list`、`resources/templates/list` 和 `prompts/list` 分页，支持资源订阅/取消订阅，并在 initialize、工具 schema 和资源读取中返回 schema version。`engineering_asset_view` 与 `engineering://asset` 会同时返回结构化资产数据和 SVG image content，`engineering_inspect_image` 会返回按源像素裁切的 PNG image content，`engineering_measure_image` 会返回颜色区域的边界、质心、PNG overlay，以及可选的源像素到工程图纸坐标映射，便于 agent 检查图纸与结果细节。资源读取失败、参数错误、锁冲突和未知 operation 都统一返回 error envelope。Web API 还提供 artifact 列表、文本/JSON 预览、DXF/OBJ SVG 预览和任务事件时间线。
 
 ## 当前边界
 

@@ -201,11 +201,13 @@ class EngineeringAgent:
 
     def measure_image(self, root: str | Path, path: str, *, region: list[int] | None = None,
                       target_color: list[int] | None = None, tolerance: int = 16,
-                      alpha_threshold: int = 1, max_size: int = 1024, overlay: bool = True) -> dict[str, Any]:
+                      alpha_threshold: int = 1, max_size: int = 1024, overlay: bool = True,
+                      coordinate_system: dict[str, Any] | None = None) -> dict[str, Any]:
         """Read-only deterministic color measurement with optional overlay."""
         return measure_raster_image(root, path, region=region, target_color=target_color,
                                     tolerance=tolerance, alpha_threshold=alpha_threshold,
-                                    max_size=max_size, overlay=overlay)
+                                    max_size=max_size, overlay=overlay,
+                                    coordinate_system=coordinate_system)
 
     def validate_asset(self, path: str, required_metrics: list[str] | None = None) -> dict[str, Any]:
         return validate_asset(self.ingest(path), required_metrics)
