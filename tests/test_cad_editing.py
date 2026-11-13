@@ -176,6 +176,33 @@ def test_construction_line_rejects_zero_direction(tmp_path):
         })
 
 
+def test_change_space_moves_entities_between_model_and_paper_layout(tmp_path):
+    source = tmp_path / "source.dxf"
+    with_sheet = tmp_path / "with-sheet.dxf"
+    paper = tmp_path / "paper.dxf"
+    model = tmp_path / "model.dxf"
+    write_dxf(source, entities=[{"type": "LINE", "start": {"x": 0, "y": 0}, "end": {"x": 10, "y": 0}}])
+    agent = EngineeringAgent({"tools": {}})
+    agent.execute_operation("cad.sheet_create", {"project_dir": str(tmp_path), "input_file": source,
+                                                  "output_file": with_sheet, "name": "A3"})
+    entity_id = CadDocument.open(with_sheet).entities[0]["id"]
+    moved = agent.execute_operation("cad.change_space", {"project_dir": str(tmp_path), "input_file": with_sheet,
+                                                           "output_file": paper, "entity_ids": [entity_id],
+                                                           "space": "paper", "sheet": "A3"})
+    assert moved["results"][0]["changed"] is True and moved["persisted_validation"]["valid"]
+    paper_entity = next(item for item in CadDocument.open(paper).entities if item["id"] == entity_id)
+    assert paper_entity["sheet"] == "A3"
+    moved_back = agent.execute_operation("cad.change_space", {"project_dir": str(tmp_path), "input_file": paper,
+                                                                "output_file": model, "entity_ids": [entity_id],
+                                                                "space": "model"})
+    assert moved_back["persisted_validation"]["valid"]
+    assert "sheet" not in next(item for item in CadDocument.open(model).entities if item["id"] == entity_id)
+    with pytest.raises(ValueError, match="SHEET_REQUIRED"):
+        agent.execute_operation("cad.change_space", {"project_dir": str(tmp_path), "input_file": with_sheet,
+                                                       "output_file": tmp_path / "bad.dxf", "entity_ids": [entity_id],
+                                                       "space": "paper"})
+
+
 def test_cad_batch_is_transactional_and_emits_diff_and_sidecar(tmp_path):
     source = _source(tmp_path)
     output = tmp_path / "edited.dxf"

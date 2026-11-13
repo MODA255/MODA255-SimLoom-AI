@@ -1444,6 +1444,32 @@ class CadOperationEngine:
             if len(document.coordinate_systems) == before:
                 raise ValueError("COORDINATE_SYSTEM_NOT_FOUND:" + name_value)
             return {"deleted": name_value}
+        if name == "change_space":
+            target_space = str(arguments.get("space", "")).lower()
+            if target_space not in {"model", "paper"}:
+                raise ValueError("CAD_SPACE_INVALID")
+            selected_ids = _refs(arguments, document)
+            if not selected_ids:
+                raise ValueError("ENTITY_SELECTION_REQUIRED")
+            selected = [document.entity(identifier) for identifier in selected_ids]
+            sheet_name = None
+            if target_space == "paper":
+                sheet_name = str(arguments.get("sheet", "")).strip()
+                if not sheet_name or sheet_name not in document.sheets:
+                    raise ValueError("SHEET_REQUIRED")
+            changed = []
+            for entity in selected:
+                old_space = "paper" if entity.get("sheet") else "model"
+                if old_space == target_space and (target_space == "model" or entity.get("sheet") == sheet_name):
+                    continue
+                if target_space == "paper":
+                    entity["sheet"] = sheet_name
+                    entity.pop("layout", None)
+                else:
+                    entity.pop("sheet", None)
+                    entity.pop("layout", None)
+                changed.append(str(entity.get("id")))
+            return {"space": target_space, "sheet": sheet_name, "entities": changed, "changed": bool(changed)}
         if name == "sheet_prepare":
             from .drawing_sheets import prepare_sheet
             return prepare_sheet(document, arguments)

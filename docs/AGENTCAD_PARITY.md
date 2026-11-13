@@ -36,6 +36,9 @@ SimLoom 原有的 CATIA / Ansys / Adams / VI-grade 工程链、B-Rep 和仿真�
 `cad.ray_create` 和 `cad.xline_create` 现已补齐：写入原生 DXF 构造线并对方向归一化、回读和
 零向量错误做验证，细节见 `CAD_CONSTRUCTION_LINES.md`。
 
+`cad.change_space` 现已补齐：可把选定实体事务化移动到模型空间或已有纸空间，并在原生 DXF
+回读时验证 layout 归属，细节见 `CAD_CHANGE_SPACE.md`。
+
 ## 必须逐项证明的能力
 
 | 能力 | 本地证据及现状 | 完成所需证据 / 下一步 |
