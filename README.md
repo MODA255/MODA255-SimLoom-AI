@@ -536,6 +536,9 @@ MCP 层支持资源发现、资源模板、分页、订阅、schema version、�
 
 ## Windows 软件接入
 
+Mac 开发机连接 Windows 实机、配置 worker、逐款 smoke test 和跨软件联调的操作顺序见
+[`docs/MAC_WINDOWS_INTEGRATION.md`](docs/MAC_WINDOWS_INTEGRATION.md)。
+
 Windows bridge 为真实软件预留了统一入口：
 
 ```bash
