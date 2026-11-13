@@ -3,6 +3,9 @@
 SimLoom AI 的主要职责是操作 CATIA、Ansys、Adams、VI-grade，再读回结果并检查工程要求。
 商业软件负责原生建模和求解。本地 CAD、OpenCascade、Viewer 与离线演示是辅助工具。
 
+Mac 控制端与 Windows 工作站的部署、`/capabilities` 发现接口、交互式用户会话和逐款 smoke
+test 见 `WINDOWS_WORKER_SETUP.md`。
+
 这里的接入目标是“让 SimLoom 驱动已安装的软件完成一次可核验的工程动作”，不是把厂商
 软件替换成 SimLoom 自己的实现。CATIA、Ansys、Adams 和 VI-grade 的原生模型、网格、求解
 状态和结果文件仍是权威来源；SimLoom 只负责控制面、文件契约、任务生命周期、独立检查

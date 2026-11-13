@@ -49,6 +49,28 @@ class WindowsBridge:
                 "com": sorted(self.config.com), "vendor_validation": "not_run",
                 "features": {"durable_jobs": True, "job_logs": True, "software_serialization": True}}
 
+    def capabilities(self) -> dict[str, Any]:
+        """Return a discovery-safe action matrix for a remote Mac controller.
+
+        Presence of a command or COM allow-list is configuration evidence only;
+        it never marks a licensed vendor operation as real-machine verified.
+        """
+        health = self.health()
+        tools: dict[str, dict[str, Any]] = {}
+        for tool in ("catia", "ansys", "adams", "vi-grade"):
+            actions = sorted(key.split(".", 1)[1] for key in self.config.commands
+                             if key.startswith(tool + "."))
+            checks = {key.split(".", 1)[1]: value for key, value in health["command_checks"].items()
+                      if key.startswith(tool + ".")}
+            token = tool.replace("-", "_")
+            tools[tool] = {"actions": actions, "action_checks": checks,
+                           "com_configured": any(token in str(key).lower() for key in self.config.com),
+                           "real_machine_verified": False}
+        return {"schema_version": SCHEMA, "capabilities_schema": "simloom-ai/worker-capabilities/v1",
+                "platform": health["platform"], "tools": tools,
+                "features": health["features"], "vendor_validation": "not_run",
+                "real_machine_verified": False}
+
     def handle(self, payload: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(payload, dict):
             raise WorkerError("INVALID_WORKER_REQUEST")
@@ -57,6 +79,8 @@ class WindowsBridge:
             raise WorkerError("WORKER_SCHEMA_UNSUPPORTED")
         if operation == "health":
             return self.health()
+        if operation == "capabilities":
+            return self.capabilities()
         if operation == "run":
             return self.run(payload)
         if operation.startswith("job."):
@@ -123,6 +147,8 @@ def create_bridge_server(config: BridgeConfig | dict[str, Any]) -> ThreadingHTTP
                 return self._send(401, failure(WorkerError("BRIDGE_UNAUTHORIZED")))
             if self.path == "/health":
                 return self._send(200, bridge.health())
+            if self.path == "/capabilities":
+                return self._send(200, bridge.capabilities())
             return self._send(404, failure(WorkerError("NOT_FOUND")))
 
         def log_message(self, *_args):

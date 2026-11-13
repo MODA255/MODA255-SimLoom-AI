@@ -188,6 +188,18 @@ def test_http_authentication_and_schema_errors_are_explicit(project, bridge):
     assert CatiaAdapter(config(url, "incorrect")["tools"]["catia"]).doctor()["available"] is False
 
 
+def test_windows_bridge_capabilities_are_discoverable_without_claiming_real_vendor_validation(bridge):
+    url, _ = bridge
+    response = httpx.get(url + "/capabilities", headers={"X-Bridge-Token": "contract-test-token"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["capabilities_schema"] == "simloom-ai/worker-capabilities/v1"
+    assert body["tools"]["catia"]["actions"] == ["create_or_update_model"]
+    assert body["tools"]["ansys"]["actions"] == ["mesh_and_solve"]
+    assert body["real_machine_verified"] is False
+    assert httpx.get(url + "/capabilities").status_code == 401
+
+
 def test_remote_one_software_is_usable_from_non_windows_controller(project, bridge, monkeypatch):
     url, _ = bridge
     cfg = config(url, "contract-test-token")
