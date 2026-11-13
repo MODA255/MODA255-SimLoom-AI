@@ -27,7 +27,7 @@ def _parser() -> argparse.ArgumentParser:
     for action in ("history", "undo", "redo"):
         command = sub.add_parser("cad-" + action, help="CAD 持久历史 / 撤销 / 重做")
         command.add_argument("input_file")
-    plot = sub.add_parser("cad-plot", help="将 DXF 工程图导出为 PDF / PNG")
+    plot = sub.add_parser("cad-plot", help="将 DXF 工程图导出为 PDF / PNG / SVG")
     plot.add_argument("input_file")
     plot.add_argument("output_file")
     plot.add_argument("--layout", default="Model")

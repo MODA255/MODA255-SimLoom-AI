@@ -67,7 +67,7 @@ def _page_arguments(arguments):
         raise ValueError("INVALID_PLOT_PAGES")
     if len(pages) > 64:
         raise ValueError("INVALID_PLOT_PAGES: maximum 64 pages")
-    if str(arguments.get("output_file", "")).lower().endswith(".png"):
+    if Path(str(arguments.get("output_file", ""))).suffix.lower() != ".pdf":
         raise ValueError("PLOT_MULTI_PAGE_REQUIRES_PDF")
     inherited = {key: value for key, value in arguments.items() if key != "pages"}
     normalized = []
@@ -250,7 +250,7 @@ def _render_single_page(source, target, arguments, *, pdf_pages=None):
         if np.asarray(figure.canvas.buffer_rgba())[:, :, :3].min() == 255:
             raise ValueError("PLOT_NO_VISIBLE_GEOMETRY_ON_PAGE")
         target.parent.mkdir(parents=True, exist_ok=True)
-        metadata = {"Title": source.stem, "Creator": "SimLoom AI"} if target.suffix.lower() == ".pdf" else {"Software": "SimLoom AI"}
+        metadata = {"Title": source.stem, "Creator": "SimLoom AI"} if target.suffix.lower() in {".pdf", ".svg"} else {"Software": "SimLoom AI"}
         # No bbox_inches='tight': trimming would silently change paper size and scale.
         if pdf_pages is None:
             figure.savefig(target, format=target.suffix[1:].lower(), dpi=options["dpi"], facecolor="white", metadata=metadata)
@@ -296,6 +296,34 @@ def validate_plot(path: Path, report):
     if report.get("multi_page"):
         raise ValueError("PLOT_MULTI_PAGE_REQUIRES_PDF")
     width, height = report["page_mm"]["width"], report["page_mm"]["height"]
+    if report["format"] == "svg":
+        from re import fullmatch
+        from xml.etree import ElementTree as ET
+
+        try:
+            root = ET.parse(path).getroot()
+        except (ET.ParseError, OSError) as exc:
+            raise ValueError("PLOT_SVG_INVALID") from exc
+        if root.tag.rsplit("}", 1)[-1].lower() != "svg":
+            raise ValueError("PLOT_SVG_ROOT_MISMATCH")
+
+        def length_mm(value):
+            if not isinstance(value, str):
+                raise ValueError("PLOT_SVG_SIZE_MISSING")
+            match = fullmatch(r"\s*([0-9]+(?:\.[0-9]+)?)\s*(mm|cm|in|pt|px)?\s*", value.lower())
+            if not match:
+                raise ValueError("PLOT_SVG_SIZE_INVALID")
+            number, unit = float(match.group(1)), match.group(2) or "px"
+            return number * {"mm": 1., "cm": 10., "in": 25.4, "pt": 25.4 / 72., "px": 25.4 / float(report["dpi"])}[unit]
+
+        actual = (length_mm(root.get("width")), length_mm(root.get("height")))
+        if not all(math.isclose(a, b, abs_tol=.1) for a, b in zip(actual, (width, height))):
+            raise ValueError("PLOT_SVG_PAGE_SIZE_MISMATCH")
+        tags = {element.tag.rsplit("}", 1)[-1].lower() for element in root.iter()}
+        if not tags.intersection({"path", "line", "polyline", "polygon", "circle", "ellipse", "text"}):
+            raise ValueError("PLOT_SVG_EMPTY")
+        return {"valid": True, "pages": 1, "page_mm": list(actual), "bytes": path.stat().st_size,
+                "elements": len(list(root.iter()))}
     from PIL import Image, ImageChops
     with Image.open(path) as image:
         image.load()
@@ -318,8 +346,8 @@ def plot_operation(arguments):
         raise ValueError("PATH_OUTSIDE_PROJECT")
     relative = str(output.relative_to(root))
     target = confined_path(root, relative)
-    if target.suffix.lower() not in {".pdf", ".png"} or source.suffix.lower() != ".dxf":
-        raise ValueError("PLOT_REQUIRES_DXF_TO_PDF_OR_PNG")
+    if target.suffix.lower() not in {".pdf", ".png", ".svg"} or source.suffix.lower() != ".dxf":
+        raise ValueError("PLOT_REQUIRES_DXF_TO_PDF_PNG_OR_SVG")
     if relative.startswith((".engineering-agent/", "artifacts/runs/")):
         raise ValueError("PLOT_RESERVED_OUTPUT_PATH")
     _options(arguments)

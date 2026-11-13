@@ -112,6 +112,18 @@ def test_pdf_is_vector_drawing_on_exact_a3_sheet(drawing):
     assert Path(result["report_path"]).is_file()
 
 
+def test_svg_is_vector_drawing_on_exact_a3_sheet(drawing):
+    sheet(drawing)
+    result = plot(drawing, "svg", layout="A3")
+    from xml.etree import ElementTree as ET
+    root = ET.parse(result["path"]).getroot()
+    assert root.tag.rsplit("}", 1)[-1] == "svg"
+    assert result["report"]["format"] == "svg"
+    assert result["validation"]["valid"] is True
+    assert result["validation"]["page_mm"] == pytest.approx([420, 297], abs=.1)
+    assert any(element.tag.rsplit("}", 1)[-1] == "path" for element in root.iter())
+
+
 def test_multi_page_pdf_uses_independent_model_page_sizes(drawing):
     result = operation(drawing, "cad.plot", output_file="exports/multi-model.pdf", pages=[
         {"layout": "Model", "paper": "A4", "orientation": "portrait", "scale": "fit"},
@@ -217,7 +229,7 @@ def test_hidden_and_nonplot_layers_are_excluded_from_plot_bounds(tmp_path):
     ({"dpi": float("nan")}, "INVALID_PLOT_DPI"),
     ({"paper": "A0", "dpi": 600}, "PLOT_IMAGE_TOO_LARGE"),
     ({"output_file": "../../outside.png"}, "PATH_OUTSIDE_PROJECT"),
-    ({"output_file": "bracket.dxf"}, "PLOT_REQUIRES_DXF_TO_PDF_OR_PNG"),
+    ({"output_file": "bracket.dxf"}, "PLOT_REQUIRES_DXF_TO_PDF_PNG_OR_SVG"),
 ])
 def test_invalid_plot_requests_do_not_modify_source_or_create_output(drawing, arguments, match):
     before = drawing.read_bytes()

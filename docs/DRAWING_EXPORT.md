@@ -1,7 +1,7 @@
 # 工程图纸与 PDF / PNG 出图
 
 无需 CATIA、Ansys、Adams 或 VI-grade：本地 DXF 可创建纸空间图纸、可编辑标题栏，
-并导出多页矢量 PDF 或 PNG。图纸编辑仍走 CAD 事务、落盘校验、diff 和持久历史。
+并导出多页矢量 PDF、单页 SVG 或 PNG。图纸编辑仍走 CAD 事务、落盘校验、diff 和持久历史。
 
 ## 在工作台使用
 
@@ -54,7 +54,7 @@ ATTRIB 保存实际字段；`cad.title_block_update` 更新现有字段并保留
 修改标题字段；直接删除已跟踪项目的侧车文件会触发原有历史冲突保护。
 此模板名为 `simloom-grid/v1`，尚未按 ISO / GB 或企业标准验收。
 
-`cad.plot` 写 PDF / PNG 和 `.plot.json`，不改源 DXF，不增加 CAD 撤销历史。PDF 的
+`cad.plot` 写 PDF / SVG / PNG 和 `.plot.json`，不改源 DXF，不增加 CAD 撤销历史。PDF 的
 `pages` 参数是页面对象数组；页面对象继承顶层渲染参数，也可以覆盖 `layout`、`paper`、
 `orientation`、`scale`、`drawing_units`、`margin_mm`、`dpi`、`color_mode` 和 `strict`。
 每页会在出图报告中保存独立的布局、物理尺寸、世界范围、比例和警告。
@@ -64,6 +64,7 @@ ATTRIB 保存实际字段；`cad.title_block_update` 更新现有字段并保留
 | 模型空间 `layout=Model` | A4～A0、横/纵向、`fit` 或 `1:1` / `1:2` 等数值比例 |
 | 纸空间 `layout=<图纸名>` | 使用 DXF 物理纸张尺寸，`paper=layout`，纸空间 `scale=1:1`，保留视口比例 |
 | 多页 PDF `pages=[...]` | 1～64 页；每页独立选择模型空间或纸空间、纸张、方向、比例和渲染质量 |
+| SVG `output_file=*.svg` | 单页真实 DXF 矢量输出，保留页面物理尺寸并由 XML 回读验证 |
 | 模型单位未定义 | `fit` 可用；数值比例必须指定 `drawing_units` |
 | 指定比例放不下 | 返回 `PLOT_SCALE_DOES_NOT_FIT`，不会自动缩小 |
 | 输出质量 | 默认黑白、150 DPI；可选彩色、72～600 DPI，最多 4000 万像素的渲染画布 |
@@ -79,7 +80,7 @@ CLI、Python API 和工作台调用相同实现。
 PDF / PNG 与出图记录作为一组提交，提交后独立重读；失败会恢复已有输出。
 源文件发生外部修改时返回 `PLOT_SOURCE_CONFLICT`。
 
-- PDF 使用 pypdf 检查页数、每页物理纸张尺寸和非空内容流；PNG 仍是单页输出。
+- PDF 使用 pypdf 检查页数、每页物理纸张尺寸和非空内容流；SVG 使用 XML 检查页面尺寸和矢量元素；PNG 仍是单页输出。
 - PNG 使用 Pillow 完整解码，检查像素尺寸及非全白图片。
 - 出图记录保存源/目标哈希、纸张尺寸、渲染范围、实际比例、提示及事务编号。
 - 自动测试测量 PNG 内线条像素距离，核对毫米和英寸的指定比例；也检查
