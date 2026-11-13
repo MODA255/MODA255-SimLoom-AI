@@ -33,6 +33,29 @@ class MCPServer:
         pending, self._pending_notifications = self._pending_notifications, []
         return pending
 
+    def _structured_content(self, tool_name: str, result: Any) -> dict[str, Any]:
+        """Build the optional MCP structuredContent payload.
+
+        Text content remains available for older clients.  Newer clients can
+        consume the typed result without parsing JSON embedded in text.  The
+        metadata is deliberately explicit so operation-level schema upgrades
+        can be negotiated independently from the MCP transport schema.
+        """
+        if isinstance(result, dict):
+            structured = {key: value for key, value in result.items() if key != "_mcp_content"}
+        else:
+            structured = {"value": result}
+        structured.setdefault("schemaVersion", self.schema_version)
+        if tool_name.startswith("operation."):
+            try:
+                spec = self.operations.get(tool_name[len("operation."):])
+            except ValueError:
+                spec = None
+            if spec is not None:
+                structured.setdefault("operationSchemaVersion", spec.version)
+                structured.setdefault("operation", spec.name)
+        return structured
+
     def _queue_resource_updates(self, tool_name: str, arguments: dict[str, Any]) -> None:
         """Queue standard resource-update notifications after mutating calls."""
         mutating = (
@@ -116,16 +139,20 @@ class MCPServer:
             try:
                 result = self.call(str(params.get("name", "")), params.get("arguments") or {})
                 self._queue_resource_updates(str(params.get("name", "")), params.get("arguments") or {})
+                tool_name = str(params.get("name", ""))
+                structured = self._structured_content(tool_name, result)
                 if isinstance(result, dict) and isinstance(result.get("_mcp_content"), list):
                     content = result["_mcp_content"]
-                    return {"jsonrpc": "2.0", "id": request_id, "result": {"content": content}}
-                return {"jsonrpc": "2.0", "id": request_id, "result": {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]}}
+                    return {"jsonrpc": "2.0", "id": request_id,
+                            "result": {"content": content, "structuredContent": structured}}
+                return {"jsonrpc": "2.0", "id": request_id,
+                        "result": {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}],
+                                   "structuredContent": structured}}
             except Exception as exc:
                 return self._error(request_id, exc)
         return self._error(request_id, ProtocolError(ErrorCode.INVALID_REQUEST, f"METHOD_NOT_FOUND:{method}"))
 
-    @staticmethod
-    def _error(request_id: Any, exc: Exception) -> dict[str, Any]:
+    def _error(self, request_id: Any, exc: Exception) -> dict[str, Any]:
         if isinstance(exc, ProtocolError):
             envelope = failure(exc)
         elif isinstance(exc, FileNotFoundError):
@@ -144,7 +171,9 @@ class MCPServer:
             envelope = failure(ProtocolError(ErrorCode.BACKEND_UNAVAILABLE, str(exc), retryable=False))
         else:
             envelope = failure(ProtocolError(ErrorCode.INTERNAL_ERROR, str(exc)))
-        return {"jsonrpc": "2.0", "id": request_id, "error": envelope["error"]}
+        error = dict(envelope["error"])
+        error.setdefault("schemaVersion", self.schema_version)
+        return {"jsonrpc": "2.0", "id": request_id, "error": error}
 
     def _tools(self) -> list[dict[str, Any]]:
         tools = [
@@ -194,10 +223,17 @@ class MCPServer:
                 "properties": operation.get("parameters_schema", {}),
                 "required": operation.get("required_parameters", []),
                 "x-engineering-schema-version": operation.get("version", "1.0"),
+                "x-operation-schema-version": operation.get("version", "1.0"),
+                "x-supported-operation-schema-versions": [operation.get("version", "1.0"),
+                                                             *operation.get("compatible_versions", [])],
                 "x-output-schema": operation.get("output_schema", {}),
                 "x-output-kinds": operation.get("output_kinds", []),
                 "x-side-effects": operation.get("side_effects", []),
                 "x-safety": operation.get("safety", "safe"),
+            }
+            input_schema["properties"]["operation_schema_version"] = {
+                "type": "string",
+                "description": "Optional operation contract version; rejected when unsupported",
             }
             if operation.get("parameter_alternatives"):
                 input_schema["allOf"] = [{"anyOf": [{"required": [key]} for key in group]}
@@ -337,6 +373,22 @@ class MCPServer:
         requested_schema = arguments.get("schema_version") or arguments.get("schemaVersion")
         if requested_schema and requested_schema not in {self.schema_version, "1.0"}:
             raise ProtocolError(ErrorCode.SCHEMA_VERSION_UNSUPPORTED, f"unsupported schema version: {requested_schema}")
+        operation_arguments = arguments
+        if name.startswith("operation."):
+            operation_name = name[len("operation."):]
+            spec = self.operations.get(operation_name)
+            requested_operation_schema = arguments.get("operation_schema_version") or arguments.get("operationSchemaVersion")
+            supported = {spec.version, *spec.compatible_versions}
+            if requested_operation_schema and requested_operation_schema not in supported:
+                raise ProtocolError(ErrorCode.SCHEMA_VERSION_UNSUPPORTED,
+                                    f"unsupported operation schema version: {requested_operation_schema}",
+                                    details={"operation": operation_name,
+                                             "requested": requested_operation_schema,
+                                             "supported": sorted(supported)})
+            if "operation_schema_version" in arguments or "operationSchemaVersion" in arguments:
+                operation_arguments = dict(arguments)
+                operation_arguments.pop("operation_schema_version", None)
+                operation_arguments.pop("operationSchemaVersion", None)
         if name == "engineering_workflow":
             action = arguments.get("action", "list")
             if self.profile == "safe" and action not in {"list", "status"}:
@@ -414,7 +466,7 @@ class MCPServer:
         if name == "engineering_diff":
             return self.agent.diff_versions(arguments["project_dir"], arguments["left"], arguments["right"])
         if name.startswith("operation."):
-            return self.agent.execute_operation(name[len("operation."):], arguments)
+            return self.agent.execute_operation(name[len("operation."):], operation_arguments)
         raise ValueError(f"UNKNOWN_TOOL:{name}")
 
 

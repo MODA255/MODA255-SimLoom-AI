@@ -93,6 +93,31 @@ def test_mcp_surface_lists_and_calls_tools():
     assert missing["error"]["code"] == "RESOURCE_NOT_FOUND"
 
 
+def test_mcp_returns_structured_content_and_operation_schema_metadata(tmp_path):
+    drawing = tmp_path / "drawing.dxf"
+    write_dxf(drawing, lines=[{"x1": 0, "y1": 0, "x2": 10, "y2": 5}])
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="full")
+
+    planned = server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+        "name": "engineering_plan", "arguments": {"prompt": "用Adams做动力学"}}})
+    structured = planned["result"]["structuredContent"]
+    assert structured["schemaVersion"] == server.schema_version
+    assert structured["plan"]["steps"][0]["tool"] == "adams"
+
+    opened = server.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+        "name": "operation.cad.document_open",
+        "arguments": {"input_file": str(drawing), "operation_schema_version": "1.0"}}})
+    assert opened["result"]["structuredContent"]["operation"] == "cad.document_open"
+    assert opened["result"]["structuredContent"]["operationSchemaVersion"] == "1.0"
+
+    unsupported = server.handle({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
+        "name": "operation.cad.document_open",
+        "arguments": {"input_file": str(drawing), "operation_schema_version": "99.0"}}})
+    assert unsupported["error"]["code"] == "SCHEMA_VERSION_UNSUPPORTED"
+    assert unsupported["error"]["schemaVersion"] == server.schema_version
+    assert unsupported["error"]["details"]["supported"] == ["1.0"]
+
+
 def test_mcp_pagination_subscription_and_schema_compatibility(tmp_path):
     server = MCPServer(EngineeringAgent({"tools": {}}))
     initialized = server.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05"}})

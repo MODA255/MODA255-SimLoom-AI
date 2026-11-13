@@ -15,6 +15,7 @@ class OperationSpec:
     tool: ToolName
     description: str
     version: str = "1.0"
+    compatible_versions: tuple[str, ...] = ()
     required_parameters: tuple[str, ...] = ()
     output_kinds: tuple[str, ...] = ()
     parameters_schema: dict[str, Any] = field(default_factory=dict)
@@ -43,6 +44,7 @@ class OperationSpec:
             "tool": self.tool.value,
             "description": self.description,
             "version": self.version,
+            "compatible_versions": list(self.compatible_versions),
             "required_parameters": list(self.required_parameters),
             "output_kinds": list(self.output_kinds),
             "parameters_schema": parameters,
