@@ -95,6 +95,7 @@ PYTHONPATH=src python -m engineering_agent.cli \
 - 创建不可变工程快照，比较版本差异，并生成项目时间线。
 - 对两个 DXF 版本生成实体级视觉 diff，直接看出新增、删除和修改的几何。
 - 对已保存的工程快照直接生成 DXF 视觉 diff，保留版本时间线和对象级差异。
+- 为 CATIA/Ansys/Adams/VI-grade 的结果文件建立可恢复监测游标，识别新增、修改、删除、仅时间戳变化和仍在写入的文件，见 [外部工程文件监测](docs/FILE_WATCH.md)。
 - 通过 CLI、Web API、MCP 或 Python API 使用同一套 runtime。
 
 这里的“生成脚本”和“调用软件”指的是给已安装的软件准备输入并驱动其执行。生成模板、

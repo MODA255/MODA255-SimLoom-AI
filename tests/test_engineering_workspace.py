@@ -99,6 +99,19 @@ def test_api_errors_do_not_disconnect_clients(service):
     assert call("/api/health")[1] == {"ok": True}
 
 
+def test_project_watch_http_reports_external_result_change(service, tmp_path):
+    call, _, _ = service
+    result = tmp_path / "solver.rst"
+    result.write_bytes(b"before")
+    status, started = call("/api/project-watch", {"project_dir": str(tmp_path), "action": "start", "paths": ["solver.rst"], "label": "Ansys result"})
+    assert status == 200 and started["status"] == "active"
+    result.write_bytes(b"after")
+    status, polled = call("/api/project-watch", {"project_dir": str(tmp_path), "action": "poll", "watch_id": started["watch_id"]})
+    assert status == 200 and polled["changes"][0]["change"] == "modified"
+    status, current = call("/api/project-watch?" + urllib.parse.urlencode({"root": str(tmp_path), "watch_id": started["watch_id"]}))
+    assert status == 200 and current["sequence"] == polled["sequence"]
+
+
 def test_history_view_http_reads_saved_geometry_and_reports_corruption(service, tmp_path):
     from engineering_agent.formats import write_dxf
     call, _, agent = service

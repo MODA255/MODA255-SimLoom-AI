@@ -244,6 +244,9 @@ class MCPServer:
                 {"uri": f"engineering://cad?root={root}&path={path}", "name": "CAD document context", "mimeType": "application/json"},
                 {"uri": f"engineering://asset?root={root}&path={path}", "name": "Project asset preview and image", "mimeType": "image/svg+xml"},
             ])
+        watch_id = params.get("watch_id")
+        if isinstance(watch_id, str) and watch_id:
+            resources.append({"uri": f"engineering://watch?root={root}&watch_id={watch_id}", "name": "External file watch status", "mimeType": "application/json"})
         return resources
 
     @staticmethod
@@ -253,6 +256,7 @@ class MCPServer:
             {"uriTemplate": "engineering://versions?root={root}", "name": "Project versions and timeline", "mimeType": "application/json"},
             {"uriTemplate": "engineering://cad?root={root}&path={path}", "name": "CAD document context", "mimeType": "application/json"},
             {"uriTemplate": "engineering://asset?root={root}&path={path}", "name": "Project asset preview and image", "mimeType": "image/svg+xml"},
+            {"uriTemplate": "engineering://watch?root={root}&watch_id={watch_id}", "name": "External file watch status", "mimeType": "application/json"},
         ]
 
     def _read_resource(self, uri: str) -> dict[str, Any]:
@@ -267,6 +271,11 @@ class MCPServer:
             value = {"versions": VersionStore(root).list(), "timeline": VersionStore(root).timeline(), "schemaVersion": self.schema_version}
         elif parsed.netloc == "project":
             value = self.agent.inspect_project(root)
+        elif parsed.netloc == "watch":
+            watch_id = query.get("watch_id", [""])[0]
+            if not watch_id:
+                raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "watch_id is required")
+            value = self.agent.execute_operation("project.watch_status", {"project_dir": root, "watch_id": watch_id})
         elif parsed.netloc == "cad":
             path = query.get("path", [""])[0]
             if not path:

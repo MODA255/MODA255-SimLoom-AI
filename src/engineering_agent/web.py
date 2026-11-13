@@ -273,6 +273,12 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
             if parsed.path == "/api/timeline":
                 events = VersionStore(root).timeline()
                 return self._send(200, {"events": events, "svg": render_timeline_svg(events)})
+            if parsed.path == "/api/project-watch":
+                watch_id = query.get("watch_id", [""])[0]
+                if not watch_id:
+                    raise ValueError("watch_id 是必填项")
+                return self._send(200, agent.execute_operation("project.watch_status", {
+                    "project_dir": root, "watch_id": watch_id}))
             self._send(404, {"error": "接口不存在"})
 
         def _post(self):
@@ -370,6 +376,18 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
                 root, _metadata, _project_id = self._project_input(body)
                 return self._send(201, agent.execute_operation("project.version_export", {
                     "project_dir": root, "version_id": body.get("version_id"), "output_dir": body.get("output_dir")}))
+            if path == "/api/project-watch":
+                root, _metadata, _project_id = self._project_input(body)
+                action = body.get("action", "poll")
+                operation = {"start": "project.watch_start", "poll": "project.watch_poll",
+                             "stop": "project.watch_stop", "status": "project.watch_status"}.get(action)
+                if operation is None:
+                    raise ValueError("watch action must be start, poll, stop or status")
+                arguments = {"project_dir": root}
+                for key in ("paths", "label", "watch_id", "since"):
+                    if key in body:
+                        arguments[key] = body[key]
+                return self._send(200, agent.execute_operation(operation, arguments))
             if path.startswith("/api/tasks/") and path.endswith("/resume"):
                 return self._send(200, runner.resume(path[len("/api/tasks/"):-len("/resume")]))
             if path.startswith("/api/tasks/") and path.endswith("/retry"):

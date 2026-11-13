@@ -137,6 +137,20 @@ def _parser() -> argparse.ArgumentParser:
     diff.add_argument("left")
     diff.add_argument("right")
     diff.add_argument("--root", default=".")
+    watch_start = sub.add_parser("watch-start", help="记录外部工程文件的基线并开始可恢复监测")
+    watch_start.add_argument("paths", nargs="+", help="项目内文件或目录")
+    watch_start.add_argument("--root", default=".")
+    watch_start.add_argument("--label", default="")
+    watch_poll = sub.add_parser("watch-poll", help="轮询工程文件变化")
+    watch_poll.add_argument("watch_id")
+    watch_poll.add_argument("--root", default=".")
+    watch_poll.add_argument("--since", type=int)
+    watch_status = sub.add_parser("watch-status", help="查看工程文件监测状态")
+    watch_status.add_argument("watch_id")
+    watch_status.add_argument("--root", default=".")
+    watch_stop = sub.add_parser("watch-stop", help="停止工程文件监测并保留历史")
+    watch_stop.add_argument("watch_id")
+    watch_stop.add_argument("--root", default=".")
     write = sub.add_parser("write", help="将 JSON payload 写入 STEP/CSV/JSON/DXF/OBJ/SVG/PDF")
     write.add_argument("format", choices=["step", "csv", "json", "dxf", "obj", "svg", "pdf"])
     write.add_argument("path")
@@ -221,6 +235,21 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "diff":
         print(json.dumps(agent.diff_versions(args.root, args.left, args.right), ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "watch-start":
+        print(json.dumps(agent.execute_operation("project.watch_start", {"project_dir": args.root, "paths": args.paths, "label": args.label}), ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "watch-poll":
+        arguments = {"project_dir": args.root, "watch_id": args.watch_id}
+        if args.since is not None:
+            arguments["since"] = args.since
+        print(json.dumps(agent.execute_operation("project.watch_poll", arguments), ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "watch-status":
+        print(json.dumps(agent.execute_operation("project.watch_status", {"project_dir": args.root, "watch_id": args.watch_id}), ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "watch-stop":
+        print(json.dumps(agent.execute_operation("project.watch_stop", {"project_dir": args.root, "watch_id": args.watch_id}), ensure_ascii=False, indent=2))
         return 0
     if args.command == "write":
         payload = json.loads(Path(args.payload).read_text(encoding="utf-8"))

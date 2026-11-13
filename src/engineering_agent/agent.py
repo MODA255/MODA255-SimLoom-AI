@@ -31,6 +31,7 @@ from .transactions import file_hash
 from .worker_protocol import SCHEMA as WORKER_SCHEMA, WorkerError, safe_file
 from .cad_diff_view import visual_diff
 from .software_preflight import preflight_plan
+from .file_watch import FileWatchStore
 
 
 def _project_path(project_root: Path, value: str | Path, *, must_exist: bool = False,
@@ -324,6 +325,14 @@ class EngineeringAgent:
             return self.create_version(arguments.get("project_dir", "."), arguments["label"], arguments.get("paths", []), arguments.get("parent"))
         if name == "project.version_export":
             return VersionStore(arguments.get("project_dir", ".")).export(arguments["version_id"], arguments["output_dir"])
+        if name == "project.watch_start":
+            return FileWatchStore(arguments.get("project_dir", ".")).start(arguments["paths"], label=arguments.get("label", ""))
+        if name == "project.watch_poll":
+            return FileWatchStore(arguments.get("project_dir", ".")).poll(arguments["watch_id"], since=arguments.get("since"))
+        if name == "project.watch_status":
+            return FileWatchStore(arguments.get("project_dir", ".")).status(arguments["watch_id"])
+        if name == "project.watch_stop":
+            return FileWatchStore(arguments.get("project_dir", ".")).stop(arguments["watch_id"])
         if name == "project.diff":
             return self.diff_versions(arguments.get("project_dir", "."), arguments["left"], arguments["right"])
         if name == "project.visual_diff":
