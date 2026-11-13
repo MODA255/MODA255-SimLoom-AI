@@ -254,6 +254,12 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
                     "project_dir": root, "input_file": relative,
                     "revision_id": query.get("revision_id", [""])[0],
                     "side": query.get("side", ["after"])[0]}))
+            if parsed.path == "/api/cad/batch-step-view":
+                return self._send(200, agent.execute_operation("cad.batch_step_view", {
+                    "project_dir": root,
+                    "run_id": query.get("run_id", [""])[0],
+                    "step_index": int(query.get("step_index", ["0"])[0]),
+                    "side": query.get("side", ["after"])[0]}))
             if parsed.path == "/api/download":
                 base = Path(root).resolve()
                 path = (base / relative).resolve()

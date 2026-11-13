@@ -31,13 +31,16 @@ def render_cad_viewer(geometry, *, asset_path=None, history=None, source_path=No
                     'label': f"{operation} · {step.get('operation', 'step')}",
                     'ids': [str(value) for value in step.get('entity_ids', [])],
                     'entry': index, 'step': step_index,
+                    'run_id': entry.get('run_id'),
+                    'step_index': step.get('index', step_index),
+                    'batch': bool((step.get('snapshots') or {}).get('after')),
                 })
         else:
             replay_items.append({'label': operation, 'ids': [str(value) for value in entry.get('entity_ids', [])], 'entry': index})
     replay_json = json.dumps(replay_items, ensure_ascii=False).replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026')
     if replay_items:
         operation_list = ''.join(
-            f"<button type='button' class='operation-step' data-history-index='{index}'>{escape(item['label'])}<span>{len(item['ids'])} 个对象</span></button>"
+            f"<button type='button' class='operation-step' data-history-index='{index}' data-batch='{str(bool(item.get('batch'))).lower()}' data-run-id='{escape(str(item.get('run_id') or ''), quote=True)}' data-step-index='{int(item.get('step_index', item.get('step', 0)))}'>{escape(item['label'])}<span>{len(item['ids'])} 个对象</span></button>"
             for index, item in enumerate(replay_items)
         )
     else:

@@ -139,6 +139,22 @@ def test_history_view_http_reads_saved_geometry_and_reports_corruption(service, 
     assert "CAD_HISTORY_SNAPSHOT_CORRUPT" in result["error"]
 
 
+def test_batch_step_view_http_reads_read_only_checkpoint(service, tmp_path):
+    from engineering_agent.formats import write_dxf
+    call, _, agent = service
+    path = tmp_path / "batch.dxf"
+    write_dxf(path, lines=[{"x1": 0, "y1": 0, "x2": 10, "y2": 0}],
+              circles=[{"x": 5, "y": 5, "radius": 2}])
+    batch = agent.execute_operation("cad.batch_apply", {
+        "project_dir": str(tmp_path), "input_file": str(path), "output_file": str(path),
+        "operations": [{"operation": "cad.entity_move", "entity_ids": ["e00001"], "delta": [5, 0, 0]}]})
+    query = urllib.parse.urlencode({"root": str(tmp_path), "run_id": batch["run_id"], "step_index": 0, "side": "after"})
+    status, result = call("/api/cad/batch-step-view?" + query)
+    assert status == 200 and result["read_only"]
+    assert result["document"]["entities"][0]["start"]["x"] == 5
+    assert result["checkpoint"].endswith("step-000-after/state.json")
+
+
 def test_capabilities_explain_offline_and_connected_modes(service):
     call, _, _ = service
     status, capabilities = call("/api/capabilities")

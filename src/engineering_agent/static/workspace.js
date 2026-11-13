@@ -442,11 +442,26 @@ $('#prepareSheet').onclick=()=>changeDrawing(true);
 $('#saveTitle').onclick=()=>changeDrawing(false);
 window.addEventListener('message',async event=>{
   const data=event.data, frame=$('#preview iframe');
-  if(!['cad-history-request','cad-history-current','cad-history-cancel'].includes(data?.type)||!frame||event.source!==frame.contentWindow)return;
+  if(!['cad-history-request','cad-history-current','cad-history-cancel','cad-batch-step-request'].includes(data?.type)||!frame||event.source!==frame.contentWindow)return;
   const assetPath=String(data.assetPath||'');
   if(!state.project||assetPath!==state.previewPath||!assetPath.toLowerCase().endsWith('.dxf'))return;
   if(data.type==='cad-history-cancel'){
     if(state.activeHistoryRequest===data.requestId){state.historyRequest++;state.activeHistoryRequest=null;}
+    return;
+  }
+  if(data.type==='cad-batch-step-request'){
+    if(state.busy){event.source.postMessage({type:'cad-batch-step-result',assetPath,requestId:data.requestId,ok:false,error:'另一项操作正在保存，请稍后重试'},'*');return;}
+    const project=state.project, version=state.preview, sequence=++state.historyRequest;
+    state.activeHistoryRequest=data.requestId;state.cadHistory=true;$('#drawingTools').hidden=true;$('#downloadAsset').hidden=true;
+    $('#previewHint').textContent='批次子步骤只读 · 查看不会修改当前文件或撤销位置';
+    const batchReply=payload=>event.source.postMessage({type:'cad-batch-step-result',assetPath,requestId:data.requestId,...payload},'*');
+    try{
+      const query=new URLSearchParams({root:project.project_dir,run_id:String(data.runId||''),step_index:String(data.stepIndex??0),side:String(data.side||'after')});
+      const result=await request('/api/cad/batch-step-view?'+query);
+      if(state.project?.id!==project.id||state.preview!==version||state.historyRequest!==sequence||$('#preview iframe')!==frame)return;
+      $('#assetDetails').textContent=JSON.stringify({run_id:result.run_id,step_index:result.step_index,operation:result.operation,validation:result.validation},null,2);
+      batchReply({ok:true,scene:result.scene,runId:result.run_id,stepIndex:result.step_index,operation:result.operation});
+    }catch(error){batchReply({ok:false,error:error.message});}
     return;
   }
   const reply=payload=>event.source.postMessage({type:'cad-history-result',assetPath,requestId:data.requestId,index:data.index,...payload},'*');

@@ -217,6 +217,18 @@ def test_batch_step_view_rejects_invalid_or_missing_checkpoint(tmp_path):
     assert response["result"]["structuredContent"]["error"]["code"] == "INVALID_ARGUMENTS"
 
 
+def test_viewer_publishes_batch_step_request_metadata(tmp_path):
+    path = source(tmp_path)
+    result = edit(tmp_path, path, "cad.batch_apply", operations=[
+        {"operation": "cad.entity_move", "entity_ids": ["e00001"], "delta": [2, 0, 0]},
+    ])
+    from engineering_agent.viewer import asset_view
+    viewer = asset_view(tmp_path, path.name)["viewer"]
+    assert "data-batch='true'" in viewer
+    assert f"data-run-id='{result['run_id']}'" in viewer
+    assert "cad-batch-step-request" in viewer
+
+
 def test_mcp_safe_profile_can_read_history(tmp_path):
     path = source(tmp_path)
     revision = edit(tmp_path, path)["run_id"]

@@ -18,7 +18,7 @@ const revisions=revisionHistory.revisions||[], frames=revisions.length?[
   ...revisions.map((row,index)=>({revision_id:row.id,side:'after',label:`${index+1}. ${row.operation}${row.applied?'':' · 尚未重做'} · ${row.at}`})),
 ]:[];
 const revisionSelect=document.getElementById('revision'), historyStatus=document.getElementById('historyStatus');
-let readOnly=viewer.dataset.readOnly==='true', historyIndex=-1, historyPending=null, historyResolve=null, historySequence=0, playSequence=0, playing=false, currentView=null;
+let readOnly=viewer.dataset.readOnly==='true', historyIndex=-1, historyPending=null, historyResolve=null, historySequence=0, batchPending=null, batchSequence=0, playSequence=0, playing=false, currentView=null;
 for(const [index,item] of frames.entries()){const option=document.createElement('option');option.value=String(index);option.textContent=item.label;revisionSelect.append(option);}
 function refreshControls(){
   document.querySelectorAll('.edits button,.edits input').forEach(el=>el.disabled=readOnly||pending!==null);
@@ -31,7 +31,7 @@ function refreshControls(){
   document.getElementById('historyCurrent').disabled=!readOnly||!assetPath||pending!==null;
   document.getElementById('replay').disabled=unavailable;
   document.getElementById('replay').textContent=playing?'暂停':'播放历史';
-  document.querySelector('.operations').hidden=readOnly;
+  document.querySelector('.operations').hidden=false;
   viewer.dataset.readOnly=String(readOnly);
 }
 function entityData(id){
@@ -295,6 +295,16 @@ function showOperation(index){
   const present=new Set(paths.map(el=>el.dataset.entityId)),missing=[...ids].filter(id=>!present.has(id));
   editStatus.textContent=`步骤 ${index+1}/${operationHistory.length}：${step.label} · ${present.size} 个当前可见对象`+(missing.length?` · ${missing.length} 个已删除或当前隐藏对象`:'');
 }
+function cancelBatchRequest(){if(batchPending!==null){batchSequence++;batchPending=null;}}
+function loadBatchStep(index){
+  const step=operationHistory[index];
+  if(!step?.batch||!step.run_id||window.parent===window){showOperation(index);return;}
+  pauseHistory();
+  if(!readOnly)currentView=captureView();
+  readOnly=true;batchPending=++batchSequence;
+  historyStatus.textContent='正在读取批次子步骤 · 只读';editStatus.textContent='批次子步骤只读，请先返回当前文件';refreshControls();
+  window.parent.postMessage({type:'cad-batch-step-request',requestId:batchPending,assetPath,runId:step.run_id,stepIndex:Number(step.step_index||0),side:'after'},'*');
+}
 function replaceScene(scene){
   const parsed=new DOMParser().parseFromString(scene.svg,'image/svg+xml'), replacement=parsed.documentElement;
   if(replacement.localName!=='svg'||parsed.querySelector('parsererror'))throw new Error('历史图纸预览格式错误');
@@ -333,7 +343,7 @@ function cancelHistoryRequest(){
   const resolve=historyResolve;historyResolve=null;resolve?.(false);
 }
 function pauseHistory(){
-  playing=false;playSequence++;cancelHistoryRequest();refreshControls();
+  playing=false;playSequence++;cancelHistoryRequest();cancelBatchRequest();refreshControls();
 }
 function loadHistory(index){
   if(!frames[index]||pending!==null)return Promise.resolve(false);
@@ -367,6 +377,18 @@ document.getElementById('replay').onclick=async()=>{
   }
   if(run===playSequence){playing=false;refreshControls();}
 };
+window.addEventListener('message',event=>{
+  const data=event.data;
+  if(event.source!==window.parent||data?.type!=='cad-batch-step-result'||data.assetPath!==assetPath||data.requestId!==batchPending)return;
+  batchPending=null;
+  try{
+    if(!data.ok)throw new Error(data.error||'读取批次子步骤失败');
+    replaceScene(data.scene);
+    historyStatus.textContent=`批次步骤 ${Number(data.stepIndex)+1} · ${data.operation||'CAD operation'} · 只读`;
+    editStatus.textContent='批次子步骤只读，请先返回当前文件';
+  }catch(error){historyStatus.textContent='读取批次子步骤失败：'+error.message+'；可返回当前文件';}
+  refreshControls();
+});
 window.addEventListener('message',event=>{
   const data=event.data;
   if(event.source!==window.parent||data?.type!=='cad-history-result'||data.assetPath!==assetPath||data.requestId!==historyPending)return;
@@ -474,7 +496,11 @@ document.getElementById('rotate').onclick=()=>requestEdit('cad.entity_rotate',{a
 document.getElementById('delete').onclick=()=>requestEdit('cad.entity_delete',{});
 document.getElementById('updateText').onclick=()=>requestEdit('cad.entity_update',{patch:{text:document.getElementById('text').value}});
 document.getElementById('saveSelection').onclick=()=>requestEdit('cad.selection_create',{name:document.getElementById('selectionName').value||'picked'});
-operationButtons.forEach(button=>button.onclick=()=>{if(!readOnly)showOperation(Number(button.dataset.historyIndex));});
+operationButtons.forEach(button=>button.onclick=()=>{
+  const index=Number(button.dataset.historyIndex);
+  if(button.dataset.batch==='true')loadBatchStep(index);
+  else if(!readOnly)showOperation(index);
+});
 window.addEventListener('message',event=>{
   if(event.source===window.parent&&event.data?.type==='cad-view-restore'&&event.data.assetPath===assetPath)restoreView(event.data.state);
 });
