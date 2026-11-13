@@ -150,6 +150,13 @@ def test_mcp_asset_view_returns_structured_metadata_and_image_content(tmp_path):
     assert any(item["uri"].startswith("engineering://asset?") for item in discovered["result"]["resources"])
 
 
+def test_mcp_cad_resource_cannot_escape_project_root(tmp_path):
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="safe")
+    uri = f"engineering://cad?root={tmp_path}&path=/etc/passwd"
+    response = server.handle({"jsonrpc": "2.0", "id": 1, "method": "resources/read", "params": {"uri": uri}})
+    assert response["error"]["code"] == "PATH_OUTSIDE_ROOT"
+
+
 def test_mcp_inspect_image_returns_read_only_crop_with_source_coordinates(tmp_path):
     source = tmp_path / "drawing.png"
     image = Image.new("RGBA", (120, 80), (0, 0, 0, 0))

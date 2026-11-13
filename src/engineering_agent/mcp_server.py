@@ -284,7 +284,11 @@ class MCPServer:
             path = query.get("path", [""])[0]
             if not path:
                 raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "CAD resource path is required")
-            document = CadDocument.open(path if Path(path).is_absolute() else str(Path(root) / path))
+            root_path = Path(root).expanduser().resolve()
+            candidate = (Path(path).expanduser() if Path(path).is_absolute() else root_path / path).resolve()
+            if candidate != root_path and root_path not in candidate.parents:
+                raise ProtocolError(ErrorCode.PATH_OUTSIDE_ROOT, "CAD resource path is outside the project root", details={"root": str(root_path), "path": str(candidate)})
+            document = CadDocument.open(candidate)
             value = {"document": document.to_dict()}
         elif parsed.netloc == "asset":
             path = query.get("path", [""])[0]
