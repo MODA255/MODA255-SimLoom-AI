@@ -217,6 +217,42 @@ def _line_intersection(first: dict[str, Any], second: dict[str, Any], tolerance:
     return {"x": a["x"] + factor * abx, "y": a["y"] + factor * aby, "z": a["z"] + factor * (b["z"] - a["z"])}
 
 
+def _segment_intersection(first: dict[str, Any], second: dict[str, Any], tolerance: float = 1e-9) -> dict[str, float] | None:
+    """Return an intersection only when it lies on both finite segments."""
+    a, b = _line_point(first, "start"), _line_point(first, "end")
+    c, d = _line_point(second, "start"), _line_point(second, "end")
+    abx, aby = b["x"] - a["x"], b["y"] - a["y"]
+    cdx, cdy = d["x"] - c["x"], d["y"] - c["y"]
+    denominator = abx * cdy - aby * cdx
+    if abs(denominator) <= tolerance:
+        return None
+    acx, acy = c["x"] - a["x"], c["y"] - a["y"]
+    first_factor = (acx * cdy - acy * cdx) / denominator
+    second_factor = (acx * aby - acy * abx) / denominator
+    if first_factor < -tolerance or first_factor > 1 + tolerance or second_factor < -tolerance or second_factor > 1 + tolerance:
+        return None
+    first_factor = min(1.0, max(0.0, first_factor))
+    return {"x": a["x"] + first_factor * abx, "y": a["y"] + first_factor * aby,
+            "z": a["z"] + first_factor * (b["z"] - a["z"])}
+
+
+def _line_polyline_intersections(line: dict[str, Any], boundary: dict[str, Any], tolerance: float = 1e-9) -> list[dict[str, float]]:
+    vertices = [_point(value) for value in boundary.get("vertices", [])]
+    if len(vertices) < 2:
+        raise ValueError("TRIM_BOUNDARY_TOO_SHORT")
+    bulges = boundary.get("bulges") or []
+    if any(abs(float(value)) > tolerance for value in bulges):
+        raise ValueError("TRIM_BULGED_BOUNDARY_UNSUPPORTED")
+    count = len(vertices) if boundary.get("closed") else len(vertices) - 1
+    points: list[dict[str, float]] = []
+    for index in range(count):
+        segment = {"start": vertices[index], "end": vertices[(index + 1) % len(vertices)]}
+        point = _segment_intersection(line, segment, tolerance)
+        if point is not None and not any(_distance(point, existing) <= tolerance for existing in points):
+            points.append(point)
+    return points
+
+
 def _line_circle_intersections(line: dict[str, Any], circle: dict[str, Any], tolerance: float = 1e-9) -> list[dict[str, float]]:
     """Return finite segment/circle intersections in deterministic order."""
     start, end = _line_point(line, "start"), _line_point(line, "end")
@@ -982,6 +1018,12 @@ class CadOperationEngine:
                         intersections = _line_circle_intersections(entity, boundary)
                         if boundary_kind == "ARC":
                             intersections = _filter_arc_intersections(intersections, boundary)
+                        if not intersections:
+                            raise ValueError("TRIM_NO_INTERSECTION")
+                        anchor = _line_point(entity, "start" if keep == "start" else "end")
+                        point = min(intersections, key=lambda candidate: _distance(anchor, candidate))
+                    elif boundary_kind in {"LWPOLYLINE", "POLYLINE"}:
+                        intersections = _line_polyline_intersections(entity, boundary)
                         if not intersections:
                             raise ValueError("TRIM_NO_INTERSECTION")
                         anchor = _line_point(entity, "start" if keep == "start" else "end")

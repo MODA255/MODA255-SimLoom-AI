@@ -296,6 +296,33 @@ def test_trim_supports_line_circle_and_arc_line_intersections(tmp_path):
     assert arc["end_angle"] == 90
 
 
+def test_trim_supports_finite_polyline_cutting_boundaries(tmp_path):
+    source = tmp_path / "polyline-boundary.dxf"
+    write_dxf(source, entities=[
+        {"type": "LINE", "start": {"x": -5, "y": 0}, "end": {"x": 15, "y": 0}},
+        {"type": "LWPOLYLINE", "vertices": [{"x": 4, "y": -2}, {"x": 4, "y": 2}], "closed": False},
+    ])
+    output = tmp_path / "polyline-trim.dxf"
+    result = EngineeringAgent({"tools": {}}).execute_operation("cad.entity_trim", {
+        "project_dir": str(tmp_path), "input_file": source, "output_file": output,
+        "entity_id": "e00001", "boundary_entity_id": "e00002", "keep": "start",
+    })
+    assert result["persisted_validation"]["valid"]
+    line = CadDocument.open(output).entities[0]
+    assert line["start"]["x"] == -5 and line["end"]["x"] == 4
+
+    bulged = tmp_path / "bulged.dxf"
+    write_dxf(bulged, entities=[
+        {"type": "LINE", "start": {"x": -5, "y": 0}, "end": {"x": 15, "y": 0}},
+        {"type": "LWPOLYLINE", "vertices": [{"x": 4, "y": -2}, {"x": 4, "y": 2}], "bulges": [1], "closed": False},
+    ])
+    with pytest.raises(ValueError, match="TRIM_BULGED_BOUNDARY_UNSUPPORTED"):
+        EngineeringAgent({"tools": {}}).execute_operation("cad.entity_trim", {
+            "project_dir": str(tmp_path), "input_file": bulged, "output_file": tmp_path / "rejected.dxf",
+            "entity_id": "e00001", "boundary_entity_id": "e00002", "keep": "start",
+        })
+
+
 def test_offset_uses_signed_side_and_preserves_polyline_connectivity(tmp_path):
     source = tmp_path / "offset.dxf"
     write_dxf(source, entities=[

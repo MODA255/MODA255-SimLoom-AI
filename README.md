@@ -97,6 +97,7 @@ PYTHONPATH=src python -m engineering_agent.cli \
 - 对已保存的工程快照直接生成 DXF 视觉 diff，保留版本时间线和对象级差异。
 - 为 CATIA/Ansys/Adams/VI-grade 的结果文件建立可恢复监测游标，识别新增、修改、删除、仅时间戳变化和仍在写入的文件，见 [外部工程文件监测](docs/FILE_WATCH.md)。
 - 在软件任务启动前生成保守的工程依赖图，标出项目内引用、配套文件、缺失目标和外部目标，见 [工程依赖扫描](docs/DEPENDENCY_SCAN.md)。
+- CAD 修剪会对有限直线、圆、圆弧和直线多段线边界求真实交点，并在事务提交后重新验证，见 [修剪边界契约](docs/CAD_TRIM.md)。
 - 通过 CLI、Web API、MCP 或 Python API 使用同一套 runtime。
 
 这里的“生成脚本”和“调用软件”指的是给已安装的软件准备输入并驱动其执行。生成模板、
