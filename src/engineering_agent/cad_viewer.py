@@ -60,6 +60,7 @@ def render_cad_viewer(geometry, *, asset_path=None, history=None, source_path=No
         f"<div class='toolbar' data-cad-viewer data-read-only='{str(read_only).lower()}' data-asset-path='{escape(asset_path or '', quote=True)}'>",
         f"<button id='undo'{undo_disabled}>撤销</button><button id='redo'{redo_disabled}>重做</button>",
         "<button id='fit'>适合窗口</button><button id='fitSelection'>放大选中</button><button id='clear'>清除选择</button>",
+        "<label class='snap-control'><input id='snap' type='checkbox' checked> 对象捕捉</label><select id='snapMode' title='对象捕捉类型'><option value='auto'>智能</option><option value='endpoint'>端点</option><option value='midpoint'>中点</option><option value='center'>中心</option></select><span id='snapStatus' role='status'></span>",
         "<span id='selection' role='status'>未选择实体</span></div>",
         f"<div class='toolbar history-controls'><label>图纸版本 <select id='revision'><option value='current'>{'历史快照' if read_only else '当前文件'}</option></select></label>",
         "<button id='historyPrevious'>上一步</button><button id='historyNext'>下一步</button><button id='replay'>播放历史</button><button id='historyCurrent'>返回当前</button>",

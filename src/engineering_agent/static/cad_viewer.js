@@ -1,6 +1,7 @@
 const svg=document.getElementById('cad'), selected=new Set(), status=document.getElementById('selection'), editStatus=document.getElementById('editStatus');
+const snapToggle=document.getElementById('snap'), snapMode=document.getElementById('snapMode'), snapStatus=document.getElementById('snapStatus');
 const viewer=document.querySelector('[data-cad-viewer]'), assetPath=viewer?.dataset.assetPath||'';
-let pending=null, requestSequence=0, drag=null, suppressClick=false, spaceDown=false;
+let pending=null, requestSequence=0, drag=null, suppressClick=false, spaceDown=false, snapMarker=null, activeSnap=null;
 let initialView=svg.dataset.initialViewbox.split(/\s+/).map(Number);
 let worldMatrix=new DOMMatrix(JSON.parse(svg.dataset.worldTransform));
 let inverseWorld=worldMatrix.inverse();
@@ -65,6 +66,55 @@ function localPoint(event,matrix=svg.getScreenCTM().inverse()){
   return new DOMPoint(event.clientX,event.clientY).matrixTransform(matrix);
 }
 function visiblePaths(){return primitives.filter(el=>el.style.display!=='none');}
+function ensureSnapMarker(){
+  if(snapMarker?.isConnected)return snapMarker;
+  snapMarker=document.createElementNS('http://www.w3.org/2000/svg','g');snapMarker.setAttribute('class','snap-marker-group');snapMarker.style.display='none';
+  const circle=document.createElementNS('http://www.w3.org/2000/svg','circle');circle.setAttribute('class','snap-marker');circle.setAttribute('r','4');
+  const horizontal=document.createElementNS('http://www.w3.org/2000/svg','line');horizontal.setAttribute('class','snap-marker-line');horizontal.setAttribute('x1','-7');horizontal.setAttribute('x2','7');
+  const vertical=document.createElementNS('http://www.w3.org/2000/svg','line');vertical.setAttribute('class','snap-marker-line');vertical.setAttribute('y1','-7');vertical.setAttribute('y2','7');
+  snapMarker.append(circle,horizontal,vertical);svg.append(snapMarker);return snapMarker;
+}
+function hideSnap(){
+  activeSnap=null;if(snapMarker)snapMarker.style.display='none';if(snapStatus)snapStatus.textContent='';
+}
+function snapCandidates(){
+  const candidates=[];const seen=new Set();
+  const add=(x,y,kind,id)=>{
+    if(!Number.isFinite(x)||!Number.isFinite(y)||!id)return;
+    const key=`${id}:${kind}:${x.toFixed(6)}:${y.toFixed(6)}`;if(seen.has(key))return;seen.add(key);candidates.push({x,y,kind,entityId:id});
+  };
+  for(const element of visiblePaths()){
+    const id=element.dataset.entityId;if(!id)continue;
+    let box;try{box=element.getBBox();}catch{continue;}
+    add(box.x+box.width/2,box.y+box.height/2,'center',id);
+    add(box.x,box.y,'endpoint',id);add(box.x+box.width,box.y,'endpoint',id);
+    add(box.x,box.y+box.height,'endpoint',id);add(box.x+box.width,box.y+box.height,'endpoint',id);
+    if(typeof element.getTotalLength==='function'){
+      try{
+        const length=element.getTotalLength();
+        for(const [distance,kind] of [[0,'endpoint'],[length,'endpoint'],[length/2,'midpoint']]){
+          const point=element.getPointAtLength(distance);add(point.x,point.y,kind,id);
+        }
+      }catch{}
+    }
+  }
+  return candidates;
+}
+function updateSnap(event){
+  if(!snapToggle?.checked){hideSnap();return;}
+  const point=localPoint(event),screenMatrix=svg.getScreenCTM();if(!screenMatrix){hideSnap();return;}
+  const mode=snapMode?.value||'auto';let best=null,bestDistance=Infinity;
+  for(const candidate of snapCandidates()){
+    if(mode!=='auto'&&candidate.kind!==mode)continue;
+    const screenPoint=new DOMPoint(candidate.x,candidate.y).matrixTransform(screenMatrix);
+    const distance=Math.hypot(screenPoint.x-event.clientX,screenPoint.y-event.clientY);
+    if(distance<bestDistance){bestDistance=distance;best=candidate;}
+  }
+  if(!best||bestDistance>18){hideSnap();return;}
+  const world=new DOMPoint(best.x,best.y).matrixTransform(inverseWorld);activeSnap={...best,world};
+  const marker=ensureSnapMarker();marker.setAttribute('transform',`translate(${best.x} ${best.y})`);marker.style.display='';
+  if(snapStatus)snapStatus.textContent=`${best.kind==='endpoint'?'端点':best.kind==='midpoint'?'中点':'中心'} · ${best.entityId} · X ${world.x.toFixed(3)} Y ${world.y.toFixed(3)}`;
+}
 function boundsOf(paths){
   if(!paths.length)return null;
   return paths.reduce((bounds,el)=>{const b=el.getBBox();return [Math.min(bounds[0],b.x),Math.min(bounds[1],b.y),Math.max(bounds[2],b.x+b.width),Math.max(bounds[3],b.y+b.height)];},[Infinity,Infinity,-Infinity,-Infinity]);
@@ -125,6 +175,7 @@ function replaceScene(scene){
   if(drag){drag.rect?.remove();if(svg.hasPointerCapture(drag.id))svg.releasePointerCapture(drag.id);drag=null;}
   svg.classList.remove('panning');
   svg.replaceChildren(...[...replacement.childNodes].map(node=>document.importNode(node,true)));
+  snapMarker=null;activeSnap=null;ensureSnapMarker();
   for(const name of ['viewBox','data-world-transform','data-initial-viewbox'])svg.setAttribute(name,replacement.getAttribute(name));
   initialView=svg.dataset.initialViewbox.split(/\s+/).map(Number);
   worldMatrix=new DOMMatrix(JSON.parse(svg.dataset.worldTransform));inverseWorld=worldMatrix.inverse();
@@ -203,9 +254,11 @@ window.addEventListener('message',event=>{
 });
 svg.addEventListener('click',e=>{
   if(suppressClick){suppressClick=false;return;}if(pending)return;
-  const item=e.target.closest('.entity');if(!item)return;
-  const id=item.dataset.entityId;if(selected.has(id))selected.delete(id);else selected.add(id);paint();
-  if(selected.size===1&&['TEXT','MTEXT'].includes(item.dataset.entityType))document.getElementById('text').value=item.textContent;
+  const item=e.target.closest('.entity'), snapped=activeSnap&&activeSnap.entityId;
+  const id=item?.dataset.entityId||snapped;if(!id)return;
+  if(selected.has(id))selected.delete(id);else selected.add(id);paint();
+  const selectedItem=item||[...svg.querySelectorAll('.entity')].find(element=>element.dataset.entityId===id);
+  if(selected.size===1&&['TEXT','MTEXT'].includes(selectedItem?.dataset.entityType))document.getElementById('text').value=selectedItem.textContent;
 });
 svg.addEventListener('dblclick',e=>{
   const item=e.target.closest('.entity');
@@ -219,8 +272,8 @@ svg.addEventListener('wheel',e=>{
 svg.addEventListener('pointerdown',e=>{
   suppressClick=false;
   if(pending||![0,1].includes(e.button))return;
-  const item=e.target.closest('.entity');
-  if(e.button===0&&item&&!e.shiftKey&&!spaceDown)return;
+  const item=e.target.closest('.entity'), snapped=activeSnap&&activeSnap.entityId;
+  if(e.button===0&&(item||snapped)&&!e.shiftKey&&!spaceDown)return;
   e.preventDefault();svg.setPointerCapture(e.pointerId);
   const matrix=svg.getScreenCTM().inverse(),start=localPoint(e,matrix);
   drag={mode:e.shiftKey&&e.button===0?'window':'pan',start,matrix,view:viewBox(),client:[e.clientX,e.clientY],id:e.pointerId,append:e.ctrlKey||e.metaKey};
@@ -229,7 +282,9 @@ svg.addEventListener('pointerdown',e=>{
 });
 svg.addEventListener('pointermove',e=>{
   const world=localPoint(e).matrixTransform(inverseWorld);
-  document.getElementById('coordinates').textContent=`X ${world.x.toFixed(3)} · Y ${world.y.toFixed(3)}`;
+  updateSnap(e);
+  const snappedWorld=activeSnap?.world||world;
+  document.getElementById('coordinates').textContent=`X ${snappedWorld.x.toFixed(3)} · Y ${snappedWorld.y.toFixed(3)}${activeSnap?' · 已捕捉':''}`;
   if(!drag)return;
   const p=localPoint(e,drag.matrix);
   if(drag.mode==='pan')setView([drag.view[0]+drag.start.x-p.x,drag.view[1]+drag.start.y-p.y,drag.view[2],drag.view[3]]);
@@ -271,10 +326,12 @@ window.addEventListener('keydown',e=>{
 window.addEventListener('keyup',e=>{if(e.code==='Space')spaceDown=false;});
 window.addEventListener('blur',()=>{spaceDown=false;});
 document.querySelector('.layer-list').addEventListener('change',event=>{const input=event.target;if(input.matches('input[data-layer]')){layerVisibility.set(input.dataset.layer,input.checked);applyLayers();}});
+snapToggle?.addEventListener('change',()=>{if(!snapToggle.checked)hideSnap();});
+snapMode?.addEventListener('change',()=>{activeSnap=null;});
 document.getElementById('fit').onclick=()=>fit(visiblePaths());
 document.getElementById('fitSelection').onclick=()=>fit(visiblePaths().filter(el=>selected.has(el.dataset.entityId)));
 document.getElementById('clear').onclick=clearSelection;
-setView(initialView);
+ensureSnapMarker();setView(initialView);
 document.getElementById('undo').onclick=()=>requestEdit('cad.undo',{});
 document.getElementById('redo').onclick=()=>requestEdit('cad.redo',{});
 document.getElementById('move').onclick=()=>requestEdit('cad.entity_move',{delta:[Number(document.getElementById('dx').value||0),Number(document.getElementById('dy').value||0),0]});

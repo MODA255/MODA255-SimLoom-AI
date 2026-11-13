@@ -61,6 +61,14 @@ async function main(){
         const p=new DOMPoint(x,y).matrixTransform(new DOMMatrix(JSON.parse(svg.dataset.worldTransform))).matrixTransform(svg.getScreenCTM());return {x:p.x,y:p.y};
       },{x,y});return {x:offset.x+point.x,y:offset.y+point.y};
     }
+    const snapEndpoint=await screen(0,0);await page.mouse.move(snapEndpoint.x,snapEndpoint.y);await page.waitForTimeout(40);
+    assert.notEqual(await frame().locator('.snap-marker-group').evaluate(el=>getComputedStyle(el).display),'none');
+    assert.match(await frame().locator('#snapStatus').textContent(),/端点/);
+    await frame().locator('#snapMode').selectOption('center');
+    const snapCenter=await screen(5,5);await page.mouse.move(snapCenter.x,snapCenter.y);await page.waitForTimeout(40);
+    assert.match(await frame().locator('#snapStatus').textContent(),/中心/);
+    await frame().locator('#snap').uncheck();assert.equal(await frame().locator('.snap-marker-group').evaluate(el=>getComputedStyle(el).display),'none');
+    await frame().locator('#snap').check();await frame().locator('#snapMode').selectOption('auto');
     let start=await screen(49,11),end=await screen(71,-11);
     await page.keyboard.down('Shift');await page.mouse.move(start.x,start.y);await page.mouse.down();await page.mouse.move(end.x,end.y,{steps:8});await page.mouse.up();await page.keyboard.up('Shift');
     assert.match(await frame().locator('#selection').textContent(),new RegExp(ids.ellipse));

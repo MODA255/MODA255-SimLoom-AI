@@ -83,6 +83,17 @@ def test_asset_api_provides_native_svg_and_source_identity(drawing):
     assert 'data-renderer="ezdxf-svg"' in result['viewer']
 
 
+def test_viewer_exposes_object_snap_controls(drawing):
+    path, _, _ = drawing
+    result = asset_view(path.parent, path.name)
+    viewer = result['viewer']
+    assert "id='snap'" in viewer
+    assert "id='snapMode'" in viewer
+    assert "value='endpoint'" in viewer
+    assert "value='midpoint'" in viewer
+    assert "value='center'" in viewer
+
+
 def test_unsupported_entity_is_reported_instead_of_silently_removed(tmp_path):
     path = tmp_path / 'unsupported.dxf'
     native = ezdxf.new()
