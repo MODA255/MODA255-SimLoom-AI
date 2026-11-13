@@ -765,6 +765,19 @@ def _unit_vector(value: Any) -> dict[str, float]:
     return {axis: vector[axis] / length for axis in ("x", "y", "z")}
 
 
+def _block_attribute_world_point(block: Block, insert: dict[str, Any], local: dict[str, Any]) -> dict[str, float]:
+    base = _point(block.base_point)
+    origin = _point(insert.get("insert"))
+    scale = insert.get("scale") or {}
+    sx, sy, sz = (float(scale.get(axis, 1)) for axis in ("x", "y", "z"))
+    angle = math.radians(float(insert.get("rotation", 0)))
+    value = _point(local)
+    x, y = (value["x"] - base["x"]) * sx, (value["y"] - base["y"]) * sy
+    return {"x": origin["x"] + x * math.cos(angle) - y * math.sin(angle),
+            "y": origin["y"] + x * math.sin(angle) + y * math.cos(angle),
+            "z": origin["z"] + (value["z"] - base["z"]) * sz}
+
+
 def _inside_window(point: dict[str, Any], first: dict[str, Any], second: dict[str, Any], tolerance: float = 1e-9) -> bool:
     return (min(first["x"], second["x"]) - tolerance <= float(point.get("x", 0)) <= max(first["x"], second["x"]) + tolerance
             and min(first["y"], second["y"]) - tolerance <= float(point.get("y", 0)) <= max(first["y"], second["y"]) + tolerance)
@@ -2205,6 +2218,57 @@ class CadOperationEngine:
                 document.entities.append(inserted)
             return {"block": document.blocks[block_name].to_dict(), "source_ids": source_ids,
                     "insert": inserted, "kept_originals": keep_originals}
+        if name == "block_attribute_create":
+            block_name = str(arguments.get("block_name", arguments.get("name", ""))).strip()
+            if block_name not in document.blocks:
+                raise ValueError("BLOCK_NOT_FOUND:" + block_name)
+            tag = str(arguments.get("tag", "")).strip()
+            if not tag or not tag.replace("_", "a").replace("-", "a").isalnum():
+                raise ValueError("BLOCK_ATTRIBUTE_TAG_INVALID")
+            block = document.blocks[block_name]
+            existing = next((item for item in block.entities
+                             if str(item.get("type", "")).upper() == "ATTDEF" and str(item.get("tag", "")).casefold() == tag.casefold()), None)
+            mode = str(arguments.get("if_exists", "error")).lower()
+            if existing is not None and mode == "error":
+                raise ValueError("BLOCK_ATTRIBUTE_EXISTS:" + tag)
+            if mode not in {"error", "update"}:
+                raise ValueError("BLOCK_ATTRIBUTE_IF_EXISTS_INVALID")
+            layer_name = str(arguments.get("layer", existing.get("layer", "0") if existing else "0"))
+            height = _finite_cad_number(arguments.get("height", existing.get("height", 1) if existing else 1), "BLOCK_ATTRIBUTE_HEIGHT_INVALID")
+            if height <= 0:
+                raise ValueError("BLOCK_ATTRIBUTE_HEIGHT_INVALID")
+            insert = _point(arguments.get("insert", existing.get("insert") if existing else block.base_point))
+            attribute = copy.deepcopy(existing) if existing else {"id": f"block:{block_name}:attdef:{tag}", "type": "ATTDEF"}
+            attribute.update({"tag": tag, "layer": layer_name, "insert": insert,
+                              "text": str(arguments.get("text", existing.get("text", "") if existing else "")),
+                              "height": height, "rotation": _finite_cad_number(arguments.get("rotation", existing.get("rotation", 0) if existing else 0), "BLOCK_ATTRIBUTE_ROTATION_INVALID"),
+                              "style": str(arguments.get("style", existing.get("style", "Standard") if existing else "Standard")),
+                              "prompt": str(arguments.get("prompt", existing.get("prompt", "") if existing else "")),
+                              "flags": int(arguments.get("flags", existing.get("flags", 0) if existing else 0))})
+            if existing is None:
+                block.entities.append(attribute)
+            else:
+                block.entities[block.entities.index(existing)] = attribute
+            affected = []
+            for entity in document.entities:
+                if str(entity.get("type", "")).upper() != "INSERT" or str(entity.get("block_name", "")) != block_name:
+                    continue
+                values = copy.deepcopy(entity.get("attributes", []))
+                current = next((item for item in values if str(item.get("tag", "")).casefold() == tag.casefold()), None)
+                if current is None:
+                    current = {"id": f"{entity.get('id')}:attr:{tag}", "type": "ATTRIB", "tag": tag,
+                               "text": attribute["text"], "insert": _block_attribute_world_point(block, entity, insert),
+                               "height": height, "rotation": attribute["rotation"], "style": attribute["style"],
+                               "layer": entity.get("layer", layer_name), "flags": attribute.get("flags", 0)}
+                    values.append(current)
+                else:
+                    current.update({"text": attribute["text"], "insert": _block_attribute_world_point(block, entity, insert),
+                                    "height": height, "rotation": attribute["rotation"], "style": attribute["style"],
+                                    "flags": attribute.get("flags", 0)})
+                entity["attributes"] = values
+                affected.append(str(entity.get("id")))
+            document.ensure_layer(layer_name)
+            return {"block": block.to_dict(), "attribute": attribute, "inserts": affected}
         if name == "block_delete":
             block_name = str(arguments.get("name", ""))
             if block_name not in document.blocks: raise ValueError("BLOCK_NOT_FOUND:" + block_name)

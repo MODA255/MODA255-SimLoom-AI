@@ -42,6 +42,9 @@ SimLoom 原有的 CATIA / Ansys / Adams / VI-grade 工程链、B-Rep 和仿真�
 `cad.set_page_setup` 现已补齐：为纸空间写入原生纸张尺寸、方向、边距、偏移、比例和输出设备，
 并在回读时验证 layout 设置，细节见 `CAD_PAGE_SETUP.md`。
 
+`cad.block_attribute_create` 现已补齐：为块定义写入原生 ATTDEF，并同步现有 INSERT 的 ATTRIB、
+插入点变换和标签唯一性，细节见 `CAD_BLOCK_ATTRIBUTES.md`。
+
 ## 必须逐项证明的能力
 
 | 能力 | 本地证据及现状 | 完成所需证据 / 下一步 |

@@ -84,6 +84,8 @@ def entity_model(entity) -> dict[str, Any]:
                 item["align_point"] = point(dxf.align_point)
         if kind in {"ATTDEF", "ATTRIB"}:
             item.update(tag=dxf.tag, flags=int(dxf.flags))
+            if kind == "ATTDEF" and dxf.hasattr("prompt"):
+                item["prompt"] = str(dxf.prompt)
     elif kind in {"LWPOLYLINE", "POLYLINE"}:
         if kind == "LWPOLYLINE":
             points = list(entity.get_points("xyseb"))
@@ -334,7 +336,7 @@ def _create(layout, item, *, render_dimensions=True):
     if kind == "ARC": return layout.add_arc(xyz(item["center"]), item["radius"], item["start_angle"], item["end_angle"], dxfattribs=attrs)
     if kind in {"TEXT", "ATTRIB", "ATTDEF"}:
         attrs.update(insert=xyz(item.get("insert")), height=item.get("height", 1), rotation=item.get("rotation", 0), style=item.get("style", "Standard"))
-        for key in ("halign", "valign", "flags", "oblique", "text_generation_flag"):
+        for key in ("halign", "valign", "flags", "oblique", "text_generation_flag", "prompt"):
             if key in item: attrs[key] = item[key]
         if "width_factor" in item: attrs["width"] = item["width_factor"]
         if "align_point" in item: attrs["align_point"] = xyz(item["align_point"])
@@ -465,7 +467,8 @@ def _patch(entity, item, before):
               "CIRCLE": {"center": "center", "radius": "radius"}, "ARC": {"center": "center", "radius": "radius", "start_angle": "start_angle", "end_angle": "end_angle"},
               "TEXT": {"insert": "insert", "height": "height", "text": "text", "rotation": "rotation", "style": "style", "halign": "halign", "valign": "valign", "align_point": "align_point", "width_factor": "width", "oblique": "oblique", "text_generation_flag": "text_generation_flag"},
               "ELLIPSE": {"center": "center", "major_axis": "major_axis", "ratio": "ratio", "start_param": "start_param", "end_param": "end_param"}}
-    fields["ATTRIB"] = fields["ATTDEF"] = fields["TEXT"] | {"tag": "tag", "flags": "flags"}
+    fields["ATTRIB"] = fields["TEXT"] | {"tag": "tag", "flags": "flags"}
+    fields["ATTDEF"] = fields["TEXT"] | {"tag": "tag", "flags": "flags", "prompt": "prompt"}
     if kind in fields:
         for source, dest in fields[kind].items():
             if source in item: dxf.set(dest, xyz(item[source]) if isinstance(item[source], dict) else item[source])
@@ -523,10 +526,18 @@ def _patch(entity, item, before):
                     **{axis + "scale": item.get("scale", {}).get(axis, 1) for axis in ("x", "y", "z")}})
         dxf.update({key: item[key] for key in ("row_count", "column_count", "row_spacing", "column_spacing") if key in item})
         attrs = item.get("attributes", [])
-        if [a.get("tag") for a in attrs] != [a.dxf.tag for a in entity.attribs]:
-            raise ValueError("INSERT_ATTRIBUTE_STRUCTURE_EDIT_UNSUPPORTED")
-        for attr, model in zip(entity.attribs, attrs):
-            _patch(attr, model, entity_model(attr))
+        wanted_tags = [str(a.get("tag", "")) for a in attrs]
+        existing_tags = [str(a.dxf.tag) for a in entity.attribs]
+        for tag in existing_tags:
+            if tag not in wanted_tags:
+                entity.delete_attrib(tag, ignore=True)
+        existing_by_tag = {str(a.dxf.tag): a for a in entity.attribs}
+        for model in attrs:
+            tag = str(model.get("tag", ""))
+            native = existing_by_tag.get(tag)
+            if native is None:
+                native = entity.add_attrib(tag, model.get("text", ""), xyz(model.get("insert")), dxfattribs=_attributes(model) | {key: model[key] for key in ("height", "rotation", "style", "halign", "valign", "flags", "oblique", "text_generation_flag") if key in model})
+            _patch(native, model, entity_model(native))
         return
     if kind == "DIMENSION":
         dxf.text = item.get("text", "<>")

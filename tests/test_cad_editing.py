@@ -988,6 +988,38 @@ def test_block_from_entities_creates_native_definition_and_optional_insert(tmp_p
     assert not {item["id"] for item in persisted.entities}.intersection({"e00001", "e00002"})
 
 
+def test_block_attribute_create_adds_attdef_and_populates_existing_inserts(tmp_path):
+    source = tmp_path / "attribute-source.dxf"
+    output = tmp_path / "attribute-output.dxf"
+    write_dxf(source, entities=[{"type": "INSERT", "block_name": "LABEL", "insert": {"x": 100, "y": 200},
+                                "scale": {"x": 1, "y": 1, "z": 1}, "rotation": 0}],
+              blocks=[{"name": "LABEL", "base_point": {"x": 0, "y": 0},
+                       "entities": [{"type": "LINE", "start": {"x": 0, "y": 0}, "end": {"x": 10, "y": 0}}]}])
+    agent = EngineeringAgent({"tools": {}})
+    result = agent.execute_operation("cad.block_attribute_create", {
+        "project_dir": str(tmp_path), "input_file": source, "output_file": output,
+        "block_name": "LABEL", "tag": "NAME", "text": "Bracket", "prompt": "Name", "insert": {"x": 2, "y": 3},
+        "height": 2.5,
+    })
+    assert result["persisted_validation"]["valid"]
+    document = CadDocument.open(output)
+    attdef = next(item for item in document.blocks["LABEL"].entities if item["type"] == "ATTDEF")
+    assert attdef["tag"] == "NAME" and attdef["prompt"] == "Name"
+    insert = next(item for item in document.entities if item["type"] == "INSERT")
+    attr = next(item for item in insert["attributes"] if item["tag"] == "NAME")
+    assert attr["text"] == "Bracket" and attr["insert"]["x"] == pytest.approx(102)
+    native = __import__("ezdxf").readfile(output)
+    block = native.blocks.get("LABEL")
+    assert any(entity.dxftype() == "ATTDEF" and entity.dxf.tag == "NAME" for entity in block)
+    native_insert = next(entity for entity in native.modelspace() if entity.dxftype() == "INSERT")
+    assert native_insert.get_attrib_text("NAME") == "Bracket"
+    with pytest.raises(ValueError, match="BLOCK_ATTRIBUTE_EXISTS:NAME"):
+        agent.execute_operation("cad.block_attribute_create", {
+            "project_dir": str(tmp_path), "input_file": output, "output_file": tmp_path / "duplicate-attribute.dxf",
+            "block_name": "LABEL", "tag": "NAME",
+        })
+
+
 def test_dimension_variants_round_trip(tmp_path):
     source = _source(tmp_path)
     output = tmp_path / "dimensions.dxf"
