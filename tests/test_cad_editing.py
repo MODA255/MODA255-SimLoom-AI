@@ -126,6 +126,27 @@ def test_rectangle_and_polygon_reject_degenerate_sizes(tmp_path):
                                                          "radius": 2, "sides": 2})
 
 
+def test_donut_create_persists_two_concentric_editable_circles(tmp_path):
+    source = tmp_path / "source.dxf"
+    output = tmp_path / "donut.dxf"
+    write_dxf(source, entities=[])
+    result = EngineeringAgent({"tools": {}}).execute_operation("cad.donut_create", {
+        "project_dir": str(tmp_path), "input_file": source, "output_file": output,
+        "center": {"x": 4, "y": 5}, "inner_radius": 2, "outer_radius": 6,
+    })
+    assert result["persisted_validation"]["valid"]
+    entities = CadDocument.open(output).entities
+    assert len(entities) == 2
+    assert {item["donut_role"] for item in entities} == {"inner", "outer"}
+    assert len({item["donut_id"] for item in entities}) == 1
+    assert {item["radius"] for item in entities} == {2.0, 6.0}
+    with pytest.raises(ValueError, match="DONUT_RADII_INVALID"):
+        EngineeringAgent({"tools": {}}).execute_operation("cad.donut_create", {
+            "project_dir": str(tmp_path), "input_file": source, "output_file": tmp_path / "bad.dxf",
+            "center": {"x": 0, "y": 0}, "inner_radius": 4, "outer_radius": 4,
+        })
+
+
 def test_cad_batch_is_transactional_and_emits_diff_and_sidecar(tmp_path):
     source = _source(tmp_path)
     output = tmp_path / "edited.dxf"

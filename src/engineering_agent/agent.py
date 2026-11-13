@@ -326,6 +326,8 @@ class EngineeringAgent:
                     raise ValueError("POLYGON_SIDES_INVALID")
                 if any(error.startswith("radius:") for error in schema_errors):
                     raise ValueError("POLYGON_RADIUS_INVALID")
+            if name == "cad.donut_create" and any(error.startswith(("inner_radius:", "outer_radius:")) for error in schema_errors):
+                raise ValueError("DONUT_RADII_INVALID")
             raise ValueError("INVALID_OPERATION_ARGUMENTS:" + ",".join(schema_errors))
         if name == "results.parse":
             return self.ingest(arguments["result_file"], "result")

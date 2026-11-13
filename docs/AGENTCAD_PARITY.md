@@ -30,6 +30,9 @@ SimLoom 原有的 CATIA / Ansys / Adams / VI-grade 工程链、B-Rep 和仿真�
 `cad.rectangle_create` 和 `cad.polygon_create` 现已补齐：生成带旋转、尺寸校验和原生回读的
 闭合 LWPOLYLINE，细节见 `CAD_PRIMITIVES.md`。
 
+`cad.donut_create` 现已补齐：生成带稳定关联元数据的同心内外圆，支持原生回读和继续编辑，
+细节见 `CAD_DONUT.md`。
+
 ## 必须逐项证明的能力
 
 | 能力 | 本地证据及现状 | 完成所需证据 / 下一步 |

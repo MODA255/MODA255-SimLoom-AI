@@ -934,6 +934,24 @@ class CadOperationEngine:
                     "entities": changed, "changed": bool(changed) or not math.isclose(scale, previous)}
         if name in {"document_open", "document_inspect"}:
             return {"document": document.to_dict()}
+        if name == "donut_create":
+            center = _point(arguments.get("center"))
+            inner = _finite_cad_number(arguments.get("inner_radius"), "DONUT_INNER_RADIUS_INVALID")
+            outer = _finite_cad_number(arguments.get("outer_radius"), "DONUT_OUTER_RADIUS_INVALID")
+            if inner <= 0 or outer <= 0 or outer <= inner:
+                raise ValueError("DONUT_RADII_INVALID")
+            layer_name = str(arguments.get("layer", "0"))
+            layer = document.ensure_layer(layer_name)
+            if layer.locked:
+                raise ValueError("CAD_LAYER_LOCKED:" + layer_name)
+            donut_id = document.next_id("donut")
+            outer_entity = {"id": document.next_id("donut-outer"), "type": "CIRCLE", "layer": layer_name,
+                            "center": center, "radius": outer, "donut_id": donut_id, "donut_role": "outer"}
+            inner_entity = {"id": document.next_id("donut-inner"), "type": "CIRCLE", "layer": layer_name,
+                            "center": center, "radius": inner, "donut_id": donut_id, "donut_role": "inner"}
+            document.entities.extend((outer_entity, inner_entity))
+            return {"entities": [outer_entity, inner_entity], "donut_id": donut_id,
+                    "inner_radius": inner, "outer_radius": outer, "representation": "concentric_circles"}
         convenience = {
             "line_create": lambda: ("LINE", {"start": _point(arguments.get("start")), "end": _point(arguments.get("end"))}),
             "circle_create": lambda: ("CIRCLE", {"center": _point(arguments.get("center")), "radius": arguments.get("radius")}),
