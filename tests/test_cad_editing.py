@@ -358,6 +358,92 @@ def test_trim_supports_spline_cutting_boundaries(tmp_path):
     assert line["start"]["y"] == -10 and line["end"]["y"] == pytest.approx(4, abs=1e-5)
 
 
+@pytest.mark.parametrize(
+    ("boundary", "end", "expected_end", "expected_start"),
+    [
+        ({"type": "LINE", "start": {"x": 5, "y": -2}, "end": {"x": 5, "y": 2}}, "end", 5.0, 0.0),
+        ({"type": "CIRCLE", "center": {"x": -5, "y": 0}, "radius": 1}, "start", 2.0, -4.0),
+        ({"type": "ARC", "center": {"x": 5, "y": 0}, "radius": 2, "start_angle": 90, "end_angle": 270}, "end", 3.0, 0.0),
+        ({"type": "ELLIPSE", "center": {"x": 5, "y": 0}, "major_axis": {"x": 2, "y": 0}, "ratio": 0.5}, "end", 3.0, 0.0),
+        ({"type": "LWPOLYLINE", "vertices": [{"x": 5, "y": -2}, {"x": 5, "y": 2}], "closed": False}, "end", 5.0, 0.0),
+        ({"type": "SPLINE", "fit_points": [{"x": 5, "y": -2}, {"x": 5, "y": 0}, {"x": 5, "y": 2}], "degree": 2}, "end", 5.0, 0.0),
+    ],
+)
+def test_entity_extend_supports_finite_boundary_types(tmp_path, boundary, end, expected_end, expected_start):
+    source = tmp_path / f"extend-{str(boundary['type']).lower()}.dxf"
+    output = tmp_path / f"extend-{str(boundary['type']).lower()}-out.dxf"
+    write_dxf(source, entities=[
+        {"type": "LINE", "start": {"x": 0, "y": 0}, "end": {"x": 2, "y": 0}},
+        boundary,
+    ])
+    result = EngineeringAgent({"tools": {}}).execute_operation("cad.entity_extend", {
+        "project_dir": str(tmp_path), "input_file": source, "output_file": output,
+        "target": "e00001", "edges": ["e00002"], "end": end,
+    })
+    assert result["validation"]["valid"] and result["persisted_validation"]["valid"]
+    line = CadDocument.open(output).entities[0]
+    assert line["end"]["x"] == pytest.approx(expected_end)
+    assert line["start"]["x"] == pytest.approx(expected_start)
+    assert result["results"][0]["edge_id"] == "e00002"
+
+
+def test_entity_extend_auto_selects_nearest_outside_endpoint_and_is_transactional(tmp_path):
+    source = tmp_path / "extend-auto.dxf"
+    output = tmp_path / "extend-auto-out.dxf"
+    write_dxf(source, entities=[
+        {"type": "LINE", "start": {"x": 0, "y": 0}, "end": {"x": 2, "y": 0}},
+        {"type": "LINE", "start": {"x": -4, "y": -2}, "end": {"x": -4, "y": 2}},
+        {"type": "LINE", "start": {"x": 3, "y": -2}, "end": {"x": 3, "y": 2}},
+        {"type": "LINE", "start": {"x": -2, "y": 5}, "end": {"x": 2, "y": 5}},
+    ])
+    result = EngineeringAgent({"tools": {}}).execute_operation("cad.entity_extend", {
+        "project_dir": str(tmp_path), "input_file": source, "output_file": output,
+        "target": "e00001", "edges": ["e00002", "e00003"], "end": "auto",
+    })
+    line = CadDocument.open(output).entities[0]
+    assert result["results"][0]["end"] == "end"
+    assert line["end"]["x"] == pytest.approx(3)
+
+    before = source.read_bytes()
+    failed = tmp_path / "extend-failed.dxf"
+    with pytest.raises(ValueError, match="EXTEND_NO_INTERSECTION"):
+        EngineeringAgent({"tools": {}}).execute_operation("cad.entity_extend", {
+            "project_dir": str(tmp_path), "input_file": source, "output_file": failed,
+            "target": "e00001", "boundary_entity_id": "e00004", "end": "end",
+        })
+    assert source.read_bytes() == before and not failed.exists()
+
+
+def test_entity_extend_rejects_inside_intersections_locked_targets_and_invalid_schema(tmp_path):
+    source = tmp_path / "extend-invalid.dxf"
+    write_dxf(source, entities=[
+        {"type": "LINE", "layer": "FRAME", "start": {"x": 0, "y": 0}, "end": {"x": 10, "y": 0}},
+        {"type": "LINE", "start": {"x": 5, "y": -2}, "end": {"x": 5, "y": 2}},
+    ])
+    with pytest.raises(ValueError, match="EXTEND_INTERSECTION_INSIDE_SEGMENT"):
+        EngineeringAgent({"tools": {}}).execute_operation("cad.entity_extend", {
+            "project_dir": str(tmp_path), "input_file": source, "output_file": tmp_path / "inside.dxf",
+            "target": "e00001", "edges": ["e00002"], "end": "auto",
+        })
+    EngineeringAgent({"tools": {}}).execute_operation("cad.layer_update", {
+        "project_dir": str(tmp_path), "input_file": source, "output_file": source,
+        "name": "FRAME", "locked": True,
+    })
+    with pytest.raises(ValueError, match="CAD_LAYER_LOCKED:FRAME"):
+        EngineeringAgent({"tools": {}}).execute_operation("cad.entity_extend", {
+            "project_dir": str(tmp_path), "input_file": source, "output_file": tmp_path / "locked.dxf",
+            "target": "e00001", "edges": ["e00002"], "end": "end",
+        })
+
+    agent = EngineeringAgent({"tools": {}})
+    spec = agent.operations.get("cad.entity_extend").schema()
+    assert spec["parameter_alternatives"] == [["target", "target_entity_id", "entity_id"], ["edges", "boundary_entity_ids", "boundary_entity_id"]]
+    from engineering_agent.mcp_server import MCPServer
+    listed = MCPServer(agent, profile="full").handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {"limit": 500}})
+    tool = next(item for item in listed["result"]["tools"] if item["name"] == "operation.cad.entity_extend")
+    assert tool["inputSchema"]["properties"]["end"]["enum"] == ["start", "end", "auto"]
+
+
 def test_offset_uses_signed_side_and_preserves_polyline_connectivity(tmp_path):
     source = tmp_path / "offset.dxf"
     write_dxf(source, entities=[

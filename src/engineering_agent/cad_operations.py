@@ -236,7 +236,28 @@ def _segment_intersection(first: dict[str, Any], second: dict[str, Any], toleran
             "z": a["z"] + first_factor * (b["z"] - a["z"])}
 
 
-def _line_polyline_intersections(line: dict[str, Any], boundary: dict[str, Any], tolerance: float = 1e-9) -> list[dict[str, float]]:
+def _infinite_line_segment_intersection(line: dict[str, Any], segment: dict[str, Any],
+                                        tolerance: float = 1e-9) -> dict[str, float] | None:
+    """Intersect an infinite target line with a finite boundary segment."""
+    a, b = _line_point(line, "start"), _line_point(line, "end")
+    c, d = _line_point(segment, "start"), _line_point(segment, "end")
+    abx, aby = b["x"] - a["x"], b["y"] - a["y"]
+    cdx, cdy = d["x"] - c["x"], d["y"] - c["y"]
+    denominator = abx * cdy - aby * cdx
+    if abs(denominator) <= tolerance:
+        return None
+    acx, acy = c["x"] - a["x"], c["y"] - a["y"]
+    line_factor = (acx * cdy - acy * cdx) / denominator
+    segment_factor = (acx * aby - acy * abx) / denominator
+    if segment_factor < -tolerance or segment_factor > 1.0 + tolerance:
+        return None
+    segment_factor = min(1.0, max(0.0, segment_factor))
+    return {"x": a["x"] + line_factor * abx, "y": a["y"] + line_factor * aby,
+            "z": a["z"] + line_factor * (b["z"] - a["z"])}
+
+
+def _line_polyline_intersections(line: dict[str, Any], boundary: dict[str, Any], tolerance: float = 1e-9,
+                                 *, finite_line: bool = True) -> list[dict[str, float]]:
     vertices = [_point(value) for value in boundary.get("vertices", [])]
     if len(vertices) < 2:
         raise ValueError("TRIM_BOUNDARY_TOO_SHORT")
@@ -249,9 +270,13 @@ def _line_polyline_intersections(line: dict[str, Any], boundary: dict[str, Any],
         if not math.isfinite(bulge):
             raise ValueError("TRIM_INVALID_BULGE")
         if abs(bulge) > tolerance:
-            intersections = _line_bulge_segment_intersections(line, start, end, bulge, tolerance)
+            intersections = _line_bulge_segment_intersections(line, start, end, bulge, tolerance,
+                                                               finite_line=finite_line)
         else:
-            intersections = [_segment_intersection(line, {"start": start, "end": end}, tolerance)]
+            if finite_line:
+                intersections = [_segment_intersection(line, {"start": start, "end": end}, tolerance)]
+            else:
+                intersections = [_infinite_line_segment_intersection(line, {"start": start, "end": end}, tolerance)]
         for point in intersections:
             if point is not None and not any(_distance(point, existing) <= tolerance for existing in points):
                 points.append(point)
@@ -259,7 +284,8 @@ def _line_polyline_intersections(line: dict[str, Any], boundary: dict[str, Any],
 
 
 def _line_bulge_segment_intersections(line: dict[str, Any], start: dict[str, Any], end: dict[str, Any],
-                                       bulge: float, tolerance: float = 1e-9) -> list[dict[str, float]]:
+                                       bulge: float, tolerance: float = 1e-9,
+                                       *, finite_line: bool = True) -> list[dict[str, float]]:
     """Intersect a finite line with one DXF bulge arc segment."""
     chord = math.hypot(end["x"] - start["x"], end["y"] - start["y"])
     if chord <= tolerance:
@@ -270,7 +296,8 @@ def _line_bulge_segment_intersections(line: dict[str, Any], start: dict[str, Any
     midpoint = {"x": (start["x"] + end["x"]) / 2.0, "y": (start["y"] + end["y"]) / 2.0,
                 "z": (start.get("z", 0.0) + end.get("z", 0.0)) / 2.0}
     center = {"x": midpoint["x"] + normal["x"] * offset, "y": midpoint["y"] + normal["y"] * offset, "z": midpoint["z"]}
-    intersections = _line_circle_intersections(line, {"center": center, "radius": radius}, tolerance)
+    intersections = _line_circle_intersections(line, {"center": center, "radius": radius}, tolerance,
+                                               finite_line=finite_line)
     start_angle = _angle(start, center)
     sweep = abs(math.degrees(4.0 * math.atan(bulge)))
     filtered: list[dict[str, float]] = []
@@ -282,8 +309,14 @@ def _line_bulge_segment_intersections(line: dict[str, Any], start: dict[str, Any
     return filtered
 
 
-def _line_circle_intersections(line: dict[str, Any], circle: dict[str, Any], tolerance: float = 1e-9) -> list[dict[str, float]]:
-    """Return finite segment/circle intersections in deterministic order."""
+def _line_circle_intersections(line: dict[str, Any], circle: dict[str, Any], tolerance: float = 1e-9,
+                               *, finite_line: bool = True) -> list[dict[str, float]]:
+    """Return line/circle intersections in deterministic order.
+
+    By default the target is a finite LINE segment, which is the behavior
+    needed by TRIM. EXTEND passes ``finite_line=False`` so the same kernel can
+    find intersections on the target's infinite supporting line.
+    """
     start, end = _line_point(line, "start"), _line_point(line, "end")
     center = _point(circle.get("center"))
     radius = abs(float(circle.get("radius", 0)))
@@ -302,8 +335,9 @@ def _line_circle_intersections(line: dict[str, Any], circle: dict[str, Any], tol
         roots.append((-bb + math.sqrt(discriminant)) / (2.0 * aa))
     output = []
     for factor in sorted(roots):
-        if -tolerance <= factor <= 1.0 + tolerance:
-            factor = min(1.0, max(0.0, factor))
+        if not finite_line or -tolerance <= factor <= 1.0 + tolerance:
+            if finite_line:
+                factor = min(1.0, max(0.0, factor))
             point = {"x": start["x"] + factor * dx, "y": start["y"] + factor * dy,
                      "z": start["z"] + factor * (end["z"] - start["z"])}
             if not output or _distance(output[-1], point) > tolerance:
@@ -311,7 +345,8 @@ def _line_circle_intersections(line: dict[str, Any], circle: dict[str, Any], tol
     return output
 
 
-def _line_ellipse_intersections(line: dict[str, Any], ellipse: dict[str, Any], tolerance: float = 1e-9) -> list[dict[str, float]]:
+def _line_ellipse_intersections(line: dict[str, Any], ellipse: dict[str, Any], tolerance: float = 1e-9,
+                                 *, finite_line: bool = True) -> list[dict[str, float]]:
     """Return finite line/ellipse intersections in deterministic order.
 
     DXF stores the major-axis vector from the ellipse center, plus a positive
@@ -347,8 +382,9 @@ def _line_ellipse_intersections(line: dict[str, Any], ellipse: dict[str, Any], t
         roots.append((-bb + math.sqrt(discriminant)) / (2.0 * aa))
     output: list[dict[str, float]] = []
     for factor in sorted(roots):
-        if -tolerance <= factor <= 1.0 + tolerance:
-            factor = min(1.0, max(0.0, factor))
+        if not finite_line or -tolerance <= factor <= 1.0 + tolerance:
+            if finite_line:
+                factor = min(1.0, max(0.0, factor))
             point = {"x": start["x"] + factor * dx, "y": start["y"] + factor * dy,
                      "z": start["z"] + factor * (end["z"] - start["z"])}
             if not output or _distance(output[-1], point) > tolerance:
@@ -378,7 +414,8 @@ def _filter_ellipse_intersections(points: list[dict[str, float]], ellipse: dict[
     return output
 
 
-def _line_spline_intersections(line: dict[str, Any], spline: dict[str, Any], tolerance: float = 1e-7) -> list[dict[str, float]]:
+def _line_spline_intersections(line: dict[str, Any], spline: dict[str, Any], tolerance: float = 1e-7,
+                               *, finite_line: bool = True) -> list[dict[str, float]]:
     """Find finite line intersections with a DXF spline using adaptive chords.
 
     The spline is evaluated by ezdxf's B-spline implementation. Chord hits are
@@ -424,7 +461,8 @@ def _line_spline_intersections(line: dict[str, Any], spline: dict[str, Any], tol
     for index, (first, second) in enumerate(zip(points, points[1:])):
         segment = {"start": {"x": float(first.x), "y": float(first.y), "z": float(first.z)},
                    "end": {"x": float(second.x), "y": float(second.y), "z": float(second.z)}}
-        hit = _segment_intersection(line, segment, tolerance)
+        hit = (_segment_intersection(line, segment, tolerance) if finite_line
+               else _infinite_line_segment_intersection(line, segment, tolerance))
         if hit is None:
             continue
         t0, t1 = dense[index], dense[index + 1]
@@ -460,6 +498,37 @@ def _line_spline_intersections(line: dict[str, Any], spline: dict[str, Any], tol
     return intersections
 
 
+def _line_parameter(point: dict[str, Any], line: dict[str, Any], tolerance: float = 1e-12) -> float:
+    """Return the normalized parameter of a point on a LINE's XY support."""
+    start, end = _line_point(line, "start"), _line_point(line, "end")
+    dx, dy = end["x"] - start["x"], end["y"] - start["y"]
+    denominator = dx * dx + dy * dy
+    if denominator <= tolerance * tolerance:
+        raise ValueError("EXTEND_ZERO_LENGTH_TARGET")
+    return ((float(point.get("x", 0)) - start["x"]) * dx
+            + (float(point.get("y", 0)) - start["y"]) * dy) / denominator
+
+
+def _line_boundary_intersections(line: dict[str, Any], boundary: dict[str, Any],
+                                 tolerance: float = 1e-9) -> list[dict[str, float]]:
+    """Intersect an infinite LINE with a finite supported CAD boundary."""
+    kind = str(boundary.get("type", "")).upper()
+    if kind == "LINE":
+        point = _infinite_line_segment_intersection(line, boundary, tolerance)
+        return [point] if point is not None else []
+    if kind in {"CIRCLE", "ARC"}:
+        points = _line_circle_intersections(line, boundary, tolerance, finite_line=False)
+        return _filter_arc_intersections(points, boundary, tolerance) if kind == "ARC" else points
+    if kind == "ELLIPSE":
+        points = _line_ellipse_intersections(line, boundary, tolerance, finite_line=False)
+        return _filter_ellipse_intersections(points, boundary, tolerance)
+    if kind == "SPLINE":
+        return _line_spline_intersections(line, boundary, tolerance, finite_line=False)
+    if kind in {"LWPOLYLINE", "POLYLINE"}:
+        return _line_polyline_intersections(line, boundary, tolerance, finite_line=False)
+    raise ValueError("EXTEND_BOUNDARY_UNSUPPORTED:" + kind)
+
+
 def _angle(point: dict[str, Any], center: dict[str, Any]) -> float:
     return math.degrees(math.atan2(float(point.get("y", 0)) - float(center.get("y", 0)),
                                    float(point.get("x", 0)) - float(center.get("x", 0)))) % 360.0
@@ -476,6 +545,8 @@ def _angle_on_sweep(value: float, start: float, end: float, tolerance: float = 1
 def _filter_arc_intersections(points: list[dict[str, float]], arc: dict[str, Any], tolerance: float = 1e-7) -> list[dict[str, float]]:
     center = _point(arc.get("center"))
     start, end = float(arc.get("start_angle", 0)), float(arc.get("end_angle", 360))
+    if abs(end - start) >= 360.0 - tolerance:
+        return list(points)
     return [point for point in points if _angle_on_sweep(_angle(point, center), start, end, tolerance)]
 
 
@@ -621,17 +692,17 @@ class CadOperationEngine:
         if name in {"document_open", "document_inspect"}:
             return {"document": document.to_dict()}
         convenience = {
-            "line_create": ("LINE", {"start": _point(arguments.get("start")), "end": _point(arguments.get("end"))}),
-            "circle_create": ("CIRCLE", {"center": _point(arguments.get("center")), "radius": arguments.get("radius")}),
-            "arc_create": ("ARC", {"center": _point(arguments.get("center")), "radius": arguments.get("radius"), "start_angle": arguments.get("start_angle", 0), "end_angle": arguments.get("end_angle", 360)}),
-            "polyline_create": ("LWPOLYLINE", {"vertices": [_point(item) for item in arguments.get("vertices", [])], "closed": bool(arguments.get("closed", False))}),
-            "spline_create": ("SPLINE", {"fit_points": [_point(item) for item in arguments.get("fit_points", arguments.get("points", []))], "degree": int(arguments.get("degree", 3))}),
-            "point_create": ("POINT", {"point": arguments.get("point")}),
-            "text_create": ("TEXT", {"insert": _point(arguments.get("insert")), "text": arguments.get("text", ""), "height": arguments.get("height", 1), "rotation": arguments.get("rotation", 0)}),
-            "insert_create": ("INSERT", {"block_name": arguments.get("block_name", ""), "insert": _point(arguments.get("insert")), "scale": arguments.get("scale", {"x": 1, "y": 1, "z": 1}), "rotation": arguments.get("rotation", 0)}),
+            "line_create": lambda: ("LINE", {"start": _point(arguments.get("start")), "end": _point(arguments.get("end"))}),
+            "circle_create": lambda: ("CIRCLE", {"center": _point(arguments.get("center")), "radius": arguments.get("radius")}),
+            "arc_create": lambda: ("ARC", {"center": _point(arguments.get("center")), "radius": arguments.get("radius"), "start_angle": arguments.get("start_angle", 0), "end_angle": arguments.get("end_angle", 360)}),
+            "polyline_create": lambda: ("LWPOLYLINE", {"vertices": [_point(item) for item in arguments.get("vertices", [])], "closed": bool(arguments.get("closed", False))}),
+            "spline_create": lambda: ("SPLINE", {"fit_points": [_point(item) for item in arguments.get("fit_points", arguments.get("points", []))], "degree": int(arguments.get("degree", 3))}),
+            "point_create": lambda: ("POINT", {"point": arguments.get("point")}),
+            "text_create": lambda: ("TEXT", {"insert": _point(arguments.get("insert")), "text": arguments.get("text", ""), "height": arguments.get("height", 1), "rotation": arguments.get("rotation", 0)}),
+            "insert_create": lambda: ("INSERT", {"block_name": arguments.get("block_name", ""), "insert": _point(arguments.get("insert")), "scale": arguments.get("scale", {"x": 1, "y": 1, "z": 1}), "rotation": arguments.get("rotation", 0)}),
         }
         if name in convenience:
-            entity_type, values = convenience[name]
+            entity_type, values = convenience[name]()
             entity = values | {"id": document.next_id(), "type": entity_type, "layer": str(arguments.get("layer", "0"))}
             document.ensure_layer(entity["layer"])
             document.entities.append(entity)
@@ -1245,6 +1316,98 @@ class CadOperationEngine:
                 raise ValueError("TRIM_ONLY_SUPPORTS_LINE_OR_ARC")
             document.entities[document.entities.index(entity)] = updated
             return {"entity": updated}
+        if name == "entity_extend":
+            target_value = arguments.get("target") or arguments.get("target_entity_id") or arguments.get("entity_id")
+            if isinstance(target_value, dict):
+                target_value = target_value.get("entity_id") or target_value.get("id") or target_value.get("ref")
+            target_id = str(target_value or "")
+            if not target_id:
+                raise ValueError("EXTEND_TARGET_REQUIRED")
+            edge_values = arguments.get("edges")
+            if edge_values is None:
+                edge_values = arguments.get("boundary_entity_ids")
+            if edge_values is None:
+                edge_values = arguments.get("boundary_entity_id") or arguments.get("cutting_entity_id")
+            if isinstance(edge_values, (str, dict)):
+                edge_values = [edge_values]
+            edge_ids = []
+            for value in edge_values or []:
+                if isinstance(value, dict):
+                    value = value.get("entity_id") or value.get("id") or value.get("ref")
+                if value:
+                    edge_ids.append(str(value))
+            if not edge_ids:
+                raise ValueError("EXTEND_BOUNDARIES_REQUIRED")
+            target = document.entity(target_id)
+            if str(target.get("type", "")).upper() != "LINE":
+                raise ValueError("EXTEND_ONLY_SUPPORTS_LINE")
+            if target_id in edge_ids:
+                raise ValueError("EXTEND_TARGET_CANNOT_BE_BOUNDARY")
+            target_start, target_end = _line_point(target, "start"), _line_point(target, "end")
+            if not all(math.isfinite(float(point[axis])) for point in (target_start, target_end) for axis in ("x", "y", "z")):
+                raise ValueError("EXTEND_NON_FINITE_TARGET")
+            target_length = math.hypot(target_end["x"] - target_start["x"], target_end["y"] - target_start["y"])
+            if target_length <= 1e-12:
+                raise ValueError("EXTEND_ZERO_LENGTH_TARGET")
+            tolerance = arguments.get("tolerance", 1e-7)
+            if isinstance(tolerance, bool):
+                raise ValueError("EXTEND_INVALID_TOLERANCE")
+            try:
+                tolerance = float(tolerance)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("EXTEND_INVALID_TOLERANCE") from exc
+            if not math.isfinite(tolerance) or tolerance <= 0:
+                raise ValueError("EXTEND_INVALID_TOLERANCE")
+            target_layout = str(target.get("sheet", target.get("layout", "Model")))
+            requested_layout = str(arguments.get("layout", "")).strip()
+            if requested_layout and requested_layout.lower() not in {"auto", target_layout.lower()}:
+                raise ValueError("EXTEND_LAYOUT_MISMATCH")
+            target_layer = document.layers.get(str(target.get("layer", "0")))
+            if target_layer and target_layer.locked:
+                raise ValueError("CAD_LAYER_LOCKED:" + target_layer.name)
+            hits: list[dict[str, Any]] = []
+            for edge_id in edge_ids:
+                edge = document.entity(edge_id)
+                edge_layout = str(edge.get("sheet", edge.get("layout", "Model")))
+                if edge_layout.lower() != target_layout.lower():
+                    raise ValueError("EXTEND_DIFFERENT_LAYOUTS")
+                for point in _line_boundary_intersections(target, edge, tolerance):
+                    parameter = _line_parameter(point, target)
+                    if not any(abs(parameter - item["parameter"]) <= tolerance
+                               and _distance(point, item["point"]) <= tolerance for item in hits):
+                        hits.append({"edge_id": edge_id, "point": point, "parameter": parameter})
+            if not hits:
+                raise ValueError("EXTEND_NO_INTERSECTION")
+            end = str(arguments.get("end", arguments.get("side", "auto"))).lower()
+            if end not in {"start", "end", "auto"}:
+                raise ValueError("EXTEND_END_INVALID")
+            outside = [item for item in hits
+                       if (item["parameter"] < -tolerance if end == "start"
+                           else item["parameter"] > 1.0 + tolerance if end == "end"
+                           else item["parameter"] < -tolerance or item["parameter"] > 1.0 + tolerance)]
+            if not outside:
+                if any(abs(item["parameter"]) <= tolerance or abs(item["parameter"] - 1.0) <= tolerance for item in hits):
+                    raise ValueError("EXTEND_ALREADY_AT_BOUNDARY")
+                if any(-tolerance < item["parameter"] < 1.0 + tolerance for item in hits):
+                    raise ValueError("EXTEND_INTERSECTION_INSIDE_SEGMENT")
+                if end == "start":
+                    raise ValueError("EXTEND_NO_START_INTERSECTION")
+                if end == "end":
+                    raise ValueError("EXTEND_NO_END_INTERSECTION")
+                raise ValueError("EXTEND_NO_INTERSECTION")
+            if end == "start":
+                chosen = max(outside, key=lambda item: item["parameter"])
+            elif end == "end":
+                chosen = min(outside, key=lambda item: item["parameter"])
+            else:
+                chosen = min(outside, key=lambda item: (abs(item["parameter"]), 0 if item["parameter"] < 0 else 1))
+            updated = copy.deepcopy(target)
+            chosen_end = "start" if chosen["parameter"] < 0 else "end"
+            updated[chosen_end] = chosen["point"]
+            document.entities[document.entities.index(target)] = updated
+            return {"entity": updated, "target_id": target_id, "edge_id": chosen["edge_id"],
+                    "end": chosen_end, "parameter": chosen["parameter"],
+                    "intersection": chosen["point"], "candidate_count": len(hits)}
         if name in {"entity_fillet", "entity_chamfer"}:
             ids = _refs(arguments, document)
             if len(ids) != 2 or len(set(ids)) != 2:
