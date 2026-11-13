@@ -45,6 +45,8 @@ def _entity(entity_type: str, groups: dict[str, list[str]]) -> dict[str, Any]:
         common["thickness"] = _number(_value(groups, "39"))
     if entity_type == "LINE":
         return common | {"start": _point(groups), "end": _point(groups, "11", "21", "31")}
+    if entity_type in {"RAY", "XLINE"}:
+        return common | {"start": _point(groups), "unit_vector": _point(groups, "11", "21", "31")}
     if entity_type == "CIRCLE":
         return common | {"center": _point(groups), "radius": _number(_value(groups, "40"))}
     if entity_type == "ARC":
@@ -232,6 +234,8 @@ def _points(entity: dict[str, Any]) -> list[dict[str, float]]:
     kind = entity.get("type")
     if kind == "LINE":
         return [entity.get("start", {}), entity.get("end", {})]
+    if kind in {"RAY", "XLINE"}:
+        return [entity.get("start", {})]
     if kind in {"CIRCLE", "ARC"}:
         center = entity.get("center", {})
         radius = abs(_number(entity.get("radius")))
@@ -281,6 +285,12 @@ def transform_document(document: dict[str, Any], *, translate: Iterable[float] =
         kind = item.get("type")
         if kind == "LINE":
             item["start"], item["end"] = transform_point(item.get("start", {})), transform_point(item.get("end", {}))
+        elif kind in {"RAY", "XLINE"}:
+            item["start"] = transform_point(item.get("start", {}))
+            direction = item.get("unit_vector", {})
+            transformed_direction = transform_point({"x": direction.get("x", 0), "y": direction.get("y", 0), "z": direction.get("z", 0)})
+            origin = transform_point({"x": 0, "y": 0, "z": 0})
+            item["unit_vector"] = {axis: transformed_direction[axis] - origin[axis] for axis in ("x", "y", "z")}
         elif kind in {"CIRCLE", "ARC"}:
             item["center"] = transform_point(item.get("center", {}))
             item["radius"] = abs(_number(item.get("radius")) * float(scale))

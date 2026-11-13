@@ -147,6 +147,35 @@ def test_donut_create_persists_two_concentric_editable_circles(tmp_path):
         })
 
 
+@pytest.mark.parametrize("operation", ["cad.ray_create", "cad.xline_create"])
+def test_construction_line_operations_round_trip_as_native_entities(tmp_path, operation):
+    source = tmp_path / "source.dxf"
+    output = tmp_path / ("ray.dxf" if operation.endswith("ray_create") else "xline.dxf")
+    write_dxf(source, entities=[])
+    result = EngineeringAgent({"tools": {}}).execute_operation(operation, {
+        "project_dir": str(tmp_path), "input_file": source, "output_file": output,
+        "start": {"x": 3, "y": 4}, "direction": {"x": 3, "y": 4},
+    })
+    assert result["persisted_validation"]["valid"]
+    entity = CadDocument.open(output).entities[0]
+    assert entity["type"] == ("RAY" if operation.endswith("ray_create") else "XLINE")
+    assert entity["start"]["x"] == pytest.approx(3)
+    assert entity["unit_vector"]["x"] == pytest.approx(0.6)
+    assert entity["unit_vector"]["y"] == pytest.approx(0.8)
+    native = __import__("ezdxf").readfile(output).modelspace()[0]
+    assert native.dxftype() == entity["type"]
+
+
+def test_construction_line_rejects_zero_direction(tmp_path):
+    source = tmp_path / "source.dxf"
+    write_dxf(source, entities=[])
+    with pytest.raises(ValueError, match="CONSTRUCTION_DIRECTION_INVALID"):
+        EngineeringAgent({"tools": {}}).execute_operation("cad.ray_create", {
+            "project_dir": str(tmp_path), "input_file": source, "output_file": tmp_path / "bad.dxf",
+            "start": {"x": 0, "y": 0}, "direction": {"x": 0, "y": 0},
+        })
+
+
 def test_cad_batch_is_transactional_and_emits_diff_and_sidecar(tmp_path):
     source = _source(tmp_path)
     output = tmp_path / "edited.dxf"

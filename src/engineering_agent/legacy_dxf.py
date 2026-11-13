@@ -75,6 +75,9 @@ def write_legacy_dxf(
         if kind == "LINE":
             start, end = item.get("start", {}), item.get("end", {})
             output += common(item, "LINE") + ["10", str(start.get("x", 0)), "20", str(start.get("y", 0)), "30", str(start.get("z", 0)), "11", str(end.get("x", 0)), "21", str(end.get("y", 0)), "31", str(end.get("z", 0))]
+        elif kind in {"RAY", "XLINE"}:
+            start, direction = item.get("start", {}), item.get("unit_vector", {})
+            output += common(item, kind) + ["10", str(start.get("x", 0)), "20", str(start.get("y", 0)), "30", str(start.get("z", 0)), "11", str(direction.get("x", 0)), "21", str(direction.get("y", 0)), "31", str(direction.get("z", 0))]
         elif kind == "CIRCLE":
             center = item.get("center", {})
             output += common(item, "CIRCLE") + ["10", str(center.get("x", 0)), "20", str(center.get("y", 0)), "30", str(center.get("z", 0)), "40", str(item.get("radius", 0))]

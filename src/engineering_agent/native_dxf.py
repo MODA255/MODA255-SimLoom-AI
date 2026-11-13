@@ -63,6 +63,8 @@ def entity_model(entity) -> dict[str, Any]:
         item["extrusion"] = point(dxf.extrusion)
     if kind == "LINE":
         item.update(start=point(dxf.start), end=point(dxf.end))
+    elif kind in {"RAY", "XLINE"}:
+        item.update(start=point(dxf.start), unit_vector=point(dxf.unit_vector))
     elif kind in {"CIRCLE", "ARC"}:
         item.update(center=point(dxf.center), radius=float(dxf.radius))
         if kind == "ARC":
@@ -312,6 +314,8 @@ def _dimension(layout, item, attributes, *, render=True):
 def _create(layout, item, *, render_dimensions=True):
     kind, attrs = item["type"].upper(), _attributes(item)
     if kind == "LINE": return layout.add_line(xyz(item["start"]), xyz(item["end"]), dxfattribs=attrs)
+    if kind == "RAY": return layout.add_ray(xyz(item["start"]), xyz(item["unit_vector"]), dxfattribs=attrs)
+    if kind == "XLINE": return layout.add_xline(xyz(item["start"]), xyz(item["unit_vector"]), dxfattribs=attrs)
     if kind == "POINT": return layout.add_point(xyz(item["point"]), dxfattribs=attrs)
     if kind == "CIRCLE": return layout.add_circle(xyz(item["center"]), item["radius"], dxfattribs=attrs)
     if kind == "ARC": return layout.add_arc(xyz(item["center"]), item["radius"], item["start_angle"], item["end_angle"], dxfattribs=attrs)
@@ -413,7 +417,7 @@ def transform_model(item, *, dx=0, dy=0, dz=0, scale=1., angle=0., center=None, 
     This temporary drawing computes semantic geometry only. Saving patches the
     original drawing, so untouched extension dictionaries and resources survive.
     """
-    if item["type"] not in {"LINE", "POINT", "CIRCLE", "ARC", "TEXT", "MTEXT", "POLYLINE", "LWPOLYLINE", "ELLIPSE", "SPLINE", "HATCH", "INSERT", "DIMENSION", "LEADER"}:
+    if item["type"] not in {"LINE", "RAY", "XLINE", "POINT", "CIRCLE", "ARC", "TEXT", "MTEXT", "POLYLINE", "LWPOLYLINE", "ELLIPSE", "SPLINE", "HATCH", "INSERT", "DIMENSION", "LEADER"}:
         raise ValueError("UNSUPPORTED_ENTITY_TRANSFORM:" + item["type"])
     if item["type"] == "HATCH" and item.get("associative") and not allow_associative:
         raise ValueError("ASSOCIATIVE_HATCH_TRANSFORM_UNSUPPORTED")
@@ -444,7 +448,7 @@ def _patch(entity, item, before):
     dxf = entity.dxf
     for key, value in _attributes(item).items():
         if dxf.is_supported(key): dxf.set(key, value)
-    fields = {"LINE": {"start": "start", "end": "end"}, "POINT": {"point": "location"},
+    fields = {"LINE": {"start": "start", "end": "end"}, "RAY": {"start": "start", "unit_vector": "unit_vector"}, "XLINE": {"start": "start", "unit_vector": "unit_vector"}, "POINT": {"point": "location"},
               "CIRCLE": {"center": "center", "radius": "radius"}, "ARC": {"center": "center", "radius": "radius", "start_angle": "start_angle", "end_angle": "end_angle"},
               "TEXT": {"insert": "insert", "height": "height", "text": "text", "rotation": "rotation", "style": "style", "halign": "halign", "valign": "valign", "align_point": "align_point", "width_factor": "width", "oblique": "oblique", "text_generation_flag": "text_generation_flag"},
               "ELLIPSE": {"center": "center", "major_axis": "major_axis", "ratio": "ratio", "start_param": "start_param", "end_param": "end_param"}}

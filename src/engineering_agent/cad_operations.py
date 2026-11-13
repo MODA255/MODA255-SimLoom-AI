@@ -757,6 +757,14 @@ def _regular_polygon_vertices(arguments: dict[str, Any]) -> list[dict[str, float
              "z": center["z"]} for index in range(sides)]
 
 
+def _unit_vector(value: Any) -> dict[str, float]:
+    vector = _point(value)
+    length = math.sqrt(vector["x"] ** 2 + vector["y"] ** 2 + vector["z"] ** 2)
+    if not math.isfinite(length) or length <= 1e-12:
+        raise ValueError("CONSTRUCTION_DIRECTION_INVALID")
+    return {axis: vector[axis] / length for axis in ("x", "y", "z")}
+
+
 def _inside_window(point: dict[str, Any], first: dict[str, Any], second: dict[str, Any], tolerance: float = 1e-9) -> bool:
     return (min(first["x"], second["x"]) - tolerance <= float(point.get("x", 0)) <= max(first["x"], second["x"]) + tolerance
             and min(first["y"], second["y"]) - tolerance <= float(point.get("y", 0)) <= max(first["y"], second["y"]) + tolerance)
@@ -954,6 +962,8 @@ class CadOperationEngine:
                     "inner_radius": inner, "outer_radius": outer, "representation": "concentric_circles"}
         convenience = {
             "line_create": lambda: ("LINE", {"start": _point(arguments.get("start")), "end": _point(arguments.get("end"))}),
+            "ray_create": lambda: ("RAY", {"start": _point(arguments.get("start")), "unit_vector": _unit_vector(arguments.get("direction"))}),
+            "xline_create": lambda: ("XLINE", {"start": _point(arguments.get("start")), "unit_vector": _unit_vector(arguments.get("direction"))}),
             "circle_create": lambda: ("CIRCLE", {"center": _point(arguments.get("center")), "radius": arguments.get("radius")}),
             "arc_create": lambda: ("ARC", {"center": _point(arguments.get("center")), "radius": arguments.get("radius"), "start_angle": arguments.get("start_angle", 0), "end_angle": arguments.get("end_angle", 360)}),
             "polyline_create": lambda: ("LWPOLYLINE", {"vertices": [_point(item) for item in arguments.get("vertices", [])], "closed": bool(arguments.get("closed", False))}),

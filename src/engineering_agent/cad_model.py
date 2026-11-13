@@ -211,7 +211,7 @@ class CadDocument:
     def sidecar(self, source_path: str | Path | None = None) -> dict[str, Any]:
         entity_metadata = {}
         for entity in self.entities:
-            native_keys = {"width_factor", "oblique", "text_generation_flag", "associative", "row_count", "column_count", "row_spacing", "column_spacing", "flags", "arrowhead", "tag", "native_angles", "pattern_lines", "sheet", "extrusion", "style", "halign", "valign", "align_point", "attachment_point", "widths", "elevation", "const_width", "attributes", "dimension_type", "dimension_code", "dimstyle", "axis", "angle", "native_definition", "boundary_paths", "boundary_path_count", "id", "handle", "owner", "type", "layer", "start", "end", "center", "radius", "start_angle", "end_angle", "point", "insert", "text", "height", "width", "rotation", "measurement", "block_name", "definition", "vertices", "closed", "pattern", "solid", "boundary_vertices", "major_axis", "ratio", "start_param", "end_param", "scale", "data", "raw_groups", "raw_tags", "linetype", "color_index", "true_color", "lineweight", "thickness", "bulges", "hatch_style", "pattern_type", "pattern_angle", "pattern_scale", "double", "degree", "fit_points", "control_points", "knots", "weights"}
+            native_keys = {"width_factor", "oblique", "text_generation_flag", "associative", "row_count", "column_count", "row_spacing", "column_spacing", "flags", "arrowhead", "tag", "native_angles", "pattern_lines", "sheet", "extrusion", "style", "halign", "valign", "align_point", "attachment_point", "widths", "elevation", "const_width", "attributes", "dimension_type", "dimension_code", "dimstyle", "axis", "angle", "native_definition", "boundary_paths", "boundary_path_count", "id", "handle", "owner", "type", "layer", "start", "end", "unit_vector", "center", "radius", "start_angle", "end_angle", "point", "insert", "text", "height", "width", "rotation", "measurement", "block_name", "definition", "vertices", "closed", "pattern", "solid", "boundary_vertices", "major_axis", "ratio", "start_param", "end_param", "scale", "data", "raw_groups", "raw_tags", "linetype", "color_index", "true_color", "lineweight", "thickness", "bulges", "hatch_style", "pattern_type", "pattern_angle", "pattern_scale", "double", "degree", "fit_points", "control_points", "knots", "weights"}
             extras = {key: copy.deepcopy(value) for key, value in entity.items() if key not in native_keys}
             if extras:
                 entity_metadata[str(entity.get("id"))] = extras
@@ -285,6 +285,8 @@ def entity_points(entity: dict[str, Any]) -> list[dict[str, float]]:
     kind = str(entity.get("type", "")).upper()
     if kind == "LINE":
         return [_point(entity.get("start")), _point(entity.get("end"))]
+    if kind in {"RAY", "XLINE"}:
+        return [_point(entity.get("start"))]
     if kind in {"CIRCLE", "ARC"}:
         center, radius = _point(entity.get("center")), abs(_number(entity.get("radius")))
         return [{"x": center["x"] - radius, "y": center["y"] - radius, "z": center["z"]}, {"x": center["x"] + radius, "y": center["y"] + radius, "z": center["z"]}]
