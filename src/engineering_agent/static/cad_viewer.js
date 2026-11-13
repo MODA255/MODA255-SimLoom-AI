@@ -236,6 +236,8 @@ svg.addEventListener('pointermove',e=>{
   else{
     drag.box=[Math.min(drag.start.x,p.x),Math.min(drag.start.y,p.y),Math.max(drag.start.x,p.x),Math.max(drag.start.y,p.y)];
     ['x','y','width','height'].forEach((key,i)=>drag.rect.setAttribute(key,[drag.box[0],drag.box[1],drag.box[2]-drag.box[0],drag.box[3]-drag.box[1]][i]));
+    drag.crossing=p.x<drag.start.x;
+    drag.rect.classList.toggle('crossing',drag.crossing);
   }
 });
 function finishDrag(e,cancel=false){
@@ -245,7 +247,12 @@ function finishDrag(e,cancel=false){
     const grouped=new Map();visiblePaths().forEach(el=>{const id=el.dataset.entityId;if(!grouped.has(id))grouped.set(id,[]);grouped.get(id).push(el);});
     if(!drag.append)selected.clear();
     const [x0,y0,x1,y1]=drag.box;
-    for(const [id,paths] of grouped){const b=boundsOf(paths);if(b[0]>=x0&&b[1]>=y0&&b[2]<=x1&&b[3]<=y1)selected.add(id);}
+    for(const [id,paths] of grouped){
+      const b=boundsOf(paths);
+      const enclosed=b[0]>=x0&&b[1]>=y0&&b[2]<=x1&&b[3]<=y1;
+      const crossing=drag.crossing&&b[2]>=x0&&b[0]<=x1&&b[3]>=y0&&b[1]<=y1;
+      if(enclosed||crossing)selected.add(id);
+    }
     paint();
   }
   if(distance>3)suppressClick=true;

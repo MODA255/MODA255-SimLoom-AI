@@ -66,6 +66,12 @@ async function main(){
     assert.match(await frame().locator('#selection').textContent(),new RegExp(ids.ellipse));
     assert.deepEqual(await frame().locator('.entity.selected').evaluateAll(items=>[...new Set(items.map(e=>e.dataset.entityId))]),[ids.ellipse]);
     await frame().locator('#clear').click();
+    // Right-to-left uses crossing selection, so an object intersecting the
+    // window is selected even when its full bounds extend outside it.
+    start=await screen(71,11);end=await screen(49,-11);
+    await page.keyboard.down('Shift');await page.mouse.move(start.x,start.y);await page.mouse.down();await page.mouse.move(end.x,end.y,{steps:8});await page.mouse.up();await page.keyboard.up('Shift');
+    assert.match(await frame().locator('#selection').textContent(),new RegExp(ids.ellipse));
+    await frame().locator('#clear').click();
     const position=await screen(85,0);await page.mouse.click(position.x,position.y);
     assert.match(await frame().locator('#selection').textContent(),new RegExp(ids.insert));
     const viewBefore=await frame().locator('#cad').getAttribute('viewBox');
@@ -115,7 +121,7 @@ async function main(){
     for(let i=0;i<100&&!movedFrame.isDetached();i++)await page.waitForTimeout(20);
     await frame().locator('#fit').click();
     const screenshot=path.join(temp,'native-geometry-viewer.png');await page.screenshot({path:screenshot,fullPage:true});
-    assert.deepEqual(errors,[]);console.log(JSON.stringify({passed:true,screenshot,project:info.root,checks:['analytic curve bounds','nested block ownership','hatch holes','layer ancestry','window selection','zoom and pan','transaction edit','camera restore across changed bounds']}));
+    assert.deepEqual(errors,[]);console.log(JSON.stringify({passed:true,screenshot,project:info.root,checks:['analytic curve bounds','nested block ownership','hatch holes','layer ancestry','enclosed and crossing window selection','zoom and pan','transaction edit','camera restore across changed bounds']}));
   }catch(error){if(browser){const page=browser.contexts().flatMap(c=>c.pages())[0];if(page)await page.screenshot({path:path.join(temp,'viewer-failure.png'),fullPage:true});}throw error;}
   finally{if(browser)await browser.close();if(server.exitCode===null){server.kill('SIGTERM');await once(server,'exit');}}
 }
