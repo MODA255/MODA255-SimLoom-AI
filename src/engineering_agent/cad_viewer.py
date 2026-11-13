@@ -61,7 +61,7 @@ def render_cad_viewer(geometry, *, asset_path=None, history=None, source_path=No
         f"<button id='undo'{undo_disabled}>撤销</button><button id='redo'{redo_disabled}>重做</button>",
         "<button id='fit'>适合窗口</button><button id='fitSelection'>放大选中</button><button id='clear'>清除选择</button>",
         "<span id='selection' role='status'>未选择实体</span></div>",
-        "<div class='toolbar history-controls'><label>图纸版本 <select id='revision'><option value='current'>当前文件</option></select></label>",
+        f"<div class='toolbar history-controls'><label>图纸版本 <select id='revision'><option value='current'>{'历史快照' if read_only else '当前文件'}</option></select></label>",
         "<button id='historyPrevious'>上一步</button><button id='historyNext'>下一步</button><button id='replay'>播放历史</button><button id='historyCurrent'>返回当前</button>",
         "<span id='historyStatus' role='status'>历史快照只读；批次按整次提交回放。</span></div>",
         "<details class='layers' open><summary>图层显示</summary><div class='layer-list'>", ''.join(controls), '</div></details>',

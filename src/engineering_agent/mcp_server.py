@@ -163,6 +163,9 @@ class MCPServer:
             {"name": "engineering_version", "description": "Create an immutable project snapshot", "inputSchema": {"type": "object", "required": ["project_dir", "label", "paths"], "properties": {"project_dir": {"type": "string"}, "label": {"type": "string"}, "paths": {"type": "array"}}}},
             {"name": "engineering_diff", "description": "Compare two immutable snapshots", "inputSchema": {"type": "object", "required": ["project_dir", "left", "right"], "properties": {"project_dir": {"type": "string"}, "left": {"type": "string"}, "right": {"type": "string"}}}},
         ]
+        if self.profile == "safe":
+            tools = [tool for tool in tools if tool["name"] not in {
+                "engineering_run", "engineering_generate", "engineering_offline_run", "engineering_version"}]
         for tool in tools:
             if tool["name"] in {"engineering_plan", "engineering_preflight", "engineering_run"}:
                 tool["inputSchema"]["properties"]["parameters"] = {"type": "object", "description": "Explicit engineering parameters forwarded to software steps"}
@@ -308,6 +311,12 @@ class MCPServer:
         raise ProtocolError(ErrorCode.RESOURCE_NOT_FOUND, f"unknown prompt: {name}")
 
     def call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if self.profile == "safe":
+            mutating = name in {"engineering_run", "engineering_generate", "engineering_offline_run", "engineering_version"}
+            if name.startswith("operation."):
+                mutating = self.operations.get(name[len("operation."):]).safety in {"write", "execute"}
+            if mutating:
+                raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "MCP_PROFILE_READ_ONLY: use the full profile for writes or execution")
         requested_schema = arguments.get("schema_version") or arguments.get("schemaVersion")
         if requested_schema and requested_schema not in {self.schema_version, "1.0"}:
             raise ProtocolError(ErrorCode.SCHEMA_VERSION_UNSUPPORTED, f"unsupported schema version: {requested_schema}")

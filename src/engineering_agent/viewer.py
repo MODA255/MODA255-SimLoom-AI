@@ -56,7 +56,7 @@ def asset_view(root: str | Path, relative: str) -> dict[str, Any]:
     return _asset_view(root, relative)
 
 
-def _asset_view(root: str | Path, relative: str, history: dict[str, Any] | None = None) -> dict[str, Any]:
+def _asset_view(root: str | Path, relative: str, history: dict[str, Any] | None = None, *, read_only=False) -> dict[str, Any]:
     root_path = Path(root).resolve()
     path = (root_path / relative).resolve()
     if root_path not in path.parents:
@@ -90,7 +90,7 @@ def _asset_view(root: str | Path, relative: str, history: dict[str, Any] | None 
         scene = native_model_scene(payload["geometry"], source_path=path if cad_document._source_path else None)
         svg = scene["svg"]
         payload["cad_view"] = {k: v for k, v in scene.items() if k != "svg"}
-        viewer = render_interactive_dxf_viewer(payload["geometry"], asset_path=relative, history=history, scene=scene)
+        viewer = render_interactive_dxf_viewer(payload["geometry"], asset_path=None if read_only else relative, history=history, scene=scene, read_only=read_only)
     else:
         viewer = render_interactive_viewer(payload)
     if path.suffix.lower() == ".dxf":
@@ -263,10 +263,11 @@ def render_dxf_svg(geometry: dict[str, Any], width: int = 720, height: int = 460
 
 def render_interactive_dxf_viewer(geometry: dict[str, Any], width: int = 820, height: int = 560,
                                   asset_path: str | None = None, history: dict[str, Any] | None = None,
-                                  source_path: str | Path | None = None, scene: dict[str, Any] | None = None) -> str:
+                                  source_path: str | Path | None = None, scene: dict[str, Any] | None = None,
+                                  read_only: bool = False) -> str:
     """Render native curves with object selection; edits use the parent API."""
     from .cad_viewer import render_cad_viewer
-    return render_cad_viewer(geometry, asset_path=asset_path, history=history, source_path=source_path, scene=scene)
+    return render_cad_viewer(geometry, asset_path=asset_path, history=history, source_path=source_path, scene=scene, read_only=read_only)
 
 
 def render_mesh_svg(geometry: dict[str, Any], width: int = 720, height: int = 460) -> str:

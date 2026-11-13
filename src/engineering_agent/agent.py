@@ -322,6 +322,8 @@ class EngineeringAgent:
                                   parameters=arguments.get("parameters"), probe=bool(arguments.get("probe", False)))
         if name == "project.version":
             return self.create_version(arguments.get("project_dir", "."), arguments["label"], arguments.get("paths", []), arguments.get("parent"))
+        if name == "project.version_export":
+            return VersionStore(arguments.get("project_dir", ".")).export(arguments["version_id"], arguments["output_dir"])
         if name == "project.diff":
             return self.diff_versions(arguments.get("project_dir", "."), arguments["left"], arguments["right"])
         if name == "project.visual_diff":

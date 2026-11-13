@@ -9,6 +9,7 @@
 `e9f2e904eb21a2171ad41ffe35cae676f8aaf05b`（提交时间 2026-11-09 09:22:02 UTC）。
 验收依据是该提交的 README 及其链接的 operations、engineering-workflows、
 viewer、architecture、limitations-roadmap 文档与实现。后续对齐应重新检查上游变化。
+2026-11-12 再次核对远程 `main`，仍为上述提交；本轮也重新读取了 viewer 与 architecture 文档。
 
 上游当前重点是二维 CAD；其历史三维测试分数不能作为本项目的对齐门槛或完成证据。
 SimLoom 原有的 CATIA / Ansys / Adams / VI-grade 工程链、B-Rep 和仿真查看功能继续保留，
@@ -24,13 +25,13 @@ SimLoom 原有的 CATIA / Ansys / Adams / VI-grade 工程链、B-Rep 和仿真�
 | 受控脚本执行 | 已有 `cad.script_apply`：默认关闭；显式启用后在事务 staging 工作目录运行，静态检查高风险导入/调用，限制脚本时长、输出大小和输出文件，重新读取 DXF 做独立验证、diff、checkpoint、历史和失败恢复；`tests/test_controlled_cad_scripts.py` | 在 Windows worker 上把同一策略映射到受控脚本宿主，并补 OS 级隔离和真实项目脚本验收；当前策略不是完整安全沙箱 |
 | 独立工程验证 | `validate_cad_document` 和独立读取 DXF 的 `dxf_validation.inspect_native` 现在分别检查打印文字高度、闭合轮廓退化、重复几何、尺寸数值/引用和可配置尺寸关联；原生结构审计、几何读回、标注测量仍有测试 | 继续补齐字体实际字形覆盖、复杂拓扑、尺寸与实体的标准级关联规则，以及更完整的可修复错误分类 |
 | 原生几何交互视图 | `cad_render.py`、`cad_viewer.py`、`test_cad_viewer.py`、真实浏览器几何检查 | 原生模型视图这一子项已有实现；客户图纸、复杂字体、性能和其他交互能力仍待验收 |
-| 历史版本查看、视觉 diff、实时查看 agent 修改 | 有持久撤销/重做和字段 diff；`cad.visual_diff` 和 `project.visual_diff` 按实体 ID 输出 SVG 叠加；工作台支持项目快照时间线和相邻版本差异。`cad.history_view` 校验并只读渲染事务保存的 DXF/sidecar，Viewer 支持初始状态、各提交、前后步和播放/暂停，呈现移动前和删除前的真实几何 | 继续补跨软件原生文件快照、实时外部变更通知和更大工程的回放验收；批次按整次提交回放，子步骤仅提供变更对象定位，没有批次内每一步的几何快照 |
+| 历史版本查看、视觉 diff、实时查看 agent 修改 | 有持久撤销/重做、字段 diff、SVG 叠加和项目时间线。`cad.history_view` 校验并只读渲染事务保存的 DXF/sidecar，支持前后步和播放/暂停。项目版本 schema 2 在同一事务中保存原始文件与配套元数据，支持历史原件下载、真实文件预览和向新目录导出；见 `PROJECT_VERSION_FILES.md` | 仍需实时外部变更通知、跨软件装配依赖收集和更大工程的回放验收；批次按整次提交回放，子步骤没有独立几何快照。原生文件字节保存已测试，不等于厂商软件打开或工程语义验收 |
 | 工程图排版和文件交付 | 原生标题栏、纸空间/视口、单页 PDF/PNG、比例校验；`DRAWING_EXPORT.md` | 标准比例、中文/SHX 字体、多纸张 PDF、打印可读性和原生 SVG 导出契约仍需补齐 |
 | Agent 能直接看图与检查源图细节 | Web/本地 viewer 已有 SVG/PNG；MCP `engineering_asset_view`、`engineering://asset`、`engineering_inspect_image` 和 `engineering_measure_image` 可返回结构化数据、局部 PNG 预览、颜色区域的源像素边界/质心及 overlay | 继续补通用安全图像脚本、尺寸证据标注、源像素坐标与图纸坐标的明确映射，以及客户端互操作验收 |
 | 行业图形库 | 已有符号/紧固件/表格等基础生成操作；新增 `cad.standard_catalog`、`cad.standard_library`、`cad.standard_parts_audit`，覆盖 P&ID 符号、14 类 GD&T 特征、M3～M24 紧固件、常用轴承系列和孔型查询，严格模式会拒绝未知输入 | 当前目录是可查询的规划与输入校验契约，不能视为 ISO P&ID、GD&T、标准紧固件/轴承/孔系尺寸库的合规实现；仍需有来源的尺寸表、符号几何和原生软件验收 |
 | 工程工作流 | 四软件离线链和基本 CAD 批次可运行；`cad.pid_audit` 可把 tagged P&ID 符号、端口和过程线读回为节点/边并检查孤立符号、连接段引用和要求连接；`cad.process_route_create` 支持正交路线，`cad.pid_valve_cut_pipe` 可在带语义管线上切断并插入带 inlet/outlet 关系的阀门 | 继续补有来源的 P&ID 标准符号几何、端口方向/规格约束、房间面积、回转件视图/BOM 等端到端工程任务；当前阀门操作仍是 vendor-neutral 关系模型，不是厂商 P&ID 对象 |
 | DWG、AutoCAD AUDIT 与实时同步 | 尚无等价实机验收 | 实现可选 AutoCAD 后端、版本/文件锁/冲突/回读契约，并在 Windows 真机验证 |
-| MCP、CLI、Python、HTTP 的一致性与策略 | 有统一 operation 调用、profiles、分页、schema/error envelope；MCP 可读取资产 JSON 和 SVG image content；写操作后会发送 `notifications/resources/updated` | 继续补完整 schema/envelope 覆盖、只读及 allow-list 策略、跨客户端互操作和断线重连验证 |
+| MCP、CLI、Python、HTTP 的一致性与策略 | 有统一 operation 调用、profiles、分页、schema/error envelope；MCP 可读取资产 JSON 和 SVG image content；写操作后发送资源更新。safe profile 已在实际调用入口拒绝写/执行操作及会保存产物的 run/generate/version 内置入口，并有绕过 discovery 的直接调用回归 | 继续补完整 schema/envelope 覆盖、allow-list 策略、跨客户端互操作和断线重连验证 |
 | 安装、发布与可重复环境 | 已有启动器和 CI 配置 | 干净 Windows/macOS/Linux 的实际安装、升级和发布产物验证；配置存在不代表通过 |
 | 对照验收与真实项目数据 | 当前主要为生成 fixture 和本地功能测试 | 用固定任务、相同输入、明确成功标准与参考系统对照；记录失败和不支持项，不借用上游自评分 |
 | 四款商业工程软件后端 | 脚本、桥接与离线验证链已有实现；本机无对应真实软件 | Windows 上 CATIA/Ansys/Adams/VI-grade 的建模、求解、结果回读、错误恢复逐项实测 |

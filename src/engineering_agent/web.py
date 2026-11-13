@@ -12,7 +12,7 @@ from .agent import EngineeringAgent
 from .queue import TaskQueue
 from .validation import validate_plan
 from .viewer import artifact_listing, artifact_preview, asset_view, render_asset_svg, render_timeline_svg
-from .versioning import VersionStore
+from .versioning import VersionStore, VERSION_ASSET_EXTENSIONS
 from .workspace import TEMPLATES, Workspace
 from .tasks import TaskRunner, input_snapshot
 from .reports import build_report, render_report
@@ -149,6 +149,8 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
                     "parent": snapshot.get("parent"),
                     "created_at": snapshot.get("created_at"),
                     "object_count": len(snapshot.get("objects", [])),
+                    "storage": snapshot.get("storage", "semantic_only"),
+                    "file_count": sum(entry.get("exists", False) for entry in snapshot.get("files", [])),
                     "has_dxf": any(
                         str((asset.get("geometry") or {}).get("format", "")).upper() == "DXF"
                         for asset in snapshot.get("objects", [])
@@ -158,7 +160,7 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
                 return self._send(200, {"versions": versions, "events": events,
                                        "svg": render_timeline_svg(events),
                                        "schemaVersion": WEB_SCHEMA_VERSION})
-            if parsed.path == "/api/version-view":
+            if parsed.path in {"/api/version-view", "/api/version-file"}:
                 project_id = query.get("project_id", [None])[0]
                 if project_id:
                     project = queue.get_project(project_id)
@@ -168,7 +170,20 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
                 version_id = query.get("version_id", [""])[0]
                 if not version_id:
                     raise ValueError("请指定版本")
-                snapshot = VersionStore(root).load(version_id)
+                store = VersionStore(root)
+                if parsed.path == "/api/version-file":
+                    with store.open_file(version_id, relative) as (stream, entry):
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/octet-stream")
+                        self.send_header("Content-Length", str(entry["bytes"]))
+                        self.send_header("Content-Disposition", "attachment; filename*=UTF-8''" + quote(Path(relative).name))
+                        self.send_header("X-Content-Type-Options", "nosniff")
+                        self.send_header("X-Content-SHA256", entry["sha256"])
+                        self.send_header("Cache-Control", "no-store")
+                        self.end_headers()
+                        shutil.copyfileobj(stream, self.wfile)
+                    return
+                snapshot = store.load(version_id)
                 objects = snapshot.get("objects", [])
                 if not objects:
                     raise ValueError("VERSION_EMPTY")
@@ -181,15 +196,29 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
                 asset = objects[asset_index]
                 geometry = asset.get("geometry") or {}
                 svg = render_asset_svg({"geometry": geometry, "metrics": asset.get("metrics") or {}})
+                native_view = store.preview(version_id, asset_index) if snapshot.get("schema_version") == 2 else None
+                if native_view:
+                    svg = native_view["svg"]
                 assets = [{"index": index, "name": item.get("name", ""), "kind": item.get("kind", "unknown"),
-                           "path": (item.get("source") or {}).get("path", ""),
-                           "format": (item.get("geometry") or {}).get("format", "")}
+                           "path": snapshot["asset_paths"][index] if snapshot.get("schema_version") == 2 else (item.get("source") or {}).get("path", ""),
+                           "format": (item.get("geometry") or {}).get("format") or Path((item.get("source") or {}).get("path", "")).suffix.lstrip(".").upper()}
                           for index, item in enumerate(objects)]
+                preview_note = ("原始文件快照 · 只读；下载或导出后可交给对应软件继续处理。" if native_view
+                                else "旧版仅保存解析摘要，没有可下载的原始文件。")
+                if native_view and asset.get("kind") == "unknown":
+                    preview_note = "原始文件快照已校验；此格式需要对应软件打开，本地仅提供文件下载与导出。"
+                if native_view and native_view.get("preview_unavailable"):
+                    preview_note = native_view["preview_note"]
                 return self._send(200, {"version": {key: snapshot.get(key) for key in ("id", "label", "parent", "created_at")},
                                        "asset": {"index": asset_index, "name": asset.get("name", ""),
                                                  "kind": asset.get("kind", "unknown"), "source": asset.get("source"),
                                                  "geometry": {"format": geometry.get("format"), "entity_count": len(geometry.get("entities", [])) if isinstance(geometry.get("entities"), list) else None}},
-                                       "assets": assets, "svg": svg, "schemaVersion": WEB_SCHEMA_VERSION})
+                                       "assets": assets, "svg": svg,
+                                       "viewer": native_view["viewer"] if native_view else None,
+                                       "storage": snapshot.get("storage", "semantic_only"),
+                                       "files": snapshot.get("files", []),
+                                       "preview_note": preview_note,
+                                       "schemaVersion": WEB_SCHEMA_VERSION})
             if parsed.path.startswith("/api/projects/"):
                 project = queue.get_project(parsed.path[len("/api/projects/"):])
                 if not project:
@@ -312,8 +341,8 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
                 requested = body.get("paths")
                 if requested is None:
                     requested = [item["path"] for item in artifact_listing(root)
-                                 if item.get("suffix", "").lower() in {".dxf", ".step", ".stp", ".csv", ".json"}
-                                 and not str(item.get("path", "")).endswith(".cad.json")
+                                 if item.get("suffix", "").lower() in VERSION_ASSET_EXTENSIONS
+                                 and not str(item.get("path", "")).endswith((".cad.json", ".brep.json", ".plot.json"))
                                  and Path(str(item.get("path", ""))).name != "simloom.project.json"]
                 if not isinstance(requested, list) or not requested:
                     raise ValueError("项目中没有可纳入快照的工程资产")
@@ -322,7 +351,13 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
                 for relative in requested:
                     if not isinstance(relative, str) or not relative.strip():
                         raise ValueError("快照路径必须是非空字符串")
-                    candidate = (root_path / relative).resolve()
+                    from .transactions import confined_path
+                    local = Path(relative)
+                    if local.is_absolute():
+                        if not local.is_relative_to(root_path):
+                            raise ValueError("VERSION_PATH_OUTSIDE_PROJECT:" + relative)
+                        local = local.relative_to(root_path)
+                    candidate = confined_path(root_path, str(local))
                     if root_path not in candidate.parents or not candidate.is_file():
                         raise ValueError("VERSION_PATH_OUTSIDE_PROJECT:" + relative)
                     paths.append(str(candidate))
@@ -331,6 +366,10 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
                     raise ValueError("父版本编号无效")
                 result = agent.create_version(root, label.strip(), paths, parent)
                 return self._send(201, result)
+            if path == "/api/version-export":
+                root, _metadata, _project_id = self._project_input(body)
+                return self._send(201, agent.execute_operation("project.version_export", {
+                    "project_dir": root, "version_id": body.get("version_id"), "output_dir": body.get("output_dir")}))
             if path.startswith("/api/tasks/") and path.endswith("/resume"):
                 return self._send(200, runner.resume(path[len("/api/tasks/"):-len("/resume")]))
             if path.startswith("/api/tasks/") and path.endswith("/retry"):

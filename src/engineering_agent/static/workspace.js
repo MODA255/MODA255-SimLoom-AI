@@ -80,6 +80,7 @@ async function refreshProjects() {
 }
 function resetVersionPanel() {
   state.versions=[]; state.versionView++;
+  state.versionInspectSequence=(state.versionInspectSequence||0)+1;state.inspectedVersion=null;
   $('#versionTimeline').innerHTML='<div class="empty">打开项目后查看版本时间线。</div>';
   $('#versionList').replaceChildren();
   $('#versionLabel').value=''; $('#createVersion').disabled=true;
@@ -149,21 +150,44 @@ async function refreshVersions() {
 }
 async function inspectVersion(versionId, assetIndex=0) {
   if(!state.project||!versionId) return;
-  const project=state.project;
+  const project=state.project, requestId=(state.versionInspectSequence||0)+1;
+  state.versionInspectSequence=requestId;state.inspectedVersion=null;
   $('#versionInspect').hidden=false; $('#versionInspectTitle').textContent='正在读取历史版本…'; $('#versionInspectMeta').textContent='';
+  $('#versionFiles').replaceChildren();$('#versionExportControls').hidden=true;$('#versionExportStatus').textContent='';$('#versionStorageNotice').textContent='';
   $('#versionInspectPreview').innerHTML='<div class="empty">正在准备快照预览…</div>'; $('#versionInspectAssets').replaceChildren();
   try {
     const query=new URLSearchParams({project_id:project.id,version_id:versionId,asset_index:String(assetIndex)});
     const data=await request('/api/version-view?'+query);
-    if(state.project?.id!==project.id) return;
+    if(state.project?.id!==project.id||state.versionInspectSequence!==requestId) return;
     $('#versionInspectTitle').textContent=data.version.label||'历史版本预览';
     $('#versionInspectMeta').textContent=`${data.version.created_at?new Date(data.version.created_at).toLocaleString():'未记录时间'} · ${data.asset.name||'未命名资产'}`;
-    const frame=document.createElement('iframe'); frame.className='version-inspect-frame'; frame.title='历史版本资产预览'; frame.setAttribute('sandbox','');
-    frame.srcdoc=`<!doctype html><meta charset="utf-8"><style>html,body{margin:0;background:#f8fafc}svg{display:block;width:100%;height:auto;min-height:260px}</style>${data.svg||''}`;
+    const interactive=data.viewer?.includes('data-cad-viewer')||data.viewer?.includes('engineering-3d-viewer');
+    const frame=document.createElement('iframe'); frame.className='version-inspect-frame'+(interactive?' interactive':''); frame.title='历史版本资产预览'; frame.setAttribute('sandbox',interactive?'allow-scripts':'');
+    frame.srcdoc=`<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'"><style>html,body{margin:0;background:#f8fafc}svg{display:block;width:100%;height:auto;min-height:260px}</style>${interactive?data.viewer:data.svg||''}`;
     $('#versionInspectPreview').replaceChildren(frame);
     $('#versionInspectAssets').innerHTML=(data.assets||[]).map(item=>`<button class="version-asset ${item.index===data.asset.index?'active':''}" data-version-id="${escapeHTML(data.version.id)}" data-version-asset="${item.index}"><strong>${escapeHTML(item.name||'未命名资产')}</strong><small>${escapeHTML(item.format||item.kind||'资产')} · ${escapeHTML(item.path||'快照内对象')}</small></button>`).join('');
-  } catch(error) { $('#versionInspectTitle').textContent='历史版本读取失败'; $('#versionInspectMeta').textContent=error.message; $('#versionInspectPreview').innerHTML='<div class="empty">无法预览此版本。</div>'; }
+    $('#versionStorageNotice').textContent=data.preview_note||'';
+    $('#versionFiles').innerHTML=(data.files||[]).filter(item=>item.exists).map(item=>{
+      const query=new URLSearchParams({project_id:project.id,version_id:versionId,path:item.path});
+      return `<a class="version-file" href="/api/version-file?${escapeHTML(query.toString())}" download><strong>下载 ${escapeHTML(item.path)}</strong><small>${Number(item.bytes).toLocaleString()} 字节 · SHA-256 ${escapeHTML(item.sha256)}</small></a>`;
+    }).join('');
+    if(data.storage==='original_files'){
+      state.inspectedVersion={projectId:project.id,versionId};
+      $('#versionExportDir').value='exports/versions/'+versionId;$('#versionExportControls').hidden=false;
+    }
+  } catch(error) { if(state.project?.id!==project.id||state.versionInspectSequence!==requestId)return; $('#versionInspectTitle').textContent='历史版本读取失败'; $('#versionInspectMeta').textContent=error.message; $('#versionInspectPreview').innerHTML='<div class="empty">无法预览此版本。</div>'; }
 }
+$('#exportVersion').onclick=async()=>{
+  const target=state.inspectedVersion;if(!target||target.projectId!==state.project?.id||state.busy)return;
+  const requestId=state.versionInspectSequence;$('#exportVersion').disabled=true;
+  $('#versionExportStatus').textContent='正在校验原始文件并导出副本…';
+  try{
+    const result=await request('/api/version-export',{project_id:target.projectId,version_id:target.versionId,output_dir:$('#versionExportDir').value});
+    if(requestId!==state.versionInspectSequence||target.projectId!==state.project?.id)return;
+    $('#versionExportStatus').textContent='已导出并校验：'+result.output_dir+'。可交给对应软件打开。';
+  }catch(error){if(requestId===state.versionInspectSequence&&target.projectId===state.project?.id)$('#versionExportStatus').textContent=error.message.includes('VERSION_EXPORT_DESTINATION_EXISTS')?'目标文件夹已存在，请填写一个新的文件夹名。':'导出失败：'+error.message;}
+  finally{$('#exportVersion').disabled=false;}
+};
 function renderVersionDiff(result) {
   const visual=result.visual_diff||{}; const counts=visual.counts||{};
   const labels={added:'新增',removed:'删除',changed:'修改',unchanged:'未变化'};
@@ -475,7 +499,7 @@ $('#createVersion').onclick=()=>createVersionSnapshot().catch(reportError);
 $('#versionLeft').onchange=()=>{ $('#versionDiffStatus').textContent=''; };
 $('#versionRight').onchange=()=>{ $('#versionDiffStatus').textContent=''; };
 $('#versionDiffButton').onclick=()=>runVersionDiff().catch(reportError);
-$('#closeVersionInspect').onclick=()=>{$('#versionInspect').hidden=true;};
+$('#closeVersionInspect').onclick=()=>{$('#versionInspect').hidden=true;state.versionInspectSequence=(state.versionInspectSequence||0)+1;state.inspectedVersion=null;};
 async function init() {
   try {
     const [health,templates,workspace]=await Promise.all([request('/api/health'),request('/api/templates'),request('/api/workspace')]);

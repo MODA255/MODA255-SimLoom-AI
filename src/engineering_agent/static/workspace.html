@@ -61,8 +61,12 @@
         <details id="versionDiffDetails" hidden><summary>查看语义 diff</summary><pre class="json" id="versionDiffJson"></pre></details>
         <div id="versionInspect" class="version-inspect" hidden>
           <div class="card-head"><div><h3 id="versionInspectTitle">历史版本预览</h3><p id="versionInspectMeta" class="muted"></p></div><button class="btn btn-light" id="closeVersionInspect">收起</button></div>
+          <p id="versionStorageNotice" class="muted"></p>
           <div id="versionInspectPreview" class="version-inspect-preview"></div>
           <div id="versionInspectAssets" class="version-assets"></div>
+          <div id="versionFiles" class="version-files"></div>
+          <div id="versionExportControls" class="version-create-row" hidden><label for="versionExportDir">导出到新文件夹</label><input id="versionExportDir" placeholder="exports/versions/方案A"><button id="exportVersion" class="btn btn-light">导出完整版本</button></div>
+          <p id="versionExportStatus" class="muted" role="status"></p>
         </div>
       </div>
     </section>

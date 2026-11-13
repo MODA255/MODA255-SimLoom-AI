@@ -129,6 +129,10 @@ def _parser() -> argparse.ArgumentParser:
     version.add_argument("paths", nargs="+")
     version.add_argument("--root", default=".")
     version.add_argument("--parent")
+    version_export = sub.add_parser("version-export", help="将原始文件版本导出到新的项目子文件夹")
+    version_export.add_argument("version_id")
+    version_export.add_argument("output_dir")
+    version_export.add_argument("--root", default=".")
     diff = sub.add_parser("diff", help="比较两个工程资产版本")
     diff.add_argument("left")
     diff.add_argument("right")
@@ -209,7 +213,11 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(agent.inspect_project(args.root), ensure_ascii=False, indent=2))
         return 0
     if args.command == "version":
-        print(json.dumps(agent.create_version(args.root, args.label, args.paths, args.parent), ensure_ascii=False, indent=2))
+        print(json.dumps(agent.create_version(args.root, args.label, [str(Path(path).expanduser().absolute()) for path in args.paths], args.parent), ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "version-export":
+        print(json.dumps(agent.execute_operation("project.version_export", {"project_dir": args.root,
+            "version_id": args.version_id, "output_dir": args.output_dir}), ensure_ascii=False, indent=2))
         return 0
     if args.command == "diff":
         print(json.dumps(agent.diff_versions(args.root, args.left, args.right), ensure_ascii=False, indent=2))

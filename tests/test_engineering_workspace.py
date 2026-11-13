@@ -532,6 +532,32 @@ def test_web_creates_project_version_from_current_assets_and_rejects_escape(serv
     assert status == 400 and error['code'] == 'INVALID_ARGUMENTS'
 
 
+def test_web_version_preserves_full_files_and_exports_without_overwrite(service):
+    call, _, _ = service
+    _, project = call('/api/projects', {'name': '原始文件快照'})
+    root = Path(project['project_dir'])
+    original = b'opaque native fixture\x00\xff\xfe'
+    (root / 'part.CATPart').write_bytes(original)
+    (root / 'curve.csv').write_text('time,force\n' + ''.join(f'{i},{i * 2}\n' for i in range(60)))
+    status, snapshot = call('/api/version', {'project_id': project['id'], 'label': '保存原始输入'})
+    assert status == 201 and snapshot['schema_version'] == 2
+    assert 'part.CATPart' in snapshot['asset_paths']
+    (root / 'part.CATPart').write_bytes(b'new file')
+    (root / 'curve.csv').unlink()
+    query = urllib.parse.urlencode({'project_id': project['id'], 'version_id': snapshot['id'], 'path': 'part.CATPart'})
+    assert call('/api/version-file?' + query) == (200, original)
+    query = urllib.parse.urlencode({'project_id': project['id'], 'version_id': snapshot['id'],
+                                  'asset_index': snapshot['asset_paths'].index('curve.csv')})
+    status, preview = call('/api/version-view?' + query)
+    assert status == 200 and '60 行' in preview['svg']
+    body = {'project_id': project['id'], 'version_id': snapshot['id'], 'output_dir': 'restored/saved'}
+    status, result = call('/api/version-export', body)
+    assert status == 201 and result['validation']['valid']
+    assert (root / 'restored/saved/part.CATPart').read_bytes() == original
+    assert (root / 'part.CATPart').read_bytes() == b'new file'
+    assert call('/api/version-export', body)[0] == 409
+
+
 def test_software_job_api_reports_unconfigured_worker_without_launching(service):
     call, _, _ = service
     status, result = call('/api/software-jobs', {'tool': 'catia', 'action': 'list'})
