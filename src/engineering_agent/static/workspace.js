@@ -1,13 +1,21 @@
 'use strict';
 const $ = s => document.querySelector(s);
 const escapeHTML = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const state = {project:null, templates:[], busy:false, page:1, preview:0, previewPath:null, versions:[], versionView:0, cadHistory:false, historyRequest:0, watch:null};
+const state = {project:null, templates:[], busy:false, page:1, preview:0, previewPath:null, versions:[], versionView:0, cadHistory:false, historyRequest:0, watch:null, versionHtml:'', diffHtml:''};
 const icons = {catia:'◇', ansys:'△', adams:'⌁', 'vi-grade':'◎'};
 const labels = {waiting:'等待恢复连接',queued:'待运行', running:'运行中', completed:'已完成', failed:'失败'};
 let toastTimer;
 function toast(message) { clearTimeout(toastTimer); $('#toast').textContent=message; $('#toast').classList.add('show'); toastTimer=setTimeout(()=>$('#toast').classList.remove('show'),4000); }
 function details(data) { $('#output').textContent=JSON.stringify(data,null,2); }
 function reportError(error) { $('#runError').textContent=error.message; toast(error.message); }
+function standaloneHtml(title, body) {
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHTML(title)}</title><style>html,body{margin:0;min-height:100%;background:#f8fafc;font:14px system-ui,sans-serif}main{padding:18px;max-width:1400px;margin:auto}h1{font-size:18px;margin:0 0 14px;color:#1f2937}svg{display:block;width:100%;height:auto}</style></head><body><main><h1>${escapeHTML(title)}</h1>${body||'<p>没有可用预览。</p>'}</main></body></html>`;
+}
+function downloadText(filename, text) {
+  const url=URL.createObjectURL(new Blob([text],{type:'text/html;charset=utf-8'}));
+  const link=document.createElement('a'); link.href=url; link.download=filename; document.body.append(link); link.click(); link.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
 async function request(url, body) {
   const response=await fetch(url, body === undefined ? {} : {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
   let data;
@@ -90,6 +98,7 @@ function resetVersionPanel() {
   $('#versionDiffButton').disabled=true;
   $('#versionDiffStatus').textContent=''; $('#versionDiffSummary').hidden=true; $('#versionDiffSummary').replaceChildren();
   $('#versionDiffPreview').hidden=true; $('#versionDiffPreview').replaceChildren(); $('#versionDiffDetails').hidden=true; $('#versionDiffJson').textContent='';
+  state.versionHtml=''; state.diffHtml=''; $('#downloadVersionHtml').hidden=true; $('#downloadDiffHtml').hidden=true;
   $('#versionInspect').hidden=true; $('#versionInspectPreview').replaceChildren(); $('#versionInspectAssets').replaceChildren();
 }
 async function createVersionSnapshot() {
@@ -174,6 +183,7 @@ async function inspectVersion(versionId, assetIndex=0) {
   const project=state.project, requestId=(state.versionInspectSequence||0)+1;
   state.versionInspectSequence=requestId;state.inspectedVersion=null;
   $('#versionInspect').hidden=false; $('#versionInspectTitle').textContent='正在读取历史版本…'; $('#versionInspectMeta').textContent='';
+  state.versionHtml=''; $('#downloadVersionHtml').hidden=true;
   $('#versionFiles').replaceChildren();$('#versionExportControls').hidden=true;$('#versionExportStatus').textContent='';$('#versionStorageNotice').textContent='';
   $('#versionInspectPreview').innerHTML='<div class="empty">正在准备快照预览…</div>'; $('#versionInspectAssets').replaceChildren();
   try {
@@ -186,6 +196,8 @@ async function inspectVersion(versionId, assetIndex=0) {
     const frame=document.createElement('iframe'); frame.className='version-inspect-frame'+(interactive?' interactive':''); frame.title='历史版本资产预览'; frame.setAttribute('sandbox',interactive?'allow-scripts':'');
     frame.srcdoc=`<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'"><style>html,body{margin:0;background:#f8fafc}svg{display:block;width:100%;height:auto;min-height:260px}</style>${interactive?data.viewer:data.svg||''}`;
     $('#versionInspectPreview').replaceChildren(frame);
+    state.versionHtml=interactive&&data.viewer?data.viewer:standaloneHtml(data.version.label||'历史版本预览',data.svg||'');
+    $('#downloadVersionHtml').hidden=!state.versionHtml;
     $('#versionInspectAssets').innerHTML=(data.assets||[]).map(item=>`<button class="version-asset ${item.index===data.asset.index?'active':''}" data-version-id="${escapeHTML(data.version.id)}" data-version-asset="${item.index}"><strong>${escapeHTML(item.name||'未命名资产')}</strong><small>${escapeHTML(item.format||item.kind||'资产')} · ${escapeHTML(item.path||'快照内对象')}</small></button>`).join('');
     $('#versionStorageNotice').textContent=data.preview_note||'';
     $('#versionFiles').innerHTML=(data.files||[]).filter(item=>item.exists).map(item=>{
@@ -217,6 +229,7 @@ function renderVersionDiff(result) {
   const frame=document.createElement('iframe'); frame.className='diff-frame'; frame.title='版本视觉差异'; frame.setAttribute('sandbox','');
   frame.srcdoc=`<!doctype html><meta charset="utf-8"><style>html,body{margin:0;background:#f8fafc}svg{display:block;width:100%;height:auto;min-height:240px}</style>${visual.svg||''}`;
   $('#versionDiffPreview').replaceChildren(frame); $('#versionDiffPreview').hidden=false;
+  state.diffHtml=standaloneHtml('版本视觉差异',visual.svg||''); $('#downloadDiffHtml').hidden=!state.diffHtml;
   $('#versionDiffJson').textContent=JSON.stringify(result.diff||{},null,2); $('#versionDiffDetails').hidden=false;
   $('#versionDiffStatus').textContent=`已完成对比：${Number(visual.change_count||0).toLocaleString()} 个实体发生变化。`;
 }
@@ -556,6 +569,8 @@ $('#createVersion').onclick=()=>createVersionSnapshot().catch(reportError);
 $('#versionLeft').onchange=()=>{ $('#versionDiffStatus').textContent=''; };
 $('#versionRight').onchange=()=>{ $('#versionDiffStatus').textContent=''; };
 $('#versionDiffButton').onclick=()=>runVersionDiff().catch(reportError);
+$('#downloadVersionHtml').onclick=()=>{if(state.versionHtml)downloadText('simloom-version-preview.html',state.versionHtml);};
+$('#downloadDiffHtml').onclick=()=>{if(state.diffHtml)downloadText('simloom-version-diff.html',state.diffHtml);};
 $('#closeVersionInspect').onclick=()=>{$('#versionInspect').hidden=true;state.versionInspectSequence=(state.versionInspectSequence||0)+1;state.inspectedVersion=null;};
 async function init() {
   try {
