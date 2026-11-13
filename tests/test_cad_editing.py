@@ -1139,6 +1139,43 @@ def test_industry_annotations_round_trip(tmp_path):
     assert any("bom" in item for item in persisted.entities)
 
 
+def test_hole_create_persists_editable_profiles_and_manufacturing_metadata(tmp_path):
+    source = _source(tmp_path)
+    output = tmp_path / "holes.dxf"
+    agent = EngineeringAgent({"tools": {}})
+    result = agent.execute_operation("cad.batch_apply", {
+        "project_dir": str(tmp_path), "input_file": source, "output_file": output,
+        "operations": [
+            {"operation": "cad.hole_create", "center": {"x": 10, "y": 5}, "diameter": 8,
+             "kind": "clearance", "standard": "ISO", "size": "M8", "tag": "H1"},
+            {"operation": "cad.hole_create", "center": {"x": 30, "y": 5}, "diameter": 8,
+             "kind": "counterbored", "outer_diameter": 14, "depth": 4, "through": False},
+            {"operation": "cad.hole_create", "center": {"x": 50, "y": 5}, "diameter": 6,
+             "kind": "tapped", "minor_diameter": 4.8},
+        ],
+    })
+    assert result["persisted_validation"]["valid"]
+    persisted = CadDocument.open(output)
+    holes = [item for item in persisted.entities if item.get("hole_id")]
+    assert len(holes) == 5
+    first_hole_id = next(item["hole_id"] for item in holes if item["hole"].get("tag") == "H1")
+    by_role = {item["hole_role"]: item for item in holes if item["hole_id"] == first_hole_id}
+    assert by_role["through"]["hole"]["size"] == "M8"
+    counter = [item for item in holes if item["hole"]["kind"] == "counterbored"]
+    assert {item["hole_role"] for item in counter} == {"through", "counter"}
+    tapped = [item for item in holes if item["hole"]["kind"] == "tapped"]
+    assert {item["hole_role"] for item in tapped} == {"through", "minor"}
+
+
+def test_hole_create_rejects_incomplete_counterbore(tmp_path):
+    source = _source(tmp_path)
+    with pytest.raises(ValueError, match="HOLE_OUTER_DIAMETER_REQUIRED"):
+        EngineeringAgent({"tools": {}}).execute_operation("cad.hole_create", {
+            "project_dir": str(tmp_path), "input_file": source, "output_file": tmp_path / "bad-hole.dxf",
+            "center": {"x": 0, "y": 0}, "diameter": 8, "kind": "counterbored",
+        })
+
+
 def test_standard_catalog_is_queryable_and_strict_annotations_are_validated(tmp_path):
     agent = EngineeringAgent({"tools": {}})
     catalog = agent.execute_operation("cad.standard_catalog", {"standard": "ISO"})

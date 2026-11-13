@@ -1611,6 +1611,85 @@ class CadOperationEngine:
         if name in {"title_block_create", "title_block_update"}:
             from .title_blocks import create_title, update_title
             return (create_title if name == "title_block_create" else update_title)(document, arguments)
+        if name == "hole_create":
+            center = _point(arguments.get("center"))
+            kind = str(arguments.get("kind", "clearance")).lower()
+            allowed_kinds = {"clearance", "tapped", "counterbored", "countersunk", "spotface"}
+            if kind not in allowed_kinds:
+                raise ValueError("HOLE_KIND_INVALID")
+            try:
+                diameter = float(arguments.get("diameter"))
+            except (TypeError, ValueError) as exc:
+                raise ValueError("HOLE_DIAMETER_REQUIRED") from exc
+            if not math.isfinite(diameter) or diameter <= 0:
+                raise ValueError("HOLE_DIAMETER_INVALID")
+            outer_diameter = arguments.get("outer_diameter")
+            if kind in {"counterbored", "countersunk", "spotface"}:
+                if outer_diameter is None:
+                    raise ValueError("HOLE_OUTER_DIAMETER_REQUIRED")
+                try:
+                    outer_diameter = float(outer_diameter)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("HOLE_OUTER_DIAMETER_INVALID") from exc
+                if not math.isfinite(outer_diameter) or outer_diameter <= diameter:
+                    raise ValueError("HOLE_OUTER_DIAMETER_INVALID")
+            elif outer_diameter is not None:
+                try:
+                    outer_diameter = float(outer_diameter)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("HOLE_OUTER_DIAMETER_INVALID") from exc
+                if not math.isfinite(outer_diameter) or outer_diameter <= diameter:
+                    raise ValueError("HOLE_OUTER_DIAMETER_INVALID")
+            minor_diameter = arguments.get("minor_diameter")
+            if minor_diameter is not None:
+                try:
+                    minor_diameter = float(minor_diameter)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("HOLE_MINOR_DIAMETER_INVALID") from exc
+                if not math.isfinite(minor_diameter) or minor_diameter <= 0 or minor_diameter >= diameter:
+                    raise ValueError("HOLE_MINOR_DIAMETER_INVALID")
+            countersink_angle = arguments.get("countersink_angle", 90.0)
+            try:
+                countersink_angle = float(countersink_angle)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("HOLE_COUNTERSINK_ANGLE_INVALID") from exc
+            if kind == "countersunk" and (not math.isfinite(countersink_angle) or not 0 < countersink_angle < 180):
+                raise ValueError("HOLE_COUNTERSINK_ANGLE_INVALID")
+            depth = arguments.get("depth")
+            if depth is not None:
+                try:
+                    depth = float(depth)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("HOLE_DEPTH_INVALID") from exc
+                if not math.isfinite(depth) or depth <= 0:
+                    raise ValueError("HOLE_DEPTH_INVALID")
+            layer = str(arguments.get("layer", "HOLES"))
+            document.ensure_layer(layer)
+            hole_id = document.next_id("hole")
+            metadata = {
+                "kind": kind, "diameter": diameter,
+                "outer_diameter": outer_diameter, "minor_diameter": minor_diameter,
+                "countersink_angle": countersink_angle if kind == "countersunk" else None,
+                "depth": depth, "through": bool(arguments.get("through", depth is None)),
+                "standard": str(arguments.get("standard", "")), "size": str(arguments.get("size", "")),
+                "tag": str(arguments.get("tag", "")),
+            }
+            created = []
+            def circle(role, radius, extra=None):
+                entity = {"id": document.next_id("hole-circle"), "type": "CIRCLE", "layer": layer,
+                          "center": copy.deepcopy(center), "radius": radius, "hole_id": hole_id,
+                          "hole_role": role, "hole": copy.deepcopy(metadata)}
+                if extra:
+                    entity["hole"].update(extra)
+                document.entities.append(entity); created.append(entity["id"])
+            circle("through", diameter / 2)
+            if minor_diameter is not None:
+                circle("minor", minor_diameter / 2)
+            if outer_diameter is not None:
+                circle("counter", outer_diameter / 2)
+            return {"entities": created, "hole_id": hole_id, "kind": kind, "diameter": diameter,
+                    "outer_diameter": outer_diameter, "minor_diameter": minor_diameter,
+                    "metadata": metadata}
         if name in {"standard_symbol_create", "fastener_create", "gdt_frame_create", "surface_texture_create", "pid_symbol_create", "process_line_create", "process_route_create", "pid_valve_cut_pipe", "bom_create", "bom_balloon_create"}:
             layer = str(arguments.get("layer", "SYMBOLS" if name in {"standard_symbol_create", "fastener_create", "pid_symbol_create"} else "ANNOTATION"))
             document.ensure_layer(layer)
