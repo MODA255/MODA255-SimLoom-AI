@@ -823,6 +823,69 @@ class CadOperationEngine:
             values["name"] = style_name
             document.text_styles[style_name] = values
             return {"text_style": copy.deepcopy(values), "changed": existing != values, "if_exists": mode}
+        if name == "set_annotation_scale":
+            raw_scale = arguments.get("scale")
+            if isinstance(raw_scale, bool):
+                raise ValueError("ANNOTATION_SCALE_INVALID")
+            try:
+                scale = float(raw_scale)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("ANNOTATION_SCALE_INVALID") from exc
+            if not math.isfinite(scale) or scale <= 0:
+                raise ValueError("ANNOTATION_SCALE_INVALID")
+            raw_previous = document.metadata.get("annotation_scale", 1.0)
+            try:
+                previous = float(raw_previous)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("ANNOTATION_SCALE_INVALID") from exc
+            if not math.isfinite(previous) or previous <= 0:
+                raise ValueError("ANNOTATION_SCALE_INVALID")
+            factor = scale / previous
+            selected = _refs(arguments, document)
+            if selected:
+                selected_set = set(selected)
+                entities = [entity for entity in document.entities if str(entity.get("id")) in selected_set]
+                if len(entities) != len(selected_set):
+                    missing = sorted(selected_set - {str(entity.get("id")) for entity in entities})
+                    raise ValueError("ENTITY_NOT_FOUND:" + ",".join(missing))
+            else:
+                entities = list(document.entities)
+            requested_layout = str(arguments.get("layout", "")).strip()
+            include_dimensions = bool(arguments.get("include_dimensions", True))
+            include_leaders = bool(arguments.get("include_leaders", True))
+            annotation_kinds = {"TEXT", "MTEXT", "ATTDEF", "ATTRIB"}
+            if include_dimensions:
+                annotation_kinds.add("DIMENSION")
+            if include_leaders:
+                annotation_kinds.add("LEADER")
+            changed: list[str] = []
+            for entity in entities:
+                kind = str(entity.get("type", "")).upper()
+                if kind not in annotation_kinds and not any(key in entity for key in ("standard_symbol", "gdt", "surface_texture", "bom", "bom_balloon")):
+                    if selected:
+                        raise ValueError("ANNOTATION_ENTITY_UNSUPPORTED:" + kind)
+                    continue
+                entity_layout = str(entity.get("sheet", entity.get("layout", "Model")))
+                if requested_layout and requested_layout.lower() not in {"auto", entity_layout.lower()}:
+                    continue
+                layer = document.layers.get(str(entity.get("layer", "0")))
+                if layer and layer.locked:
+                    raise ValueError("CAD_LAYER_LOCKED:" + layer.name)
+                updated = copy.deepcopy(entity)
+                if kind in {"TEXT", "MTEXT", "ATTDEF", "ATTRIB"}:
+                    if "height" in updated:
+                        updated["height"] = float(updated.get("height", 0)) * factor
+                    if kind == "MTEXT" and "width" in updated and float(updated.get("width", 0)) > 0:
+                        updated["width"] = float(updated.get("width", 0)) * factor
+                if kind in {"DIMENSION", "LEADER"} or any(key in updated for key in ("standard_symbol", "gdt", "surface_texture", "bom", "bom_balloon")):
+                    updated["annotation_scale"] = scale
+                if updated != entity:
+                    document.entities[document.entities.index(entity)] = updated
+                    changed.append(str(updated.get("id")))
+            document.metadata["annotation_scale"] = scale
+            document.metadata["annotation_scale_updated_by"] = "cad.set_annotation_scale"
+            return {"scale": scale, "previous_scale": previous, "factor": factor,
+                    "entities": changed, "changed": bool(changed) or not math.isclose(scale, previous)}
         if name in {"document_open", "document_inspect"}:
             return {"document": document.to_dict()}
         convenience = {
@@ -2263,6 +2326,7 @@ class CadOperationEngine:
             write_native(staged_dxf, entities=document.entities, blocks=[block.to_dict() for block in document.blocks.values()],
                          coordinate_systems=document.coordinate_systems, layers={name: layer.to_dict() for name, layer in document.layers.items()},
                          sheets=document.sheets, viewports=document.viewports, text_styles=document.text_styles,
+                         annotation_scale=document.metadata.get("annotation_scale"),
                          source=document._source_path, units=document.units)
         staged_sidecar.write_text(json.dumps(document.sidecar(staged_dxf), ensure_ascii=False, indent=2), encoding="utf-8")
         relative = str(output_file.relative_to(transaction.project_dir))
@@ -2295,6 +2359,8 @@ class CadOperationEngine:
             "entity_types": expected.to_dict().get("entity_types", {}) == persisted.to_dict().get("entity_types", {}),
             "layers": set(expected.layers) <= set(persisted.layers),
         }
+        if "annotation_scale" in expected.metadata:
+            integrity["annotation_scale"] = persisted.metadata.get("annotation_scale") == expected.metadata.get("annotation_scale")
         validation["persisted"] = True
         validation["integrity"] = integrity
         validation["valid"] = bool(validation.get("valid")) and all(integrity.values())

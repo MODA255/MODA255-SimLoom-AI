@@ -317,6 +317,8 @@ class EngineeringAgent:
                 raise ValueError("DUPLICATE_TOLERANCE_INVALID")
             if name == "cad.edit_hatch" and any(error.startswith("pattern_scale:") for error in schema_errors):
                 raise ValueError("HATCH_PATTERN_SCALE_INVALID")
+            if name == "cad.set_annotation_scale" and any(error.startswith("scale:") for error in schema_errors):
+                raise ValueError("ANNOTATION_SCALE_INVALID")
             raise ValueError("INVALID_OPERATION_ARGUMENTS:" + ",".join(schema_errors))
         if name == "results.parse":
             return self.ingest(arguments["result_file"], "result")

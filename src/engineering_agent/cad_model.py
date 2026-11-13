@@ -125,12 +125,15 @@ class CadDocument:
                 item["id"] = str(item.get("id") or item.get("handle") or f"block:{block_name}:e{index:04d}")
                 block_entities.append(item)
             blocks[str(block_name)] = Block(str(block_name), _point(original.get("base_point")), block_entities)
+        metadata = {"source_format": "DXF", "source_entity_count": len(entities), "dxf_backend": payload.get("backend", "legacy-ascii")}
+        if payload.get("annotation_scale") is not None:
+            metadata["annotation_scale"] = payload.get("annotation_scale")
         return cls(document_id=document_id or "cad-" + uuid.uuid4().hex[:12], name=name,
                    entities=entities, layers=layers, blocks=blocks,
                    coordinate_systems=copy.deepcopy(payload.get("coordinate_systems", [])),
                    units=payload.get("units", "mm"), sheets=copy.deepcopy(payload.get("sheets", {})), viewports=copy.deepcopy(payload.get("viewports", {})),
                    text_styles=copy.deepcopy(payload.get("text_styles", {})),
-                   metadata={"source_format": "DXF", "source_entity_count": len(entities), "dxf_backend": payload.get("backend", "legacy-ascii")})
+                   metadata=metadata)
 
     @classmethod
     def open(cls, path: str | Path) -> "CadDocument":

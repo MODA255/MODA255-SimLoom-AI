@@ -234,11 +234,19 @@ def read_native(path: str | Path, *, respect_redraw_order: bool = True) -> dict[
     for ucs in drawing.ucs:
         systems.append({"name": ucs.dxf.name, "origin": point(ucs.dxf.origin), "x_axis": point(ucs.dxf.xaxis), "y_axis": point(ucs.dxf.yaxis)})
     from .dxf import bbox
+    annotation_scale = drawing.header.get("$DIMSCALE", 1.0)
+    try:
+        annotation_scale = float(annotation_scale)
+    except (TypeError, ValueError):
+        annotation_scale = 1.0
+    if not math.isfinite(annotation_scale) or annotation_scale <= 0:
+        annotation_scale = 1.0
     return {"format": "DXF", "backend": "ezdxf", "dxf_version": drawing.dxfversion, "entities": entities,
             "entity_count": len(entities), "entity_types": dict(Counter(e["type"] for e in entities)),
             "layers": {name: sum(e["layer"] == name for e in entities) for name in styles}, "layer_styles": styles,
             "blocks": blocks, "bbox": bbox(entities), "coordinate_systems": systems, "sheets": sheets, "viewports": viewports,
             "text_styles": text_styles,
+            "annotation_scale": annotation_scale,
             "units": UNIT_NAMES[drawing.units],
             "topology": {"nodes": [{"id": e["id"], "type": e["type"], "layer": e["layer"]} for e in entities],
                          "relations": [{"from": e["id"], "to": "block:" + e["block_name"], "kind": "inserts"} for e in entities if e["type"] == "INSERT"]}}
@@ -558,16 +566,16 @@ def _patch(entity, item, before):
 
 
 def write_native(path: str | Path, *, entities: list[dict[str, Any]], blocks=(), coordinate_systems=(), layers=None,
-                 sheets=None, viewports=None, text_styles=None, source: str | Path | None = None, units: str = "mm") -> str:
+                 sheets=None, viewports=None, text_styles=None, annotation_scale=None, source: str | Path | None = None, units: str = "mm") -> str:
     drawing = build_native(entities=entities, blocks=blocks, coordinate_systems=coordinate_systems, layers=layers,
-                           sheets=sheets, viewports=viewports, text_styles=text_styles, source=source, units=units)
+                           sheets=sheets, viewports=viewports, text_styles=text_styles, annotation_scale=annotation_scale, source=source, units=units)
     target = Path(path); target.parent.mkdir(parents=True, exist_ok=True)
     drawing.saveas(target)
     return str(target)
 
 
 def build_native(*, entities: list[dict[str, Any]], blocks=(), coordinate_systems=(), layers=None,
-                 sheets=None, viewports=None, text_styles=None, source: str | Path | None = None, units: str = "mm"):
+                 sheets=None, viewports=None, text_styles=None, annotation_scale=None, source: str | Path | None = None, units: str = "mm"):
     """Materialize the current editable model without writing a file.
 
     Synchronization assigns handles to the supplied models; callers that only
@@ -578,6 +586,14 @@ def build_native(*, entities: list[dict[str, Any]], blocks=(), coordinate_system
     # by ezdxf instead of silently converting a supplier's drawing.
     if units not in UNIT_NAMES: raise ValueError("UNSUPPORTED_DRAWING_UNITS:" + units)
     drawing.units = UNIT_NAMES.index(units)
+    if annotation_scale is not None:
+        try:
+            annotation_scale = float(annotation_scale)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("ANNOTATION_SCALE_INVALID") from exc
+        if not math.isfinite(annotation_scale) or annotation_scale <= 0:
+            raise ValueError("ANNOTATION_SCALE_INVALID")
+        drawing.header["$DIMSCALE"] = annotation_scale
     if text_styles is not None:
         for name, properties in text_styles.items():
             style_name = str(name).strip()

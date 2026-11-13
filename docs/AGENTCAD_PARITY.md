@@ -23,6 +23,10 @@ SimLoom 原有的 CATIA / Ansys / Adams / VI-grade 工程链、B-Rep 和仿真�
 
 `cad.block_from_entities` 现已补齐：可把选定实体转换为相对基点的原生块定义，并按请求保留原件或创建 INSERT，细节见 `CAD_BLOCK_FROM_ENTITIES.md`。
 
+`cad.set_annotation_scale` 现已补齐：统一对象模型保存标注比例，原生 DXF 写入 `$DIMSCALE`，
+按比例调整文字注释并保留尺寸、引线、GD&T、表面粗糙度和 BOM 的标注元数据；模型几何和实际
+测量值不改变，细节见 `CAD_ANNOTATION_SCALE.md`。
+
 ## 必须逐项证明的能力
 
 | 能力 | 本地证据及现状 | 完成所需证据 / 下一步 |

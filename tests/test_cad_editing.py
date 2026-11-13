@@ -53,6 +53,42 @@ def test_create_text_style_persists_native_style_definition_and_is_idempotently_
         })
 
 
+def test_set_annotation_scale_resizes_text_and_persists_native_scale(tmp_path):
+    source = tmp_path / "annotation-scale-source.dxf"
+    output = tmp_path / "annotation-scale-output.dxf"
+    write_dxf(source, entities=[
+        {"type": "LINE", "start": {"x": 0, "y": 0}, "end": {"x": 10, "y": 0}},
+        {"type": "TEXT", "insert": {"x": 1, "y": 1}, "text": "A", "height": 2},
+        {"type": "MTEXT", "insert": {"x": 2, "y": 2}, "text": "B", "height": 3, "width": 5},
+    ])
+    agent = EngineeringAgent({"tools": {}})
+    result = agent.execute_operation("cad.set_annotation_scale", {
+        "project_dir": str(tmp_path), "input_file": source, "output_file": output,
+        "scale": 2,
+    })
+    assert result["persisted_validation"]["valid"]
+    document = CadDocument.open(output)
+    text = next(item for item in document.entities if item["type"] == "TEXT")
+    mtext = next(item for item in document.entities if item["type"] == "MTEXT")
+    line = next(item for item in document.entities if item["type"] == "LINE")
+    assert text["height"] == pytest.approx(4) and mtext["height"] == pytest.approx(6)
+    assert mtext["width"] == pytest.approx(10)
+    assert line["start"]["x"] == 0 and "annotation_scale" not in line
+    assert document.metadata["annotation_scale"] == pytest.approx(2)
+    native = __import__("ezdxf").readfile(output)
+    assert native.header["$DIMSCALE"] == pytest.approx(2)
+    repeat = agent.execute_operation("cad.set_annotation_scale", {
+        "project_dir": str(tmp_path), "input_file": output, "output_file": output,
+        "scale": 2,
+    })
+    assert repeat["results"][0]["factor"] == pytest.approx(1)
+    assert CadDocument.open(output).entities[1]["height"] in {4, 6}
+    with pytest.raises(ValueError, match="ANNOTATION_SCALE_INVALID"):
+        agent.execute_operation("cad.set_annotation_scale", {
+            "project_dir": str(tmp_path), "input_file": output, "output_file": tmp_path / "bad.dxf", "scale": 0,
+        })
+
+
 def test_cad_batch_is_transactional_and_emits_diff_and_sidecar(tmp_path):
     source = _source(tmp_path)
     output = tmp_path / "edited.dxf"
