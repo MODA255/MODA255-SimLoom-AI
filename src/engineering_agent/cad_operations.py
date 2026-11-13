@@ -1916,6 +1916,67 @@ class CadOperationEngine:
             source = arguments.get("block") or {}
             document.blocks[block_name] = Block(block_name, _point(source.get("base_point", arguments.get("base_point"))), list(source.get("entities", arguments.get("entities", []))))
             return {"block": document.blocks[block_name].to_dict()}
+        if name == "block_from_entities":
+            block_name = str(arguments.get("name", "")).strip()
+            if not block_name:
+                raise ValueError("BLOCK_NAME_REQUIRED")
+            if block_name in document.blocks:
+                raise ValueError("BLOCK_EXISTS:" + block_name)
+            source_ids = _refs(arguments, document)
+            if not source_ids:
+                raise ValueError("BLOCK_SOURCE_SELECTION_REQUIRED")
+            base_point = _point(arguments.get("base_point"))
+            selected_entities = [document.entity(identifier) for identifier in source_ids]
+            for entity in selected_entities:
+                layer = document.layers.get(str(entity.get("layer", "0")))
+                if layer and layer.locked:
+                    raise ValueError("CAD_LAYER_LOCKED:" + layer.name)
+                if str(entity.get("type", "")).upper() == "HATCH" and entity.get("associative"):
+                    raise ValueError("BLOCK_ASSOCIATIVE_HATCH_UNSUPPORTED")
+            selected_handles = {str(entity.get("handle")) for entity in selected_entities if entity.get("handle")}
+            for hatch in document.entities:
+                if str(hatch.get("type", "")).upper() != "HATCH" or str(hatch.get("id")) in source_ids:
+                    continue
+                refs = {str(handle) for path in hatch.get("boundary_paths", []) for handle in path.get("source_handles", [])}
+                if refs & selected_handles:
+                    raise ValueError("BLOCK_SOURCE_REFERENCED_BY_HATCH")
+            block_entities = []
+            for index, original in enumerate(selected_entities, start=1):
+                transformed = transform_entity(original, dx=-base_point["x"], dy=-base_point["y"], dz=-base_point["z"], allow_associative=False)
+                transformed.pop("handle", None)
+                transformed.pop("owner", None)
+                transformed.pop("sheet", None)
+                transformed["id"] = f"block:{block_name}:e{index:04d}"
+                block_entities.append(transformed)
+            document.blocks[block_name] = Block(block_name, base_point, block_entities)
+            keep_originals = bool(arguments.get("keep_originals", True))
+            inserted = None
+            if not keep_originals:
+                source_set = set(source_ids)
+                document.entities = [entity for entity in document.entities if str(entity.get("id")) not in source_set]
+                for selection in document.selection_sets.values():
+                    selection.refs = [ref for ref in selection.refs if ref not in source_set]
+                document.constraints = [constraint for constraint in document.constraints if not source_set.intersection(constraint.refs)]
+            if bool(arguments.get("insert", False)):
+                insert_point = _point(arguments.get("insert_point", base_point))
+                insert_layer = str(arguments.get("insert_layer", selected_entities[0].get("layer", "0")))
+                layer = document.ensure_layer(insert_layer)
+                if layer.locked:
+                    raise ValueError("CAD_LAYER_LOCKED:" + layer.name)
+                scale = arguments.get("scale", {"x": 1, "y": 1, "z": 1})
+                if isinstance(scale, (int, float)):
+                    scale = {"x": float(scale), "y": float(scale), "z": float(scale)}
+                scale = {axis: float(scale.get(axis, 1)) for axis in ("x", "y", "z")}
+                if any(not math.isfinite(value) or value == 0 for value in scale.values()):
+                    raise ValueError("BLOCK_INSERT_SCALE_INVALID")
+                rotation = float(arguments.get("rotation", 0))
+                if not math.isfinite(rotation):
+                    raise ValueError("BLOCK_INSERT_ROTATION_INVALID")
+                inserted = {"id": document.next_id("insert"), "type": "INSERT", "layer": insert_layer,
+                            "block_name": block_name, "insert": insert_point, "scale": scale, "rotation": rotation}
+                document.entities.append(inserted)
+            return {"block": document.blocks[block_name].to_dict(), "source_ids": source_ids,
+                    "insert": inserted, "kept_originals": keep_originals}
         if name == "block_delete":
             block_name = str(arguments.get("name", ""))
             if block_name not in document.blocks: raise ValueError("BLOCK_NOT_FOUND:" + block_name)

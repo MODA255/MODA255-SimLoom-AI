@@ -774,6 +774,42 @@ def test_cad_explode_table_coordinate_system_and_reverse(tmp_path):
     assert any(item.get("name") == "DETAIL" for item in persisted.coordinate_systems)
 
 
+def test_block_from_entities_creates_native_definition_and_optional_insert(tmp_path):
+    source = tmp_path / "block-source.dxf"
+    output = tmp_path / "block-output.dxf"
+    write_dxf(source, entities=[
+        {"type": "LINE", "layer": "FRAME", "start": {"x": 10, "y": 20}, "end": {"x": 14, "y": 20}},
+        {"type": "CIRCLE", "layer": "DETAIL", "center": {"x": 12, "y": 22}, "radius": 1},
+        {"type": "LINE", "layer": "OTHER", "start": {"x": 50, "y": 50}, "end": {"x": 55, "y": 50}},
+    ])
+    agent = EngineeringAgent({"tools": {}})
+    result = agent.execute_operation("cad.block_from_entities", {
+        "project_dir": str(tmp_path), "input_file": source, "output_file": output,
+        "name": "DETAIL_MARK", "entity_ids": ["e00001", "e00002"],
+        "base_point": {"x": 10, "y": 20}, "insert": True, "insert_point": {"x": 100, "y": 200},
+    })
+    assert result["persisted_validation"]["valid"]
+    document = CadDocument.open(output)
+    assert "DETAIL_MARK" in document.blocks
+    block = document.blocks["DETAIL_MARK"]
+    assert block.entities[0]["start"]["x"] == pytest.approx(0)
+    assert block.entities[0]["end"]["x"] == pytest.approx(4)
+    inserts = [item for item in document.entities if item["type"] == "INSERT"]
+    assert inserts and inserts[-1]["insert"]["x"] == 100
+    assert {item["id"] for item in document.entities if item["type"] != "INSERT"} == {"e00001", "e00002", "e00003"}
+
+    consumed = tmp_path / "block-consumed.dxf"
+    result = agent.execute_operation("cad.block_from_entities", {
+        "project_dir": str(tmp_path), "input_file": output, "output_file": consumed,
+        "name": "DETAIL_MARK_CONSUMED", "entity_ids": ["e00001", "e00002"],
+        "base_point": {"x": 10, "y": 20}, "keep_originals": False,
+    })
+    assert result["persisted_validation"]["valid"]
+    persisted = CadDocument.open(consumed)
+    assert "DETAIL_MARK_CONSUMED" in persisted.blocks
+    assert not {item["id"] for item in persisted.entities}.intersection({"e00001", "e00002"})
+
+
 def test_dimension_variants_round_trip(tmp_path):
     source = _source(tmp_path)
     output = tmp_path / "dimensions.dxf"

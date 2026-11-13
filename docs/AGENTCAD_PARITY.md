@@ -21,6 +21,8 @@ SimLoom 原有的 CATIA / Ansys / Adams / VI-grade 工程链、B-Rep 和仿真�
 
 `cad.create_text_style` 现已补齐：统一对象模型保存可复用的 DXF `STYLE` 定义，并在原生文件读回时验证字体、字高和宽度因子，细节见 `CAD_TEXT_STYLES.md`。
 
+`cad.block_from_entities` 现已补齐：可把选定实体转换为相对基点的原生块定义，并按请求保留原件或创建 INSERT，细节见 `CAD_BLOCK_FROM_ENTITIES.md`。
+
 ## 必须逐项证明的能力
 
 | 能力 | 本地证据及现状 | 完成所需证据 / 下一步 |
