@@ -93,10 +93,11 @@ def _trace_boundary_entity(document: CadDocument, arguments: dict[str, Any]) -> 
         raise ValueError("TRACE_BOUNDARY_TOLERANCE_INVALID") from exc
     if not math.isfinite(tolerance) or tolerance <= 0:
         raise ValueError("TRACE_BOUNDARY_TOLERANCE_INVALID")
-    selected_values = arguments.get("entity_ids") or arguments.get("entity_id")
+    selected_values = arguments.get("entity_ids")
     if isinstance(selected_values, str):
         selected_values = [selected_values]
     selected = {str(value) for value in (selected_values or [])}
+    seed = str(arguments.get("seed_entity_id") or arguments.get("entity_id") or "")
     source_entities = []
     for entity in document.entities:
         entity_id = str(entity.get("id"))
@@ -150,7 +151,6 @@ def _trace_boundary_entity(document: CadDocument, arguments: dict[str, Any]) -> 
     for index, edge in enumerate(edges):
         adjacency[edge["first"]].append(index); adjacency[edge["second"]].append(index)
 
-    seed = str(arguments.get("seed_entity_id") or arguments.get("entity_id") or "")
     seed_edge = next((index for index, edge in enumerate(edges) if edge["id"] == seed), None)
     if seed_edge is None and seed:
         raise ValueError("TRACE_BOUNDARY_SEED_NOT_FOUND:" + seed)
@@ -173,9 +173,9 @@ def _trace_boundary_entity(document: CadDocument, arguments: dict[str, Any]) -> 
         first, second = nodes[from_node], nodes[to_node]
         return math.atan2(second["y"] - first["y"], second["x"] - first["x"])
 
-    def find_cycle(current: int, path_nodes: list[int], used_edges: set[int]) -> list[int] | None:
-        if current == start_node and len(path_nodes) >= 4:
-            return path_nodes
+    def find_cycle(current: int, path_nodes: list[int], path_edges: list[int], used_edges: set[int]) -> tuple[list[int], list[int]] | None:
+        if current == start_node and len(path_edges) >= 3:
+            return path_nodes, path_edges
         if len(path_nodes) > len(edges) + 1:
             return None
         previous = path_nodes[-2] if len(path_nodes) > 1 else None
@@ -191,7 +191,7 @@ def _trace_boundary_entity(document: CadDocument, arguments: dict[str, Any]) -> 
                 turn = (turn - angle(previous, current)) % (2 * math.pi)
             candidates.append((turn, edges[edge_index]["id"], edge_index, next_node))
         for _turn, _source_id, edge_index, next_node in sorted(candidates):
-            result = find_cycle(next_node, path_nodes + [next_node], used_edges | {edge_index})
+            result = find_cycle(next_node, path_nodes + [next_node], path_edges + [edge_index], used_edges | {edge_index})
             if result:
                 return result
         return None
@@ -199,18 +199,16 @@ def _trace_boundary_entity(document: CadDocument, arguments: dict[str, Any]) -> 
     cycle = None
     if seed_edge is not None:
         seed_other = other(seed_edge, start_node)
-        cycle = find_cycle(seed_other, [start_node, seed_other], {seed_edge})
+        cycle = find_cycle(seed_other, [start_node, seed_other], [seed_edge], {seed_edge})
     else:
-        cycle = find_cycle(start_node, [start_node], set())
+        cycle = find_cycle(start_node, [start_node], [], set())
     if not cycle:
         raise ValueError("TRACE_BOUNDARY_CLOSED_LOOP_NOT_FOUND")
-    cycle_nodes = cycle[:-1] if cycle[-1] == start_node else cycle
+    cycle_nodes_raw, cycle_edge_indices = cycle
+    cycle_nodes = cycle_nodes_raw[:-1] if cycle_nodes_raw[-1] == start_node else cycle_nodes_raw
     if len(cycle_nodes) < 3:
         raise ValueError("TRACE_BOUNDARY_CLOSED_LOOP_TOO_SHORT")
-    source_ids = list(dict.fromkeys(edges[index]["id"] for index in range(len(edges))
-                             if any(edges[index]["first"] == cycle_nodes[pos] and edges[index]["second"] == cycle_nodes[(pos + 1) % len(cycle_nodes)]
-                                    or edges[index]["second"] == cycle_nodes[pos] and edges[index]["first"] == cycle_nodes[(pos + 1) % len(cycle_nodes)]
-                                    for pos in range(len(cycle_nodes)))))
+    source_ids = list(dict.fromkeys(edges[index]["id"] for index in cycle_edge_indices))
     layer = str(arguments.get("layer") or (document.entity(source_ids[0]).get("layer", "0") if source_ids else "0"))
     document.ensure_layer(layer)
     entity = {"id": document.next_id("boundary"), "type": "LWPOLYLINE", "layer": layer,
