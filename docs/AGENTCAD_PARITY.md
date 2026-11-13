@@ -27,6 +27,9 @@ SimLoom 原有的 CATIA / Ansys / Adams / VI-grade 工程链、B-Rep 和仿真�
 按比例调整文字注释并保留尺寸、引线、GD&T、表面粗糙度和 BOM 的标注元数据；模型几何和实际
 测量值不改变，细节见 `CAD_ANNOTATION_SCALE.md`。
 
+`cad.rectangle_create` 和 `cad.polygon_create` 现已补齐：生成带旋转、尺寸校验和原生回读的
+闭合 LWPOLYLINE，细节见 `CAD_PRIMITIVES.md`。
+
 ## 必须逐项证明的能力
 
 | 能力 | 本地证据及现状 | 完成所需证据 / 下一步 |

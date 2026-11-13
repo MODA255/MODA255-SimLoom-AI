@@ -711,6 +711,52 @@ def _positive_corner_number(value: Any, code: str) -> float:
     return number
 
 
+def _finite_cad_number(value: Any, code: str) -> float:
+    if isinstance(value, bool):
+        raise ValueError(code)
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(code) from exc
+    if not math.isfinite(number):
+        raise ValueError(code)
+    return number
+
+
+def _rectangle_vertices(arguments: dict[str, Any]) -> list[dict[str, float]]:
+    width = _finite_cad_number(arguments.get("width"), "RECTANGLE_WIDTH_INVALID")
+    height = _finite_cad_number(arguments.get("height"), "RECTANGLE_HEIGHT_INVALID")
+    if width <= 0 or height <= 0:
+        raise ValueError("RECTANGLE_SIZE_INVALID")
+    origin = _point(arguments.get("origin", arguments.get("corner1")))
+    angle = math.radians(_finite_cad_number(arguments.get("rotation", 0), "RECTANGLE_ROTATION_INVALID"))
+    cosine, sine = math.cos(angle), math.sin(angle)
+    local = ((0.0, 0.0), (width, 0.0), (width, height), (0.0, height))
+    return [{"x": origin["x"] + x * cosine - y * sine,
+             "y": origin["y"] + x * sine + y * cosine,
+             "z": origin["z"]} for x, y in local]
+
+
+def _regular_polygon_vertices(arguments: dict[str, Any]) -> list[dict[str, float]]:
+    center = _point(arguments.get("center"))
+    radius = _finite_cad_number(arguments.get("radius"), "POLYGON_RADIUS_INVALID")
+    if radius <= 0:
+        raise ValueError("POLYGON_RADIUS_INVALID")
+    sides_value = arguments.get("sides")
+    if isinstance(sides_value, bool):
+        raise ValueError("POLYGON_SIDES_INVALID")
+    try:
+        sides = int(sides_value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("POLYGON_SIDES_INVALID") from exc
+    if sides < 3 or float(sides) != float(sides_value):
+        raise ValueError("POLYGON_SIDES_INVALID")
+    start = math.radians(_finite_cad_number(arguments.get("rotation", 0), "POLYGON_ROTATION_INVALID"))
+    return [{"x": center["x"] + radius * math.cos(start + 2 * math.pi * index / sides),
+             "y": center["y"] + radius * math.sin(start + 2 * math.pi * index / sides),
+             "z": center["z"]} for index in range(sides)]
+
+
 def _inside_window(point: dict[str, Any], first: dict[str, Any], second: dict[str, Any], tolerance: float = 1e-9) -> bool:
     return (min(first["x"], second["x"]) - tolerance <= float(point.get("x", 0)) <= max(first["x"], second["x"]) + tolerance
             and min(first["y"], second["y"]) - tolerance <= float(point.get("y", 0)) <= max(first["y"], second["y"]) + tolerance)
@@ -893,6 +939,8 @@ class CadOperationEngine:
             "circle_create": lambda: ("CIRCLE", {"center": _point(arguments.get("center")), "radius": arguments.get("radius")}),
             "arc_create": lambda: ("ARC", {"center": _point(arguments.get("center")), "radius": arguments.get("radius"), "start_angle": arguments.get("start_angle", 0), "end_angle": arguments.get("end_angle", 360)}),
             "polyline_create": lambda: ("LWPOLYLINE", {"vertices": [_point(item) for item in arguments.get("vertices", [])], "closed": bool(arguments.get("closed", False))}),
+            "rectangle_create": lambda: ("LWPOLYLINE", {"vertices": _rectangle_vertices(arguments), "closed": True, "shape": "rectangle"}),
+            "polygon_create": lambda: ("LWPOLYLINE", {"vertices": _regular_polygon_vertices(arguments), "closed": True, "shape": "regular_polygon", "sides": int(arguments.get("sides"))}),
             "spline_create": lambda: ("SPLINE", {"fit_points": [_point(item) for item in arguments.get("fit_points", arguments.get("points", []))], "degree": int(arguments.get("degree", 3))}),
             "point_create": lambda: ("POINT", {"point": arguments.get("point")}),
             "text_create": lambda: ("TEXT", {"insert": _point(arguments.get("insert")), "text": arguments.get("text", ""), "height": arguments.get("height", 1), "rotation": arguments.get("rotation", 0)}),

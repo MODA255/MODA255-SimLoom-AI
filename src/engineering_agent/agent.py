@@ -319,6 +319,13 @@ class EngineeringAgent:
                 raise ValueError("HATCH_PATTERN_SCALE_INVALID")
             if name == "cad.set_annotation_scale" and any(error.startswith("scale:") for error in schema_errors):
                 raise ValueError("ANNOTATION_SCALE_INVALID")
+            if name == "cad.rectangle_create" and any(error.startswith(("width:", "height:")) for error in schema_errors):
+                raise ValueError("RECTANGLE_SIZE_INVALID")
+            if name == "cad.polygon_create":
+                if any(error.startswith("sides:") for error in schema_errors):
+                    raise ValueError("POLYGON_SIDES_INVALID")
+                if any(error.startswith("radius:") for error in schema_errors):
+                    raise ValueError("POLYGON_RADIUS_INVALID")
             raise ValueError("INVALID_OPERATION_ARGUMENTS:" + ",".join(schema_errors))
         if name == "results.parse":
             return self.ingest(arguments["result_file"], "result")

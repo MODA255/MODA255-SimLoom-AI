@@ -89,6 +89,43 @@ def test_set_annotation_scale_resizes_text_and_persists_native_scale(tmp_path):
         })
 
 
+@pytest.mark.parametrize(("operation", "arguments", "expected"), [
+    ("cad.rectangle_create", {"origin": {"x": 10, "y": 20}, "width": 30, "height": 10},
+     [{"x": 10, "y": 20}, {"x": 40, "y": 20}, {"x": 40, "y": 30}, {"x": 10, "y": 30}]),
+    ("cad.polygon_create", {"center": {"x": 0, "y": 0}, "radius": 5, "sides": 4, "rotation": 45},
+     [{"x": 5 / 2**0.5, "y": 5 / 2**0.5}, {"x": -5 / 2**0.5, "y": 5 / 2**0.5},
+      {"x": -5 / 2**0.5, "y": -5 / 2**0.5}, {"x": 5 / 2**0.5, "y": -5 / 2**0.5}]),
+])
+def test_rectangle_and_regular_polygon_create_real_closed_polylines(tmp_path, operation, arguments, expected):
+    output = tmp_path / ("rectangle" if operation.endswith("rectangle_create") else "polygon")
+    output = output.with_suffix(".dxf")
+    source = tmp_path / "source.dxf"
+    write_dxf(source, entities=[])
+    result = EngineeringAgent({"tools": {}}).execute_operation(operation, {
+        "project_dir": str(tmp_path), "input_file": source, "output_file": output, **arguments,
+    })
+    assert result["persisted_validation"]["valid"]
+    entity = CadDocument.open(output).entities[0]
+    assert entity["type"] == "LWPOLYLINE" and entity["closed"] is True
+    assert len(entity["vertices"]) == len(expected)
+    for actual, wanted in zip(entity["vertices"], expected):
+        assert actual["x"] == pytest.approx(wanted["x"])
+        assert actual["y"] == pytest.approx(wanted["y"])
+
+
+def test_rectangle_and_polygon_reject_degenerate_sizes(tmp_path):
+    source = tmp_path / "source.dxf"
+    write_dxf(source, entities=[])
+    agent = EngineeringAgent({"tools": {}})
+    with pytest.raises(ValueError, match="RECTANGLE_SIZE_INVALID"):
+        agent.execute_operation("cad.rectangle_create", {"project_dir": str(tmp_path), "input_file": source,
+                                                          "output_file": tmp_path / "bad.dxf", "width": 0, "height": 2})
+    with pytest.raises(ValueError, match="POLYGON_SIDES_INVALID"):
+        agent.execute_operation("cad.polygon_create", {"project_dir": str(tmp_path), "input_file": source,
+                                                         "output_file": tmp_path / "bad.dxf", "center": {"x": 0, "y": 0},
+                                                         "radius": 2, "sides": 2})
+
+
 def test_cad_batch_is_transactional_and_emits_diff_and_sidecar(tmp_path):
     source = _source(tmp_path)
     output = tmp_path / "edited.dxf"
