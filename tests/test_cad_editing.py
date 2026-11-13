@@ -525,6 +525,48 @@ def test_remove_duplicates_preserves_references_and_layout_context(tmp_path):
     assert any(item["name"] == "operation.cad.entity_remove_duplicates" for item in listed["result"]["tools"])
 
 
+def test_entity_stretch_crossing_window_moves_points_and_remeasures(tmp_path):
+    source = tmp_path / "stretch.dxf"
+    output = tmp_path / "stretched.dxf"
+    write_dxf(source, entities=[
+        {"type": "LINE", "layer": "FRAME", "start": {"x": 0, "y": 0}, "end": {"x": 10, "y": 0}},
+        {"type": "LINE", "layer": "FRAME", "start": {"x": 1, "y": 1}, "end": {"x": 3, "y": 1}},
+        {"type": "LWPOLYLINE", "layer": "FRAME", "vertices": [{"x": 0, "y": 0}, {"x": 4, "y": 0}, {"x": 8, "y": 0}], "closed": False},
+        {"type": "CIRCLE", "layer": "FRAME", "center": {"x": 2, "y": 2}, "radius": 1},
+        {"type": "LINE", "layer": "FRAME", "start": {"x": 20, "y": 0}, "end": {"x": 30, "y": 0}},
+    ])
+    agent = EngineeringAgent({"tools": {}})
+    result = agent.execute_operation("cad.entity_stretch", {
+        "project_dir": str(tmp_path), "input_file": source, "output_file": output,
+        "window": [{"x": 0, "y": -1}, {"x": 5, "y": 3}], "delta": {"x": 0, "y": 2, "z": 0},
+    })
+    assert result["validation"]["valid"] and result["persisted_validation"]["valid"]
+    document = CadDocument.open(output)
+    line, enclosed, polyline, circle, outside = document.entities
+    assert line["start"]["y"] == pytest.approx(2) and line["end"]["y"] == pytest.approx(0)
+    assert enclosed["start"]["y"] == pytest.approx(3) and enclosed["end"]["y"] == pytest.approx(3)
+    assert [point["y"] for point in polyline["vertices"]] == [2, 2, 0]
+    assert circle["center"]["y"] == pytest.approx(4)
+    assert outside["start"]["y"] == pytest.approx(0)
+    assert result["results"][0]["count"] == 4
+
+    locked = tmp_path / "locked-stretch.dxf"
+    agent.execute_operation("cad.layer_update", {
+        "project_dir": str(tmp_path), "input_file": output, "output_file": locked,
+        "name": "FRAME", "locked": True,
+    })
+    with pytest.raises(ValueError, match="CAD_LAYER_LOCKED:FRAME"):
+        agent.execute_operation("cad.entity_stretch", {
+            "project_dir": str(tmp_path), "input_file": locked, "output_file": tmp_path / "locked-out.dxf",
+            "window": [{"x": 0, "y": -1}, {"x": 5, "y": 5}], "delta": {"x": 1, "y": 0, "z": 0},
+        })
+    spec = agent.operations.get("cad.entity_stretch").schema()
+    assert spec["parameters_schema"]["window"]["maxItems"] == 2
+    from engineering_agent.mcp_server import MCPServer
+    listed = MCPServer(agent, profile="full").handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {"limit": 500}})
+    assert any(item["name"] == "operation.cad.entity_stretch" for item in listed["result"]["tools"])
+
+
 def test_offset_uses_signed_side_and_preserves_polyline_connectivity(tmp_path):
     source = tmp_path / "offset.dxf"
     write_dxf(source, entities=[

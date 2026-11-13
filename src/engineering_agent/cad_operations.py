@@ -14,7 +14,7 @@ import math
 from pathlib import Path
 from typing import Any, Iterable
 
-from .cad_model import Block, CadDocument, Constraint, Layer, SelectionSet, transform_entity, validate_cad_document
+from .cad_model import Block, CadDocument, Constraint, Layer, SelectionSet, entity_points, transform_entity, validate_cad_document
 from .dxf import diff_documents
 from .formats import write_dxf
 from .transactions import RunTransaction
@@ -711,6 +711,31 @@ def _positive_corner_number(value: Any, code: str) -> float:
     return number
 
 
+def _inside_window(point: dict[str, Any], first: dict[str, Any], second: dict[str, Any], tolerance: float = 1e-9) -> bool:
+    return (min(first["x"], second["x"]) - tolerance <= float(point.get("x", 0)) <= max(first["x"], second["x"]) + tolerance
+            and min(first["y"], second["y"]) - tolerance <= float(point.get("y", 0)) <= max(first["y"], second["y"]) + tolerance)
+
+
+def _shift_point(point: dict[str, Any], delta: dict[str, float]) -> dict[str, float]:
+    value = _point(point)
+    return {"x": value["x"] + delta["x"], "y": value["y"] + delta["y"], "z": value["z"] + delta["z"]}
+
+
+def _dimension_remeasure(entity: dict[str, Any]) -> None:
+    if str(entity.get("type", "")).upper() != "DIMENSION":
+        return
+    kind = str(entity.get("dimension_type", "linear")).lower()
+    if kind in {"linear", "aligned"} and entity.get("start") is not None and entity.get("end") is not None:
+        start, end = _point(entity.get("start")), _point(entity.get("end"))
+        entity["measurement"] = math.dist((start["x"], start["y"], start["z"]), (end["x"], end["y"], end["z"]))
+    elif kind in {"radial", "diameter"} and entity.get("center") is not None:
+        center = _point(entity.get("center")); point = _point(entity.get("end") or entity.get("start"))
+        entity["measurement"] = math.dist((center["x"], center["y"], center["z"]), (point["x"], point["y"], point["z"]))
+    elif kind == "ordinate" and entity.get("start") is not None:
+        point = _point(entity.get("start"))
+        entity["measurement"] = point["x"] if str(entity.get("axis", "x")).lower() == "x" else point["y"]
+
+
 def suggest_repairs(document: CadDocument, validation: dict[str, Any]) -> list[dict[str, Any]]:
     """Turn deterministic validator errors into a small, reviewable repair plan."""
     repairs: list[dict[str, Any]] = []
@@ -798,6 +823,94 @@ class CadOperationEngine:
             for selection in document.selection_sets.values():
                 selection.refs = [ref for ref in selection.refs if ref not in ids]
             return {"deleted": sorted(ids)}
+        if name == "entity_stretch":
+            window = arguments.get("window")
+            if not isinstance(window, (list, tuple)) or len(window) != 2:
+                raise ValueError("STRETCH_WINDOW_REQUIRED")
+            first, second = _point(window[0]), _point(window[1])
+            delta_value = arguments.get("delta")
+            if delta_value is None:
+                raise ValueError("STRETCH_DELTA_REQUIRED")
+            delta = _point(delta_value)
+            layout = str(arguments.get("layout", "")).strip()
+            changed: list[str] = []
+            moved_points = 0
+            for entity in list(document.entities):
+                entity_layout = str(entity.get("sheet", entity.get("layout", "Model")))
+                if layout and layout.lower() not in {"auto", entity_layout.lower()}:
+                    continue
+                kind = str(entity.get("type", "")).upper()
+                points = entity_points(entity)
+                updated = copy.deepcopy(entity)
+                moved = 0
+                if points and all(_inside_window(point, first, second) for point in points):
+                    layer = document.layers.get(str(entity.get("layer", "0")))
+                    if layer and layer.locked:
+                        raise ValueError("CAD_LAYER_LOCKED:" + layer.name)
+                    updated = transform_entity(entity, dx=delta["x"], dy=delta["y"], dz=delta["z"], allow_associative=True)
+                    moved = len(points)
+                elif kind == "LINE":
+                    for key in ("start", "end"):
+                        if _inside_window(entity.get(key) or {}, first, second):
+                            updated[key] = _shift_point(entity.get(key), delta); moved += 1
+                elif kind in {"LWPOLYLINE", "POLYLINE"}:
+                    updated["vertices"] = []
+                    for point in entity.get("vertices", []):
+                        if _inside_window(point, first, second):
+                            updated["vertices"].append(_shift_point(point, delta)); moved += 1
+                        else:
+                            updated["vertices"].append(copy.deepcopy(point))
+                elif kind == "LEADER":
+                    updated["vertices"] = []
+                    for point in entity.get("vertices", []):
+                        if _inside_window(point, first, second):
+                            updated["vertices"].append(_shift_point(point, delta)); moved += 1
+                        else:
+                            updated["vertices"].append(copy.deepcopy(point))
+                elif kind == "SPLINE":
+                    for key in ("fit_points", "control_points"):
+                        values = updated.get(key)
+                        if values is None:
+                            continue
+                        for index, point in enumerate(values):
+                            if _inside_window(point, first, second):
+                                values[index] = _shift_point(point, delta); moved += 1
+                elif kind == "HATCH":
+                    if entity.get("associative") and any(_inside_window(point, first, second) for point in points):
+                        raise ValueError("STRETCH_ASSOCIATIVE_HATCH_PARTIAL_UNSUPPORTED")
+                    for key in ("boundary_vertices",):
+                        values = updated.get(key)
+                        if values is not None:
+                            for index, point in enumerate(values):
+                                if _inside_window(point, first, second):
+                                    values[index] = _shift_point(point, delta); moved += 1
+                    for path in updated.get("boundary_paths", []):
+                        values = path.get("vertices") or []
+                        for index, point in enumerate(values):
+                            if _inside_window(point, first, second):
+                                values[index] = _shift_point(point, delta); moved += 1
+                elif kind == "DIMENSION":
+                    for key in ("definition", "start", "end", "center"):
+                        if key in updated and isinstance(updated.get(key), dict) and _inside_window(updated[key], first, second):
+                            updated[key] = _shift_point(updated[key], delta); moved += 1
+                    _dimension_remeasure(updated)
+                else:
+                    anchor = entity.get("center") or entity.get("insert") or entity.get("point") or entity.get("definition")
+                    if isinstance(anchor, dict) and _inside_window(anchor, first, second):
+                        layer = document.layers.get(str(entity.get("layer", "0")))
+                        if layer and layer.locked:
+                            raise ValueError("CAD_LAYER_LOCKED:" + layer.name)
+                        updated = transform_entity(entity, dx=delta["x"], dy=delta["y"], dz=delta["z"], allow_associative=True)
+                        moved = 1
+                if moved:
+                    layer = document.layers.get(str(entity.get("layer", "0")))
+                    if layer and layer.locked:
+                        raise ValueError("CAD_LAYER_LOCKED:" + layer.name)
+                    document.entities[document.entities.index(entity)] = updated
+                    changed.append(str(entity.get("id")))
+                    moved_points += moved
+            return {"entities": changed, "count": len(changed), "moved_points": moved_points,
+                    "window": [first, second], "delta": delta}
         if name in {"entity_move", "entity_transform", "entity_rotate", "entity_scale", "entity_mirror", "entity_copy"}:
             ids = _refs(arguments, document)
             if not ids:
