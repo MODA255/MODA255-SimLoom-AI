@@ -1,7 +1,7 @@
 'use strict';
 const $ = s => document.querySelector(s);
 const escapeHTML = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const state = {project:null, templates:[], busy:false, page:1, preview:0, previewPath:null, versions:[], versionView:0, cadHistory:false, historyRequest:0};
+const state = {project:null, templates:[], busy:false, page:1, preview:0, previewPath:null, versions:[], versionView:0, cadHistory:false, historyRequest:0, watch:null};
 const icons = {catia:'◇', ansys:'△', adams:'⌁', 'vi-grade':'◎'};
 const labels = {waiting:'等待恢复连接',queued:'待运行', running:'运行中', completed:'已完成', failed:'失败'};
 let toastTimer;
@@ -57,6 +57,7 @@ async function openProject(id) {
   $('#drawingTools').hidden=true; state.drawing=null; state.drawingPath=null;
   $('#previewName').textContent='选择一个工程文件'; $('#downloadAsset').hidden=true;
   $('#previewHint').textContent='STEP / OBJ 模型 · CSV 曲线 · JSON 指标';
+  resetWatchPanel();
   resetVersionPanel();
   choosePanel('workspace');
   await refreshTasks(true);
@@ -494,6 +495,42 @@ $('#backWizard').onclick=()=>wizardPage(1); $('#cancelWizard').onclick=()=>$('#p
 $('#planButton').onclick=plan; $('#queueButton').onclick=enqueue; $('#offlineButton').onclick=()=>runOffline();
 $('#refreshTasks').onclick=()=>refreshTasks().catch(reportError); $('#refreshAssets').onclick=()=>refreshAssets().catch(reportError);
 $('#refreshDoctor').onclick=()=>refreshDoctor().catch(reportError); $('#viewResults').onclick=()=>choosePanel('assets');
+function resetWatchPanel() {
+  state.watch=null; $('#watchState').textContent='未启动'; $('#watchState').className='pill';
+  $('#watchNotice').textContent='监测器只读取文件并保存指纹，不判断求解是否成功；结果仍需经过工程指标验证。';
+  $('#watchEvents').innerHTML='<li class="empty">启动监测后，这里会显示文件变化。</li>';
+  $('#pollWatch').disabled=true; $('#stopWatch').disabled=true;
+}
+function renderWatchEvents(events) {
+  if(!events?.length) { $('#watchEvents').innerHTML='<li class="empty">本次检查没有发现文件变化。</li>'; return; }
+  const rows=events.flatMap(event=>(event.changes||[]).map(change=>`<li><strong>${escapeHTML({added:'新增',modified:'修改',touched:'时间戳变化',deleted:'删除',unstable:'仍在写入'}[change.change]||change.change)}</strong><span>${escapeHTML(change.path)}<small> · 第 ${escapeHTML(event.sequence)} 次检查</small></span></li>`));
+  $('#watchEvents').innerHTML=rows.join('')||'<li class="empty">本次检查没有发现文件变化。</li>';
+}
+async function startWatch() {
+  if(!state.project) { openWizard(); return; }
+  const paths=$('#watchPaths').value.split(/[\n,]/).map(value=>value.trim()).filter(Boolean);
+  if(!paths.length) { $('#watchNotice').textContent='请填写至少一个文件或文件夹。'; $('#watchPaths').focus(); return; }
+  try {
+    const result=await request('/api/project-watch',{project_id:state.project.id,action:'start',paths,label:$('#watchLabel').value.trim()});
+    state.watch={id:result.watch_id,sequence:result.sequence}; $('#watchState').textContent='监测中'; $('#watchState').className='pill green';
+    $('#watchNotice').textContent=`已记录 ${result.paths.length} 个监测入口。结果文件写回后点击“检查变化”。`;
+    $('#pollWatch').disabled=false; $('#stopWatch').disabled=false; $('#watchEvents').innerHTML='<li class="empty">基线已记录，等待外部软件写回文件。</li>'; details(result);
+  } catch(error) { $('#watchNotice').textContent=error.message; }
+}
+async function pollWatch() {
+  if(!state.project||!state.watch) return;
+  try {
+    const result=await request('/api/project-watch',{project_id:state.project.id,action:'poll',watch_id:state.watch.id,since:state.watch.sequence});
+    state.watch.sequence=result.sequence; renderWatchEvents([{sequence:result.sequence,changes:result.changes}]);
+    $('#watchNotice').textContent=result.changes?.length?`发现 ${result.changes.length} 个文件变化；请继续读取并验证结果。`:`第 ${result.sequence} 次检查未发现变化。`; details(result);
+  } catch(error) { $('#watchNotice').textContent=error.message; }
+}
+async function stopWatch() {
+  if(!state.project||!state.watch) return;
+  try { const result=await request('/api/project-watch',{project_id:state.project.id,action:'stop',watch_id:state.watch.id}); state.watch=null; $('#watchState').textContent='已停止'; $('#watchState').className='pill'; $('#pollWatch').disabled=true; $('#stopWatch').disabled=true; $('#watchNotice').textContent='监测已停止，历史游标仍保留在项目中。'; details(result); }
+  catch(error) { $('#watchNotice').textContent=error.message; }
+}
+$('#startWatch').onclick=()=>startWatch().catch(reportError); $('#pollWatch').onclick=()=>pollWatch().catch(reportError); $('#stopWatch').onclick=()=>stopWatch().catch(reportError);
 $('#refreshVersions').onclick=()=>refreshVersions().catch(reportError);
 $('#createVersion').onclick=()=>createVersionSnapshot().catch(reportError);
 $('#versionLeft').onchange=()=>{ $('#versionDiffStatus').textContent=''; };

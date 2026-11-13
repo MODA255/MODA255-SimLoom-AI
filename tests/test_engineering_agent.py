@@ -506,6 +506,7 @@ def test_web_workspace_shell_and_offline_endpoint(tmp_path):
             html = response.read().decode("utf-8")
         assert "SimLoom AI" in html
         assert "运行离线闭环" in html
+        assert "结果文件监测" in html
 
         with urllib.request.urlopen(base + "/api/templates", timeout=5) as response:
             templates = json.loads(response.read())

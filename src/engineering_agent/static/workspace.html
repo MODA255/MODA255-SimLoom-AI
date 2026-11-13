@@ -40,6 +40,10 @@
         <button class="btn btn-light" id="viewResults" hidden>查看模型与结果 →</button>
       </div>
       <div class="card" style="grid-column:1/-1"><div class="card-head"><div><h3>任务历史</h3><p>离线运行和计划排练都会保留记录。排练只生成输入和检查流程。</p></div><button class="btn btn-light" id="refreshTasks">刷新</button></div><div id="tasks" class="table-wrap"></div></div>
+      <div class="card project-watch-card" style="grid-column:1/-1"><div class="card-head"><div><h3>结果文件监测</h3><p>软件在工作站写回结果后，轮询项目文件即可看到新增、修改、删除或仍在写入的文件。</p></div><span class="pill" id="watchState">未启动</span></div>
+        <div class="watch-controls"><label for="watchPaths">监测文件或文件夹</label><input id="watchPaths" placeholder="例如：results/solver.rst, results/motion.csv"><label for="watchLabel">名称</label><input id="watchLabel" maxlength="160" placeholder="例如：Ansys 结果输出"><div class="file-actions"><button class="btn btn-blue" id="startWatch">开始监测</button><button class="btn btn-light" id="pollWatch" disabled>检查变化</button><button class="btn btn-light" id="stopWatch" disabled>停止监测</button></div></div>
+        <p id="watchNotice" class="muted" role="status">监测器只读取文件并保存指纹，不判断求解是否成功；结果仍需经过工程指标验证。</p><ol class="watch-events" id="watchEvents"><li class="empty">启动监测后，这里会显示文件变化。</li></ol>
+      </div>
       <details class="card output-details"><summary>技术详情 · 计划、报告和诊断</summary><pre class="json" id="output">等待操作…</pre></details>
     </section>
     <section id="projects" class="panel" hidden>

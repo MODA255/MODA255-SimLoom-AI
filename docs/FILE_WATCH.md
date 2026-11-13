@@ -27,5 +27,6 @@ events = agent.execute_operation("project.watch_poll", {
 
 CLI 对应命令是 `watch-start`、`watch-poll`、`watch-status` 和 `watch-stop`。HTTP 使用
 `POST /api/project-watch`，`action` 取 `start`、`poll`、`status` 或 `stop`；状态也可以通过
-`GET /api/project-watch?root=...&watch_id=...` 读取。完整 MCP profile 会发现这些操作；safe
+`GET /api/project-watch?root=...&watch_id=...` 读取。Web 工作台的“结果文件监测”卡片也使用同一
+接口。完整 MCP profile 会发现这些操作；safe
 profile 隐藏会写入监测状态的操作。
