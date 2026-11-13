@@ -220,6 +220,10 @@ def read_native(path: str | Path, *, respect_redraw_order: bool = True) -> dict[
     styles = {}
     for layer in drawing.layers:
         styles[layer.dxf.name] = _layer_model(layer)
+    text_styles = {}
+    for style in drawing.styles:
+        values = {key: value for key, value in style.dxfattribs().items() if key not in {"handle", "owner", "name"}}
+        text_styles[style.dxf.name] = {"name": style.dxf.name, **values}
     for entity in entities:
         if entity.get("title_block_id") and entity.get("sheet") in sheets:
             sheets[entity["sheet"]]["title_block"] = {
@@ -234,6 +238,7 @@ def read_native(path: str | Path, *, respect_redraw_order: bool = True) -> dict[
             "entity_count": len(entities), "entity_types": dict(Counter(e["type"] for e in entities)),
             "layers": {name: sum(e["layer"] == name for e in entities) for name in styles}, "layer_styles": styles,
             "blocks": blocks, "bbox": bbox(entities), "coordinate_systems": systems, "sheets": sheets, "viewports": viewports,
+            "text_styles": text_styles,
             "units": UNIT_NAMES[drawing.units],
             "topology": {"nodes": [{"id": e["id"], "type": e["type"], "layer": e["layer"]} for e in entities],
                          "relations": [{"from": e["id"], "to": "block:" + e["block_name"], "kind": "inserts"} for e in entities if e["type"] == "INSERT"]}}
@@ -462,9 +467,27 @@ def _patch(entity, item, before):
         dxf.elevation = xyz(item.get("elevation"))
         if "associative" in item:
             dxf.associative = int(bool(item.get("associative")))
-        if item.get("solid") != before.get("solid") or item.get("pattern") != before.get("pattern"):
-            if item.get("solid", True): entity.set_solid_fill(style=item.get("hatch_style", 0))
-            else: entity.set_pattern_fill(item.get("pattern", "ANSI31"), scale=item.get("pattern_scale", 1), angle=item.get("pattern_angle", 0))
+        solid_changed = item.get("solid") != before.get("solid")
+        pattern_changed = item.get("pattern") != before.get("pattern")
+        style_changed = item.get("hatch_style") != before.get("hatch_style")
+        scale_changed = item.get("pattern_scale") != before.get("pattern_scale")
+        angle_changed = item.get("pattern_angle") != before.get("pattern_angle")
+        double_changed = item.get("double") != before.get("double")
+        if item.get("solid", before.get("solid", True)):
+            if solid_changed or style_changed:
+                entity.set_solid_fill(style=item.get("hatch_style", before.get("hatch_style", 0)))
+        elif pattern_changed or style_changed or double_changed:
+            entity.set_pattern_fill(item.get("pattern", before.get("pattern", "ANSI31")),
+                                    scale=item.get("pattern_scale", before.get("pattern_scale", 1)),
+                                    angle=item.get("pattern_angle", before.get("pattern_angle", 0)),
+                                    double=int(item.get("double", before.get("double", False))),
+                                    style=item.get("hatch_style", before.get("hatch_style", 0)),
+                                    pattern_type=item.get("pattern_type", before.get("pattern_type", 1)))
+        else:
+            if scale_changed:
+                entity.set_pattern_scale(float(item.get("pattern_scale", 1)))
+            if angle_changed:
+                entity.set_pattern_angle(float(item.get("pattern_angle", 0)))
         for key, dest in (("hatch_style", "hatch_style"), ("pattern_type", "pattern_type"), ("pattern_scale", "pattern_scale"), ("pattern_angle", "pattern_angle"), ("double", "pattern_double")):
             if key in item: dxf.set(dest, item[key])
         if item.get("pattern_lines"):
@@ -535,16 +558,16 @@ def _patch(entity, item, before):
 
 
 def write_native(path: str | Path, *, entities: list[dict[str, Any]], blocks=(), coordinate_systems=(), layers=None,
-                 sheets=None, viewports=None, source: str | Path | None = None, units: str = "mm") -> str:
+                 sheets=None, viewports=None, text_styles=None, source: str | Path | None = None, units: str = "mm") -> str:
     drawing = build_native(entities=entities, blocks=blocks, coordinate_systems=coordinate_systems, layers=layers,
-                           sheets=sheets, viewports=viewports, source=source, units=units)
+                           sheets=sheets, viewports=viewports, text_styles=text_styles, source=source, units=units)
     target = Path(path); target.parent.mkdir(parents=True, exist_ok=True)
     drawing.saveas(target)
     return str(target)
 
 
 def build_native(*, entities: list[dict[str, Any]], blocks=(), coordinate_systems=(), layers=None,
-                 sheets=None, viewports=None, source: str | Path | None = None, units: str = "mm"):
+                 sheets=None, viewports=None, text_styles=None, source: str | Path | None = None, units: str = "mm"):
     """Materialize the current editable model without writing a file.
 
     Synchronization assigns handles to the supplied models; callers that only
@@ -555,6 +578,15 @@ def build_native(*, entities: list[dict[str, Any]], blocks=(), coordinate_system
     # by ezdxf instead of silently converting a supplier's drawing.
     if units not in UNIT_NAMES: raise ValueError("UNSUPPORTED_DRAWING_UNITS:" + units)
     drawing.units = UNIT_NAMES.index(units)
+    if text_styles is not None:
+        for name, properties in text_styles.items():
+            style_name = str(name).strip()
+            if not style_name:
+                raise ValueError("TEXT_STYLE_NAME_REQUIRED")
+            style = drawing.styles.get(style_name) if drawing.styles.has_entry(style_name) else drawing.styles.new(style_name)
+            values = {key: properties[key] for key in ("font", "bigfont", "height", "width", "oblique", "flags") if key in properties}
+            if values:
+                style.dxf.update(values)
     layer_names = set(layers or {}) | {e.get("layer", "0") for e in entities}
     for block in blocks:
         layer_names.update(e.get("layer", "0") for e in block.get("entities", []))

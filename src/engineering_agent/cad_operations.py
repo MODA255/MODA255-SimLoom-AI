@@ -777,6 +777,52 @@ class CadOperationEngine:
         if name == "standard_library":
             from .standards import standard_library
             return standard_library(arguments.get("category"), arguments.get("query"))
+        if name == "create_text_style":
+            style_name = str(arguments.get("name") or arguments.get("style_name") or "").strip()
+            if not style_name:
+                raise ValueError("TEXT_STYLE_NAME_REQUIRED")
+            if len(style_name) > 255:
+                raise ValueError("TEXT_STYLE_NAME_TOO_LONG")
+            if any(char in style_name for char in "\\/*?:;\",="):
+                raise ValueError("TEXT_STYLE_NAME_INVALID")
+            mode = str(arguments.get("if_exists", "error")).lower()
+            if mode not in {"error", "update", "replace"}:
+                raise ValueError("TEXT_STYLE_IF_EXISTS_INVALID")
+            existing = document.text_styles.get(style_name)
+            if existing is not None and mode == "error":
+                raise ValueError("TEXT_STYLE_EXISTS:" + style_name)
+            values = copy.deepcopy(existing or {"name": style_name})
+            for key in ("font", "bigfont"):
+                if key in arguments:
+                    value = str(arguments[key]).strip()
+                    if not value:
+                        raise ValueError("TEXT_STYLE_FONT_INVALID")
+                    values[key] = value
+            for key in ("height", "width", "oblique"):
+                if key in arguments:
+                    try:
+                        value = float(arguments[key])
+                    except (TypeError, ValueError) as exc:
+                        raise ValueError("TEXT_STYLE_" + key.upper() + "_INVALID") from exc
+                    if not math.isfinite(value) or (key == "height" and value < 0) or (key == "width" and value <= 0):
+                        raise ValueError("TEXT_STYLE_" + key.upper() + "_INVALID")
+                    values[key] = value
+            if "flags" in arguments:
+                try:
+                    flags = int(arguments["flags"])
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("TEXT_STYLE_FLAGS_INVALID") from exc
+                if flags < 0:
+                    raise ValueError("TEXT_STYLE_FLAGS_INVALID")
+                values["flags"] = flags
+            values.setdefault("font", "txt")
+            values.setdefault("height", 0.0)
+            values.setdefault("width", 1.0)
+            values.setdefault("oblique", 0.0)
+            values.setdefault("flags", 0)
+            values["name"] = style_name
+            document.text_styles[style_name] = values
+            return {"text_style": copy.deepcopy(values), "changed": existing != values, "if_exists": mode}
         if name in {"document_open", "document_inspect"}:
             return {"document": document.to_dict()}
         convenience = {
@@ -2155,7 +2201,8 @@ class CadOperationEngine:
         else:
             write_native(staged_dxf, entities=document.entities, blocks=[block.to_dict() for block in document.blocks.values()],
                          coordinate_systems=document.coordinate_systems, layers={name: layer.to_dict() for name, layer in document.layers.items()},
-                         sheets=document.sheets, viewports=document.viewports, source=document._source_path, units=document.units)
+                         sheets=document.sheets, viewports=document.viewports, text_styles=document.text_styles,
+                         source=document._source_path, units=document.units)
         staged_sidecar.write_text(json.dumps(document.sidecar(staged_dxf), ensure_ascii=False, indent=2), encoding="utf-8")
         relative = str(output_file.relative_to(transaction.project_dir))
         files = {relative: str(staged_dxf), relative + ".cad.json": str(staged_sidecar)}

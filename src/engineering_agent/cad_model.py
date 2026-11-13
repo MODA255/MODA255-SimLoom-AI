@@ -98,6 +98,7 @@ class CadDocument:
     selection_sets: dict[str, SelectionSet] = field(default_factory=dict)
     sheets: dict[str, dict[str, Any]] = field(default_factory=dict)
     viewports: dict[str, dict[str, Any]] = field(default_factory=dict)
+    text_styles: dict[str, dict[str, Any]] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     schema_version: str = "simloom-ai/cad-document/v1"
 
@@ -128,6 +129,7 @@ class CadDocument:
                    entities=entities, layers=layers, blocks=blocks,
                    coordinate_systems=copy.deepcopy(payload.get("coordinate_systems", [])),
                    units=payload.get("units", "mm"), sheets=copy.deepcopy(payload.get("sheets", {})), viewports=copy.deepcopy(payload.get("viewports", {})),
+                   text_styles=copy.deepcopy(payload.get("text_styles", {})),
                    metadata={"source_format": "DXF", "source_entity_count": len(entities), "dxf_backend": payload.get("backend", "legacy-ascii")})
 
     @classmethod
@@ -155,6 +157,7 @@ class CadDocument:
             document.coordinate_systems = copy.deepcopy(payload.get("coordinate_systems", document.coordinate_systems))
             document.sheets = copy.deepcopy(payload.get("sheets", document.sheets))
             document.viewports = copy.deepcopy(payload.get("viewports", document.viewports))
+            document.text_styles = copy.deepcopy(payload.get("text_styles", document.text_styles))
             # Native DXFs carry IDs in application data; never assign by file
             # order after an external program has reordered entities.
             if document._source_path is None:
@@ -187,6 +190,7 @@ class CadDocument:
             "selection_sets": {name: item.to_dict() for name, item in sorted(self.selection_sets.items())},
             "sheets": copy.deepcopy(self.sheets),
             "viewports": copy.deepcopy(self.viewports),
+            "text_styles": copy.deepcopy(self.text_styles),
             "bbox": bbox(self.entities),
             "entity_count": len(self.entities),
             "entity_types": self._entity_counts(),
@@ -217,6 +221,7 @@ class CadDocument:
                 "coordinate_systems": copy.deepcopy(self.coordinate_systems),
                 "sheets": copy.deepcopy(self.sheets),
                 "viewports": copy.deepcopy(self.viewports),
+                "text_styles": copy.deepcopy(self.text_styles),
                 "constraints": [item.to_dict() for item in self.constraints],
                 "selection_sets": {name: item.to_dict() for name, item in self.selection_sets.items()},
                 "metadata": copy.deepcopy(self.metadata)}

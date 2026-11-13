@@ -19,6 +19,8 @@ SimLoom 原有的 CATIA / Ansys / Adams / VI-grade 工程链、B-Rep 和仿真�
 
 `cad.edit_hatch` 现已补齐：可在事务中修改已有 HATCH 的图层、实/空填充、图案、角度、比例、样式和多段边界，并拒绝破坏关联 HATCH 的边界语义，细节见 `CAD_EDIT_HATCH.md`。
 
+`cad.create_text_style` 现已补齐：统一对象模型保存可复用的 DXF `STYLE` 定义，并在原生文件读回时验证字体、字高和宽度因子，细节见 `CAD_TEXT_STYLES.md`。
+
 ## 必须逐项证明的能力
 
 | 能力 | 本地证据及现状 | 完成所需证据 / 下一步 |

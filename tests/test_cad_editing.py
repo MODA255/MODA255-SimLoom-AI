@@ -26,6 +26,33 @@ def test_cad_document_has_stable_refs_layers_and_selection(tmp_path):
     assert validate_cad_document(document)["valid"]
 
 
+def test_create_text_style_persists_native_style_definition_and_is_idempotently_updatable(tmp_path):
+    source = _source(tmp_path)
+    output = tmp_path / "styled.dxf"
+    agent = EngineeringAgent({"tools": {}})
+    result = agent.execute_operation("cad.create_text_style", {
+        "project_dir": str(tmp_path), "input_file": source, "output_file": output,
+        "name": "TITLE", "font": "Arial.ttf", "height": 3, "width": 0.8, "oblique": 12,
+    })
+    assert result["persisted_validation"]["valid"]
+    document = CadDocument.open(output)
+    assert document.text_styles["TITLE"]["font"] == "Arial.ttf"
+    native = __import__("ezdxf").readfile(output)
+    style = native.styles.get("TITLE")
+    assert style.dxf.font == "Arial.ttf" and style.dxf.height == 3
+    updated = agent.execute_operation("cad.create_text_style", {
+        "project_dir": str(tmp_path), "input_file": output, "output_file": output,
+        "name": "TITLE", "if_exists": "update", "width": 1.0,
+    })
+    assert updated["persisted_validation"]["valid"]
+    assert CadDocument.open(output).text_styles["TITLE"]["width"] == pytest.approx(1.0)
+    with pytest.raises(ValueError, match="TEXT_STYLE_EXISTS:TITLE"):
+        agent.execute_operation("cad.create_text_style", {
+            "project_dir": str(tmp_path), "input_file": output, "output_file": tmp_path / "duplicate.dxf",
+            "name": "TITLE",
+        })
+
+
 def test_cad_batch_is_transactional_and_emits_diff_and_sidecar(tmp_path):
     source = _source(tmp_path)
     output = tmp_path / "edited.dxf"
