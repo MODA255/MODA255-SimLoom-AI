@@ -79,6 +79,151 @@ def _expand_associative_refs(document: CadDocument, ids: list[str]) -> list[str]
     return [str(item.get("id")) for item in document.entities if str(item.get("id")) in selected]
 
 
+def _trace_boundary_entity(document: CadDocument, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Find one deterministic closed loop in connected straight linework.
+
+    The operation deliberately leaves arcs and bulged segments out of this
+    first kernel.  Silently flattening those curves would create a boundary
+    that looks closed while changing its engineering meaning, so callers get
+    an explicit unsupported/ambiguous error instead.
+    """
+    try:
+        tolerance = float(arguments.get("tolerance", 1e-6))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("TRACE_BOUNDARY_TOLERANCE_INVALID") from exc
+    if not math.isfinite(tolerance) or tolerance <= 0:
+        raise ValueError("TRACE_BOUNDARY_TOLERANCE_INVALID")
+    selected_values = arguments.get("entity_ids") or arguments.get("entity_id")
+    if isinstance(selected_values, str):
+        selected_values = [selected_values]
+    selected = {str(value) for value in (selected_values or [])}
+    source_entities = []
+    for entity in document.entities:
+        entity_id = str(entity.get("id"))
+        if selected and entity_id not in selected:
+            continue
+        kind = str(entity.get("type", "")).upper()
+        if kind == "LINE":
+            start, end = _point(entity.get("start")), _point(entity.get("end"))
+            if _distance(start, end) <= tolerance:
+                continue
+            source_entities.append((entity_id, start, end, entity))
+        elif kind in {"LWPOLYLINE", "POLYLINE"}:
+            vertices = [_point(value) for value in entity.get("vertices", [])]
+            bulges = entity.get("bulges") or []
+            if any(abs(float(value)) > tolerance for value in bulges):
+                if entity_id in selected:
+                    raise ValueError("TRACE_BOUNDARY_BULGED_POLYLINE_UNSUPPORTED:" + entity_id)
+                continue
+            if len(vertices) < 2:
+                continue
+            count = len(vertices) if entity.get("closed") else len(vertices) - 1
+            for index in range(count):
+                start, end = vertices[index], vertices[(index + 1) % len(vertices)]
+                if _distance(start, end) > tolerance:
+                    source_entities.append((entity_id, start, end, entity))
+    if not source_entities:
+        raise ValueError("TRACE_BOUNDARY_NO_LINEAR_EDGES")
+
+    # Snap endpoints into a stable node graph.  The first observed coordinate
+    # is retained for output so the result does not accumulate rounding drift.
+    nodes: list[dict[str, float]] = []
+    buckets: dict[tuple[int, int, int], list[int]] = {}
+
+    def node_for(point: dict[str, float]) -> int:
+        key = tuple(round(float(point[axis]) / tolerance) for axis in ("x", "y", "z"))
+        for index in buckets.get(key, []):
+            if _distance(nodes[index], point) <= tolerance:
+                return index
+        index = len(nodes); nodes.append(copy.deepcopy(point)); buckets.setdefault(key, []).append(index)
+        return index
+
+    edges = []
+    for entity_id, start, end, _entity in source_entities:
+        first, second = node_for(start), node_for(end)
+        if first == second:
+            continue
+        edges.append({"id": entity_id, "first": first, "second": second})
+    if len(edges) < 3:
+        raise ValueError("TRACE_BOUNDARY_CLOSED_LOOP_NOT_FOUND")
+    adjacency: dict[int, list[int]] = {index: [] for index in range(len(nodes))}
+    for index, edge in enumerate(edges):
+        adjacency[edge["first"]].append(index); adjacency[edge["second"]].append(index)
+
+    seed = str(arguments.get("seed_entity_id") or arguments.get("entity_id") or "")
+    seed_edge = next((index for index, edge in enumerate(edges) if edge["id"] == seed), None)
+    if seed_edge is None and seed:
+        raise ValueError("TRACE_BOUNDARY_SEED_NOT_FOUND:" + seed)
+    if arguments.get("point") is not None:
+        target = _point(arguments["point"])
+        candidates = sorted((_distance(target, node), index) for index, node in enumerate(nodes))
+        if not candidates or candidates[0][0] > tolerance:
+            raise ValueError("TRACE_BOUNDARY_POINT_NOT_ON_GRAPH")
+        start_node = candidates[0][1]
+    elif seed_edge is not None:
+        start_node = edges[seed_edge]["first"]
+    else:
+        start_node = min((edge["first"] for edge in edges), key=lambda index: (nodes[index]["x"], nodes[index]["y"], nodes[index]["z"]))
+
+    def other(edge_index: int, node: int) -> int:
+        edge = edges[edge_index]
+        return edge["second"] if edge["first"] == node else edge["first"]
+
+    def angle(from_node: int, to_node: int) -> float:
+        first, second = nodes[from_node], nodes[to_node]
+        return math.atan2(second["y"] - first["y"], second["x"] - first["x"])
+
+    def find_cycle(current: int, path_nodes: list[int], used_edges: set[int]) -> list[int] | None:
+        if current == start_node and len(path_nodes) >= 4:
+            return path_nodes
+        if len(path_nodes) > len(edges) + 1:
+            return None
+        previous = path_nodes[-2] if len(path_nodes) > 1 else None
+        candidates = []
+        for edge_index in adjacency.get(current, []):
+            if edge_index in used_edges:
+                continue
+            next_node = other(edge_index, current)
+            if next_node != start_node and next_node in path_nodes:
+                continue
+            turn = angle(current, next_node)
+            if previous is not None:
+                turn = (turn - angle(previous, current)) % (2 * math.pi)
+            candidates.append((turn, edges[edge_index]["id"], edge_index, next_node))
+        for _turn, _source_id, edge_index, next_node in sorted(candidates):
+            result = find_cycle(next_node, path_nodes + [next_node], used_edges | {edge_index})
+            if result:
+                return result
+        return None
+
+    cycle = None
+    if seed_edge is not None:
+        seed_other = other(seed_edge, start_node)
+        cycle = find_cycle(seed_other, [start_node, seed_other], {seed_edge})
+    else:
+        cycle = find_cycle(start_node, [start_node], set())
+    if not cycle:
+        raise ValueError("TRACE_BOUNDARY_CLOSED_LOOP_NOT_FOUND")
+    cycle_nodes = cycle[:-1] if cycle[-1] == start_node else cycle
+    if len(cycle_nodes) < 3:
+        raise ValueError("TRACE_BOUNDARY_CLOSED_LOOP_TOO_SHORT")
+    source_ids = list(dict.fromkeys(edges[index]["id"] for index in range(len(edges))
+                             if any(edges[index]["first"] == cycle_nodes[pos] and edges[index]["second"] == cycle_nodes[(pos + 1) % len(cycle_nodes)]
+                                    or edges[index]["second"] == cycle_nodes[pos] and edges[index]["first"] == cycle_nodes[(pos + 1) % len(cycle_nodes)]
+                                    for pos in range(len(cycle_nodes)))))
+    layer = str(arguments.get("layer") or (document.entity(source_ids[0]).get("layer", "0") if source_ids else "0"))
+    document.ensure_layer(layer)
+    entity = {"id": document.next_id("boundary"), "type": "LWPOLYLINE", "layer": layer,
+              "vertices": [copy.deepcopy(nodes[index]) for index in cycle_nodes], "closed": True,
+              "boundary_trace": {"source_ids": source_ids, "tolerance": tolerance,
+                                  "seed_entity_id": seed or None, "point": copy.deepcopy(arguments.get("point"))}}
+    document.entities.append(entity)
+    if not bool(arguments.get("keep_source", True)):
+        source_set = set(source_ids)
+        document.entities = [item for item in document.entities if str(item.get("id")) not in source_set or str(item.get("id")) == entity["id"]]
+    return {"entity": entity, "source_ids": source_ids, "closed": True}
+
+
 def _merge(target: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
     result = copy.deepcopy(target)
     for key, value in patch.items():
@@ -1611,6 +1756,8 @@ class CadOperationEngine:
         if name in {"title_block_create", "title_block_update"}:
             from .title_blocks import create_title, update_title
             return (create_title if name == "title_block_create" else update_title)(document, arguments)
+        if name == "trace_boundary":
+            return _trace_boundary_entity(document, arguments)
         if name == "hole_create":
             center = _point(arguments.get("center"))
             kind = str(arguments.get("kind", "clearance")).lower()

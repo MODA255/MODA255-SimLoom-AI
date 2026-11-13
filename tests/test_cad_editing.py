@@ -1176,6 +1176,35 @@ def test_hole_create_rejects_incomplete_counterbore(tmp_path):
         })
 
 
+def test_trace_boundary_builds_a_closed_editable_loop_from_shuffled_lines(tmp_path):
+    source = tmp_path / "linework.dxf"
+    output = tmp_path / "boundary.dxf"
+    write_dxf(source, entities=[
+        {"type": "LINE", "start": {"x": 10, "y": 0}, "end": {"x": 10, "y": 10}, "layer": "PROFILE"},
+        {"type": "LINE", "start": {"x": 0, "y": 10}, "end": {"x": 0, "y": 0}, "layer": "PROFILE"},
+        {"type": "LINE", "start": {"x": 10, "y": 10}, "end": {"x": 0, "y": 10}, "layer": "PROFILE"},
+        {"type": "LINE", "start": {"x": 0, "y": 0}, "end": {"x": 10, "y": 0}, "layer": "PROFILE"},
+    ])
+    result = EngineeringAgent({"tools": {}}).execute_operation("cad.trace_boundary", {
+        "project_dir": str(tmp_path), "input_file": source, "output_file": output,
+        "seed_entity_id": "e00004", "tolerance": 1e-6,
+    })
+    assert result["persisted_validation"]["valid"]
+    boundary = next(item for item in CadDocument.open(output).entities if item.get("boundary_trace"))
+    assert boundary["type"] == "LWPOLYLINE" and boundary["closed"] is True
+    assert len(boundary["vertices"]) == 4
+    assert set(boundary["boundary_trace"]["source_ids"]) == {"e00001", "e00002", "e00003", "e00004"}
+
+
+def test_trace_boundary_rejects_open_linework(tmp_path):
+    source = _source(tmp_path)
+    with pytest.raises(ValueError, match="TRACE_BOUNDARY_CLOSED_LOOP_NOT_FOUND"):
+        EngineeringAgent({"tools": {}}).execute_operation("cad.trace_boundary", {
+            "project_dir": str(tmp_path), "input_file": source, "output_file": tmp_path / "open-boundary.dxf",
+            "seed_entity_id": "e00001",
+        })
+
+
 def test_standard_catalog_is_queryable_and_strict_annotations_are_validated(tmp_path):
     agent = EngineeringAgent({"tools": {}})
     catalog = agent.execute_operation("cad.standard_catalog", {"standard": "ISO"})
