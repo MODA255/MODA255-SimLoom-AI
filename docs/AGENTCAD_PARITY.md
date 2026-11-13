@@ -45,6 +45,13 @@ SimLoom 原有的 CATIA / Ansys / Adams / VI-grade 工程链、B-Rep 和仿真�
 `cad.block_attribute_create` 现已补齐：为块定义写入原生 ATTDEF，并同步现有 INSERT 的 ATTRIB、
 插入点变换和标签唯一性，细节见 `CAD_BLOCK_ATTRIBUTES.md`。
 
+`cad.hole_create` 现已补齐：创建可继续编辑的通孔、螺纹孔、沉头孔、锥沉孔和端面沉孔轮廓，
+以原生同心 CIRCLE 保存几何，并记录孔组、孔型、尺寸、深度和标准标签，细节见 `CAD_HOLES.md`。
+
+`cad.trace_boundary` 现已补齐：从按容差连接的 LINE 和直线型 LWPOLYLINE/POLYLINE 中寻找闭合
+回路，生成带源实体追溯信息的闭合 LWPOLYLINE；bulge 曲线和找不到闭环的输入会明确失败，
+细节见 `CAD_TRACE_BOUNDARY.md`。
+
 ## 必须逐项证明的能力
 
 | 能力 | 本地证据及现状 | 完成所需证据 / 下一步 |
@@ -54,7 +61,7 @@ SimLoom 原有的 CATIA / Ansys / Adams / VI-grade 工程链、B-Rep 和仿真�
 | STEP B-Rep 写入可靠性 | `brep.boolean`、`brep.create_primitive`、`brep.build_feature_graph` 现在把输入和输出限制在项目目录，写入后先检查暂存文件，再从提交目标重新读取 STEP，验证形状、拓扑和体积；失败由事务恢复原文件；feature graph sidecar 随输出一起提交并在覆盖时清理 | 仍需在更多 OpenCascade 版本和真实复杂 STEP 数据上验收；布尔退化、装配、多实体和外部文件冲突的工程规则还需扩展 |
 | 受控脚本执行 | 已有 `cad.script_apply`：默认关闭；显式启用后在事务 staging 工作目录运行，静态检查高风险导入/调用，限制脚本时长、输出大小和输出文件，重新读取 DXF 做独立验证、diff、checkpoint、历史和失败恢复；`tests/test_controlled_cad_scripts.py` | 在 Windows worker 上把同一策略映射到受控脚本宿主，并补 OS 级隔离和真实项目脚本验收；当前策略不是完整安全沙箱 |
 | 独立工程验证 | `validate_cad_document` 和独立读取 DXF 的 `dxf_validation.inspect_native` 现在分别检查打印文字高度、闭合轮廓退化、重复几何、尺寸数值/引用和可配置尺寸关联；原生结构审计、几何读回、标注测量仍有测试 | 继续补齐字体实际字形覆盖、复杂拓扑、尺寸与实体的标准级关联规则，以及更完整的可修复错误分类 |
-| 原生几何交互视图 | `cad_render.py`、`cad_viewer.py`、`test_cad_viewer.py`、真实浏览器几何检查；Viewer 已支持选择、图层、框选、缩放、平移和 SVG 路径对象捕捉 | 原生模型视图这一子项已有实现；客户图纸、复杂字体、性能、捕捉精度和夹点/命令交互仍待验收 |
+| 原生几何交互视图 | `cad_render.py`、`cad_viewer.py`、`test_cad_viewer.py`、真实浏览器几何检查；Viewer 已支持选择、图层、框选、缩放、平移、SVG 路径对象捕捉和 LINE/LWPOLYLINE/CIRCLE/ARC/ELLIPSE/SPLINE 的语义夹点编辑；夹点松开后复用 `cad.entity_update` 事务、验证、diff、历史和 rollback | 原生模型视图这一子项已有实现；客户图纸、复杂字体、性能、捕捉精度和真实浏览器夹点操作仍待验收 |
 | 历史版本查看、视觉 diff、实时查看 agent 修改 | 有持久撤销/重做、字段 diff、SVG 叠加和项目时间线。`cad.history_view` 校验并只读渲染事务保存的 DXF/sidecar，支持前后步和播放/暂停。项目版本 schema 2 在同一事务中保存原始文件与配套元数据，支持历史原件下载、真实文件预览和向新目录导出。`project.watch_*` 现在可持久保存项目内文件指纹，跨进程轮询并识别 added/modified/touched/deleted/unstable，Web 工作台也可直接开始、轮询和停止；`project.dependency_scan` 可从显式清单、可读文本引用和配套文件生成保守依赖图；见 `PROJECT_VERSION_FILES.md`、`FILE_WATCH.md` 与 `DEPENDENCY_SCAN.md` | 依赖扫描仍不能解析专有二进制装配拓扑，也没有更大工程的回放验收；批次按整次提交回放，子步骤没有独立几何快照。文件监测和依赖图只提供可审计证据，不等于厂商软件打开、求解成功或工程语义验收 |
 | 工程图排版和文件交付 | 原生标题栏、纸空间/视口、多页 PDF、单页 SVG/PNG、每页比例和尺寸校验；`DRAWING_EXPORT.md` | 标准比例、中文/SHX 字体和打印可读性仍需补齐 |
 | Agent 能直接看图与检查源图细节 | Web/本地 viewer 已有 SVG/PNG；MCP `engineering_asset_view`、`engineering://asset`、`engineering_inspect_image` 和 `engineering_measure_image` 可返回结构化数据、局部 PNG 预览、颜色区域的源像素边界/质心、overlay，以及可选的源像素到工程图纸坐标映射（见 `IMAGE_INSPECTION.md`） | 继续补通用安全图像脚本、尺寸证据标注和客户端互操作验收 |
@@ -130,3 +137,13 @@ SimLoom 返回源像素区域内的匹配数量、边界、质心、比例和可
 和 operation 返回值。提交后检查失败会恢复原文件，旧的 `.brep.json` feature graph sidecar
 不会残留在 primitive/boolean 覆盖之后。这个机制提高了本地 B-Rep 可靠性，仍不代表真实
 CATIA 或其他商业软件后端已经验收。
+
+2026-11-13 后续：Viewer 增加语义夹点。选中单个实体后，LINE、LWPOLYLINE/POLYLINE、CIRCLE、
+ARC、ELLIPSE 和 SPLINE 会从渲染元数据生成夹点；拖动过程使用半透明预览，松开后通过现有
+`cad.entity_update` 事务提交，失败时不修改原文件并恢复夹点状态。当前离线回归已覆盖元数据、
+事务和历史链路；真实浏览器环境仍需安装 Playwright 后运行交互测试。
+
+2026-11-13 后续：增加 `cad.hole_create` 和 `cad.trace_boundary`。前者生成带孔组和制造字段的
+可编辑同心孔轮廓，后者从直线型线网按容差追踪闭合边界并保存源实体追溯。两者都走统一事务、
+独立读回、验证、diff、checkpoint 和 rollback；它们仍是 vendor-neutral DXF 辅助能力，不代表
+CATIA 原生特征或标准件数据库已经验收。
