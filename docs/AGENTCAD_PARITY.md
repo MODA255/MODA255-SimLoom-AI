@@ -17,6 +17,8 @@ SimLoom 原有的 CATIA / Ansys / Adams / VI-grade 工程链、B-Rep 和仿真�
 
 `cad.draw_order` 现已补齐：它通过 DXF `SORTENTS` 持久化置前、置后、前移、后移和相对定位，沿用事务、锁层、独立读回、diff、历史和 rollback；细节见 `CAD_DRAW_ORDER.md`。这缩小了二维 typed operation 差距，但不改变四款商业软件实机验证仍待 Windows 的事实。
 
+`cad.edit_hatch` 现已补齐：可在事务中修改已有 HATCH 的图层、实/空填充、图案、角度、比例、样式和多段边界，并拒绝破坏关联 HATCH 的边界语义，细节见 `CAD_EDIT_HATCH.md`。
+
 ## 必须逐项证明的能力
 
 | 能力 | 本地证据及现状 | 完成所需证据 / 下一步 |

@@ -456,10 +456,12 @@ def _patch(entity, item, before):
         if before.get("associative"):
             before_refs = [str(handle) for path in before.get("boundary_paths", []) for handle in path.get("source_handles", [])]
             item_refs = [str(handle) for path in item.get("boundary_paths", []) for handle in path.get("source_handles", [])]
-            if item_refs != before_refs:
+            if item.get("associative", before.get("associative")) and item_refs != before_refs:
                 raise ValueError("ASSOCIATIVE_HATCH_SOURCE_EDIT_UNSUPPORTED")
         _set_hatch_paths(entity, item)
         dxf.elevation = xyz(item.get("elevation"))
+        if "associative" in item:
+            dxf.associative = int(bool(item.get("associative")))
         if item.get("solid") != before.get("solid") or item.get("pattern") != before.get("pattern"):
             if item.get("solid", True): entity.set_solid_fill(style=item.get("hatch_style", 0))
             else: entity.set_pattern_fill(item.get("pattern", "ANSI31"), scale=item.get("pattern_scale", 1), angle=item.get("pattern_angle", 0))

@@ -1911,6 +1911,95 @@ class CadOperationEngine:
                                                "vertices": [point | {"bulge": 0.0} for point in boundary]}]
             document.ensure_layer(entity["layer"]); document.entities.append(entity)
             return {"entity": entity}
+        if name == "edit_hatch":
+            target_id = str(arguments.get("entity_id") or arguments.get("hatch_id") or "")
+            if not target_id:
+                raise ValueError("HATCH_ENTITY_REQUIRED")
+            target = document.entity(target_id)
+            if str(target.get("type", "")).upper() != "HATCH":
+                raise ValueError("HATCH_ENTITY_REQUIRED")
+            source_layer = document.layers.get(str(target.get("layer", "0")))
+            if source_layer and source_layer.locked:
+                raise ValueError("CAD_LAYER_LOCKED:" + source_layer.name)
+            patch = copy.deepcopy(arguments.get("patch") or {})
+            excluded = {"input_file", "output_file", "project_dir", "entity_id", "hatch_id", "patch"}
+            editable = {"layer", "pattern", "solid", "pattern_angle", "pattern_scale", "pattern_type",
+                        "hatch_style", "double", "boundary_vertices", "boundary_paths", "associative"}
+            for key in editable:
+                if key in arguments:
+                    patch[key] = copy.deepcopy(arguments[key])
+            updated = _merge(target, patch)
+            updated["id"] = target["id"]
+            if "boundary" in patch and "boundary_vertices" not in patch:
+                updated["boundary_vertices"] = copy.deepcopy(patch["boundary"])
+            layer_name = str(updated.get("layer", target.get("layer", "0")))
+            destination_layer = document.layers.get(layer_name)
+            if destination_layer and destination_layer.locked:
+                raise ValueError("CAD_LAYER_LOCKED:" + destination_layer.name)
+            document.ensure_layer(layer_name)
+            if "pattern_scale" in updated:
+                try:
+                    scale = float(updated["pattern_scale"])
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("HATCH_PATTERN_SCALE_INVALID") from exc
+                if not math.isfinite(scale) or scale <= 0:
+                    raise ValueError("HATCH_PATTERN_SCALE_INVALID")
+                updated["pattern_scale"] = scale
+            if "pattern_angle" in updated:
+                try:
+                    angle = float(updated["pattern_angle"])
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("HATCH_PATTERN_ANGLE_INVALID") from exc
+                if not math.isfinite(angle):
+                    raise ValueError("HATCH_PATTERN_ANGLE_INVALID")
+                updated["pattern_angle"] = angle
+            if "pattern" in updated:
+                updated["pattern"] = str(updated["pattern"] or "").strip()
+                if not updated["pattern"] and not bool(updated.get("solid", target.get("solid", True))):
+                    raise ValueError("HATCH_PATTERN_REQUIRED")
+            if "solid" in updated:
+                updated["solid"] = bool(updated["solid"])
+            if "double" in updated:
+                updated["double"] = bool(updated["double"])
+            if "associative" in updated:
+                updated["associative"] = bool(updated["associative"])
+            before_associative = bool(target.get("associative"))
+            boundary_changed = any(key in patch for key in ("boundary", "boundary_vertices", "boundary_paths"))
+            if before_associative and boundary_changed:
+                raise ValueError("ASSOCIATIVE_HATCH_BOUNDARY_EDIT_UNSUPPORTED")
+            if "boundary_vertices" in updated:
+                vertices = [_point(value) for value in (updated.get("boundary_vertices") or [])]
+                if len(vertices) < 3:
+                    raise ValueError("HATCH_BOUNDARY_TOO_SHORT")
+                paths = updated.get("boundary_paths") or []
+                if paths and str(paths[0].get("kind", "polyline")) != "polyline":
+                    raise ValueError("HATCH_BOUNDARY_PATH_TYPE_MISMATCH")
+                if paths:
+                    paths = copy.deepcopy(paths)
+                    paths[0]["vertices"] = [point | {"bulge": float(point.get("bulge", 0))} for point in vertices]
+                    paths[0]["closed"] = True
+                    updated["boundary_paths"] = paths
+                else:
+                    updated["boundary_paths"] = [{"kind": "polyline", "flags": 1, "closed": True,
+                                                   "vertices": [point | {"bulge": 0.0} for point in vertices],
+                                                   "source_handles": []}]
+                updated["boundary_vertices"] = vertices
+                updated["boundary_path_count"] = len(updated["boundary_paths"])
+            if "boundary_paths" in updated:
+                paths = updated.get("boundary_paths") or []
+                if not paths:
+                    raise ValueError("HATCH_BOUNDARY_PATHS_REQUIRED")
+                for path in paths:
+                    if str(path.get("kind", "polyline")) == "polyline" and (not path.get("closed", True) or len(path.get("vertices") or []) < 3):
+                        raise ValueError("HATCH_BOUNDARY_TOO_SHORT")
+                updated["boundary_path_count"] = len(paths)
+                first = next((path for path in paths if str(path.get("kind", "")) == "polyline"), None)
+                if first is not None:
+                    updated["boundary_vertices"] = [{key: float(value.get(key, 0)) for key in ("x", "y", "z")} for value in first.get("vertices", [])]
+            index = document.entities.index(target)
+            document.entities[index] = updated
+            changed_fields = sorted(key for key in set(target) | set(updated) if target.get(key) != updated.get(key))
+            return {"entity": updated, "changed_fields": changed_fields, "associative": bool(updated.get("associative"))}
         if name == "center_mark_create":
             target_values = arguments.get("target")
             if target_values is None:

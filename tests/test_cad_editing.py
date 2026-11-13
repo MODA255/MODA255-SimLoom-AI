@@ -226,6 +226,61 @@ def test_hatch_pattern_attributes_round_trip(tmp_path):
     assert hatch["double"] is True
 
 
+def test_edit_hatch_updates_style_and_boundary_transactionally(tmp_path):
+    source = tmp_path / "hatch-edit-source.dxf"
+    output = tmp_path / "hatch-edit-output.dxf"
+    write_dxf(source, entities=[{
+        "type": "HATCH", "layer": "SECTION", "pattern": "ANSI31", "solid": False,
+        "boundary_vertices": [{"x": 0, "y": 0}, {"x": 5, "y": 0}, {"x": 5, "y": 5}],
+    }])
+    agent = EngineeringAgent({"tools": {}})
+    result = agent.execute_operation("cad.edit_hatch", {
+        "project_dir": str(tmp_path), "input_file": source, "output_file": output,
+        "entity_id": "e00001", "layer": "FILL", "pattern": "ANSI37", "solid": False,
+        "pattern_angle": 30, "pattern_scale": 0.75, "hatch_style": 1, "double": True,
+        "boundary_vertices": [{"x": 0, "y": 0}, {"x": 8, "y": 0}, {"x": 8, "y": 6}, {"x": 0, "y": 6}],
+    })
+    assert result["persisted_validation"]["valid"]
+    assert set(result["results"][0]["changed_fields"]) >= {"layer", "pattern", "pattern_angle", "pattern_scale", "boundary_vertices"}
+    hatch = CadDocument.open(output).entities[0]
+    assert hatch["layer"] == "FILL" and hatch["pattern"] == "ANSI37"
+    assert hatch["pattern_angle"] == 30 and hatch["pattern_scale"] == pytest.approx(0.75)
+    assert hatch["double"] is True and len(hatch["boundary_vertices"]) == 4
+
+
+def test_edit_hatch_preserves_association_and_rejects_boundary_rewrite(tmp_path):
+    source = tmp_path / "assoc-hatch-source.dxf"
+    output = tmp_path / "assoc-hatch-output.dxf"
+    write_dxf(source, lines=[
+        {"x1": 0, "y1": 0, "x2": 10, "y2": 0},
+        {"x1": 10, "y1": 0, "x2": 10, "y2": 10},
+        {"x1": 10, "y1": 10, "x2": 0, "y2": 10},
+        {"x1": 0, "y1": 10, "x2": 0, "y2": 0},
+    ])
+    agent = EngineeringAgent({"tools": {}})
+    created = agent.execute_operation("cad.hatch_create", {
+        "project_dir": str(tmp_path), "input_file": source, "output_file": output,
+        "boundary": [{"x": 0, "y": 0}, {"x": 10, "y": 0}, {"x": 10, "y": 10}, {"x": 0, "y": 10}],
+        "associative": True, "source_entity_ids": ["e00001", "e00002", "e00003", "e00004"],
+    })
+    style = agent.execute_operation("cad.edit_hatch", {
+        "project_dir": str(tmp_path), "input_file": output, "output_file": output,
+        "entity_id": created["results"][0]["entity"]["id"], "pattern": "ANSI31", "pattern_scale": 2,
+    })
+    assert style["persisted_validation"]["valid"] and style["results"][0]["associative"] is True
+    with pytest.raises(ValueError, match="ASSOCIATIVE_HATCH_BOUNDARY_EDIT_UNSUPPORTED"):
+        agent.execute_operation("cad.edit_hatch", {
+            "project_dir": str(tmp_path), "input_file": output, "output_file": tmp_path / "rejected.dxf",
+            "entity_id": created["results"][0]["entity"]["id"],
+            "boundary_vertices": [{"x": 0, "y": 0}, {"x": 20, "y": 0}, {"x": 20, "y": 20}],
+        })
+    with pytest.raises(ValueError, match="HATCH_PATTERN_SCALE_INVALID"):
+        agent.execute_operation("cad.edit_hatch", {
+            "project_dir": str(tmp_path), "input_file": output, "output_file": tmp_path / "bad.dxf",
+            "entity_id": created["results"][0]["entity"]["id"], "pattern_scale": 0,
+        })
+
+
 def test_hatch_create_can_bind_source_entities_and_reopen_association(tmp_path):
     source = tmp_path / "assoc-source.dxf"
     output = tmp_path / "assoc-output.dxf"
