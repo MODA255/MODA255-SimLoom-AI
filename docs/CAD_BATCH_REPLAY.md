@@ -24,3 +24,5 @@
 该 operation 会重新验证 checkpoint 的结构和路径，返回统一对象、diff、验证结果和只读 viewer。原始工程文件、撤销游标和当前文件不会改变。包含无法在没有原始厂商文件时重建的 native DXF 实体时，viewer 会降级到语义 SVG，并明确留下 `CHECKPOINT_NATIVE_ENTITY_FALLBACK` 提示；这不影响 JSON 快照和验证结果。
 
 Web 工作台的 2D Viewer 操作列表会读取这些 checkpoint 元数据。批次步骤按钮通过工作台的只读请求加载指定 `after` 快照，仍可点击“返回当前”恢复实时工程文件；普通单步操作继续只高亮变更实体。
+
+浏览器回归入口为 `node tests/browser/cad_batch_replay.cjs`，它会实际点击两个批次步骤并确认只读状态和返回当前链路。运行需要 Playwright 和 Chromium。
