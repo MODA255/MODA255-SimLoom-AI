@@ -125,9 +125,29 @@ function renderVersionList() {
   $('#versionList').innerHTML=versions.length?versions.map(version=>`<article class="version-card ${version.has_dxf?'has-dxf':''}"><div><strong>${escapeHTML(version.label||'未命名版本')}</strong><p class="muted">${escapeHTML(version.created_at?new Date(version.created_at).toLocaleString():'未记录时间')} · ${version.object_count||0} 个资产${version.has_dxf?' · 包含 DXF':''}</p>${version.parent?`<p class="muted">父版本：${escapeHTML(version.parent)}</p>`:''}</div><button class="btn btn-light" data-version-view="${escapeHTML(version.id)}">查看快照</button></article>`).join(''):'<div class="empty">本项目还没有版本快照。</div>';
 }
 function renderVersionTimeline(data) {
-  const frame=document.createElement('iframe'); frame.className='timeline-frame'; frame.title='项目版本时间线'; frame.setAttribute('sandbox','');
-  frame.srcdoc=`<!doctype html><meta charset="utf-8"><style>html,body{margin:0;background:#f7f9fc}svg{display:block;width:100%;height:auto;min-height:160px}</style>${data.svg||''}`;
-  $('#versionTimeline').replaceChildren(frame);
+  const container=$('#versionTimeline');
+  container.innerHTML=data.svg||'<div class="empty">本项目还没有版本时间线。</div>';
+  const activate=(node)=>{
+    const versionId=node.dataset.versionId;
+    const version=state.versions.find(item=>item.id===versionId);
+    if(!version) return;
+    const dxfVersions=state.versions.filter(item=>item.has_dxf).sort((a,b)=>String(a.created_at||'').localeCompare(String(b.created_at||'')));
+    if(version.has_dxf){
+      const index=dxfVersions.findIndex(item=>item.id===versionId);
+      if(index>0) $('#versionLeft').value=dxfVersions[index-1].id;
+      if(index>=0&&index<dxfVersions.length-1) $('#versionRight').value=versionId;
+      $('#versionDiffStatus').textContent=dxfVersions.length>1?'已选中时间线版本，可直接生成相邻版本视觉 diff。':'';
+    } else {
+      $('#versionDiffStatus').textContent='该版本没有可预览的 DXF 资产。';
+    }
+    if(Number(version.object_count||0)>0) inspectVersion(versionId).catch(reportError);
+  };
+  container.querySelectorAll('.timeline-node').forEach(node=>{
+    node.addEventListener('click',()=>activate(node));
+    node.addEventListener('keydown',event=>{
+      if(event.key==='Enter'||event.key===' '){event.preventDefault();activate(node);}
+    });
+  });
 }
 async function refreshVersions() {
   const project=state.project;

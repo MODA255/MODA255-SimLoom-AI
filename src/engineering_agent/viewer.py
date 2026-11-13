@@ -306,6 +306,16 @@ def render_timeline_svg(events: list[dict[str, Any]]) -> str:
     body = [f"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 {width} 180'><rect width='100%' height='100%' fill='#f7f9fc'/><line x1='50' y1='90' x2='{width-50}' y2='90' stroke='#8492a6' stroke-width='3'/>"]
     for index, event in enumerate(events):
         x = 70 + index * 160
-        body.append(f"<circle cx='{x}' cy='90' r='12' fill='#2855c5'/><text x='{x-55}' y='45' font-size='11'>{str(event.get('event', 'event'))[:18]}</text><text x='{x-55}' y='125' font-size='10'>{str(event.get('label', event.get('version_id', '')))[:18]}</text>")
+        version_id = str(event.get("version_id", ""))
+        event_label = escape(str(event.get("event", "event"))[:40])
+        label = escape(str(event.get("label", version_id))[:40])
+        timestamp = escape(str(event.get("created_at", ""))[:32])
+        aria = escape(f"{label} · {timestamp}" if timestamp else label, quote=True)
+        body.append(
+            f"<g class='timeline-node' data-version-id='{escape(version_id, quote=True)}' "
+            f"data-event-index='{index}' tabindex='0' role='button' aria-label='{aria}'>"
+            f"<circle cx='{x}' cy='90' r='12' fill='#2855c5'/><text x='{x-55}' y='45' font-size='11'>{event_label}</text>"
+            f"<text x='{x-55}' y='125' font-size='10'>{label}</text></g>"
+        )
     body.append("</svg>")
     return "".join(body)

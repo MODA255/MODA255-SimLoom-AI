@@ -22,6 +22,7 @@ from engineering_agent.queue import TaskQueue
 from engineering_agent.validation import validate_asset
 from engineering_agent.transactions import RunTransaction
 from engineering_agent.ingest import ArtifactReader
+from engineering_agent.viewer import render_timeline_svg
 
 
 def test_full_vehicle_chain_is_planned():
@@ -116,6 +117,19 @@ def test_mcp_returns_structured_content_and_operation_schema_metadata(tmp_path):
     assert unsupported["error"]["code"] == "SCHEMA_VERSION_UNSUPPORTED"
     assert unsupported["error"]["schemaVersion"] == server.schema_version
     assert unsupported["error"]["details"]["supported"] == ["1.0"]
+
+
+def test_version_timeline_svg_exposes_safe_keyboard_selectable_nodes():
+    svg = render_timeline_svg([{
+        "event": "version_created",
+        "version_id": "v-1",
+        "label": "方案 <A>",
+        "created_at": "2026-11-13T10:00:00Z",
+    }])
+    assert "class='timeline-node'" in svg
+    assert "data-version-id='v-1'" in svg
+    assert "tabindex='0'" in svg and "role='button'" in svg
+    assert "方案 &lt;A&gt;" in svg
 
 
 def test_mcp_pagination_subscription_and_schema_compatibility(tmp_path):
