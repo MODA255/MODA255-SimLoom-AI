@@ -2945,6 +2945,10 @@ class CadOperationEngine:
                 raw_input = raw_input.absolute()
             return history_view(arguments.get("project_dir") or raw_input.parent, raw_input,
                                 arguments["revision_id"], arguments.get("side", "after"))
+        if operation == "cad.batch_step_view":
+            from .cad_replay import batch_step_view
+            return batch_step_view(arguments.get("project_dir", "."), arguments["run_id"],
+                                   arguments["step_index"], arguments.get("side", "after"))
         if operation in {"cad.standard_catalog", "cad.standard_library"}:
             from .standards import catalog, standard_library
             return catalog(arguments.get("standard")) if operation == "cad.standard_catalog" else standard_library(arguments.get("category"), arguments.get("query"))
@@ -3019,13 +3023,44 @@ class CadOperationEngine:
             transaction.checkpoint("before-cad-edit", {"operation": operation, "entity_count": len(document.entities)})
             results = []
             replay_steps = []
+            step_snapshots = []
+            requirements = copy.deepcopy(arguments.get("requirements") or {})
+
+            def checkpoint_step(index: int, stage: str, operation_name: str, snapshot: CadDocument,
+                                *, diff: dict[str, Any] | None = None,
+                                validation: dict[str, Any] | None = None,
+                                replanned: bool = False) -> dict[str, Any]:
+                label = f"step-{index:03d}-{stage}"
+                path = Path(transaction.checkpoint(label, {
+                    "schema_version": 1, "kind": "cad-batch-step", "run_id": transaction.run_id,
+                    "step": index, "stage": stage, "operation": operation_name,
+                    "replanned": replanned, "document": snapshot.to_dict(), "diff": diff,
+                    "validation": validation,
+                })) / "state.json"
+                return {"path": str(path.relative_to(project_root)),
+                        "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+
             corner_postconditions = []
-            for item in operations:
+            for index, item in enumerate(operations):
                 item = dict(item)
                 item_name = str(item.pop("operation", operation))
                 step_before = document.clone()
+                before_validation = validate_cad_document(step_before, requirements)
+                before_snapshot = checkpoint_step(index, "before", item_name, step_before,
+                                                  validation=before_validation)
                 result = {"operation": item_name, **self._apply_one(document, item_name, item)}
-                replay_steps.append({"operation": item_name, **_entity_change_ids(step_before, document)})
+                step_diff = step_before.diff(document)
+                step_validation = validate_cad_document(document, requirements)
+                after_snapshot = checkpoint_step(index, "after", item_name, document,
+                                                 diff=step_diff, validation=step_validation)
+                step_record = {"index": index, "operation": item_name,
+                               **_entity_change_ids(step_before, document),
+                               "diff": step_diff, "validation": step_validation,
+                               "snapshots": {"before": before_snapshot, "after": after_snapshot}}
+                replay_steps.append(step_record)
+                step_snapshots.append(step_record)
+                result.update({"step_index": index, "step_diff": step_diff, "step_validation": step_validation,
+                               "step_snapshots": {"before": before_snapshot, "after": after_snapshot}})
                 if "corner_check" in result:
                     from .corner_validation import inspect_corner
                     check = result["corner_check"]
@@ -3037,7 +3072,6 @@ class CadOperationEngine:
                                 for identifier in [*check["line_ids"], check["connector_id"]]}
                     corner_postconditions.append((check, snapshot, result))
                 results.append(result)
-            requirements = copy.deepcopy(arguments.get("requirements") or {})
             validation = validate_cad_document(document, requirements)
             repair_plan: list[dict[str, Any]] = []
             if not validation["valid"] and bool(arguments.get("auto_repair", True)):
@@ -3045,10 +3079,25 @@ class CadOperationEngine:
                 for repair in repair_plan:
                     repair_payload = dict(repair)
                     repair_name = repair_payload.pop("operation")
+                    index = len(replay_steps)
                     step_before = document.clone()
-                    results.append({"operation": repair_name, "replanned": True, **self._apply_one(document, repair_name, repair_payload)})
-                    replay_steps.append({"operation": repair_name, "replanned": True,
-                                         **_entity_change_ids(step_before, document)})
+                    before_validation = validate_cad_document(step_before, requirements)
+                    before_snapshot = checkpoint_step(index, "before", repair_name, step_before,
+                                                      validation=before_validation, replanned=True)
+                    applied = self._apply_one(document, repair_name, repair_payload)
+                    step_diff = step_before.diff(document)
+                    step_validation = validate_cad_document(document, requirements)
+                    after_snapshot = checkpoint_step(index, "after", repair_name, document,
+                                                     diff=step_diff, validation=step_validation, replanned=True)
+                    step_record = {"index": index, "operation": repair_name, "replanned": True,
+                                   **_entity_change_ids(step_before, document), "diff": step_diff,
+                                   "validation": step_validation,
+                                   "snapshots": {"before": before_snapshot, "after": after_snapshot}}
+                    results.append({"operation": repair_name, "replanned": True, **applied,
+                                   "step_index": index, "step_diff": step_diff, "step_validation": step_validation,
+                                   "step_snapshots": {"before": before_snapshot, "after": after_snapshot}})
+                    replay_steps.append(step_record)
+                    step_snapshots.append(step_record)
                 validation = validate_cad_document(document, requirements)
             if not validation["valid"]:
                 transaction.rollback("CAD_VALIDATION_FAILED")
@@ -3071,4 +3120,4 @@ class CadOperationEngine:
             transaction.checkpoint("after-cad-validation", {"valid": True, "change_count": diff["change_count"], "repair_count": len(repair_plan)})
             transaction.record("cad_diff", {"change_count": diff["change_count"], "repair_count": len(repair_plan)})
             committed, persisted_validation, history = self._write(transaction, document, output_file, requirements, operation)
-            return {"operation": operation, "path": committed[str(output_file.relative_to(project_root))], "sidecar": committed[str(output_file.relative_to(project_root)) + ".cad.json"], "document": document.to_dict(), "validation": validation, "persisted_validation": persisted_validation, "diff": diff, "results": results, "repair_plan": repair_plan, "replanned": bool(repair_plan), "replanned_plan": repair_plan, "run_id": transaction.run_id, "history": history, "timeline": transaction.events()}
+            return {"operation": operation, "path": committed[str(output_file.relative_to(project_root))], "sidecar": committed[str(output_file.relative_to(project_root)) + ".cad.json"], "document": document.to_dict(), "validation": validation, "persisted_validation": persisted_validation, "diff": diff, "results": results, "step_snapshots": step_snapshots, "repair_plan": repair_plan, "replanned": bool(repair_plan), "replanned_plan": repair_plan, "run_id": transaction.run_id, "history": history, "timeline": transaction.events()}

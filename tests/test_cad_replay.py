@@ -180,6 +180,43 @@ def test_batch_history_records_actual_changes_per_step(tmp_path):
     assert len(result["history"]["revisions"]) == 1
 
 
+def test_batch_steps_persist_independent_snapshots_and_read_only_view(tmp_path):
+    path = source(tmp_path)
+    result = edit(tmp_path, path, "cad.batch_apply", operations=[
+        {"operation": "cad.entity_move", "entity_ids": ["e00001"], "delta": [4, 0, 0]},
+        {"operation": "cad.entity_delete", "entity_ids": ["e00002"]},
+    ])
+    snapshots = result["step_snapshots"]
+    assert [item["index"] for item in snapshots] == [0, 1]
+    for item in snapshots:
+        for side in ("before", "after"):
+            record = item["snapshots"][side]
+            checkpoint = tmp_path / record["path"]
+            assert checkpoint.is_file()
+            assert record["sha256"] == __import__("hashlib").sha256(checkpoint.read_bytes()).hexdigest()
+
+    after_first = EngineeringAgent().execute_operation("cad.batch_step_view", {
+        "project_dir": str(tmp_path), "run_id": result["run_id"], "step_index": 0, "side": "after"})
+    assert after_first["read_only"] is True
+    assert after_first["document"]["entities"][0]["start"]["x"] == 4
+    assert after_first["validation"]["valid"] is True
+    assert "data-read-only='true'" in after_first["viewer"]
+
+    before_second = EngineeringAgent().execute_operation("cad.batch_step_view", {
+        "project_dir": str(tmp_path), "run_id": result["run_id"], "step_index": 1, "side": "before"})
+    assert len(before_second["document"]["entities"]) == 2
+    assert before_second["diff"] is None
+
+
+def test_batch_step_view_rejects_invalid_or_missing_checkpoint(tmp_path):
+    server = MCPServer(EngineeringAgent(), profile="safe")
+    response = server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+        "name": "operation.cad.batch_step_view", "arguments": {
+            "project_dir": str(tmp_path), "run_id": "bad/step", "step_index": 0}}})
+    assert response["result"]["isError"] is True
+    assert response["result"]["structuredContent"]["error"]["code"] == "INVALID_ARGUMENTS"
+
+
 def test_mcp_safe_profile_can_read_history(tmp_path):
     path = source(tmp_path)
     revision = edit(tmp_path, path)["run_id"]

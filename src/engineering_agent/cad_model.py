@@ -176,6 +176,52 @@ class CadDocument:
                 document.layers[key] = Layer(key, item.get("color", "#6b7280"), bool(item.get("visible", True)), bool(item.get("locked", False)), item.get("linetype", "CONTINUOUS"))
         return document
 
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "CadDocument":
+        """Rehydrate a canonical document snapshot without reading a file.
+
+        Batch checkpoints are deliberately file-independent JSON snapshots.  A
+        small constructor here lets the read-only replay viewer use the same
+        object model and validators as a live DXF document.
+        """
+        if not isinstance(payload, dict):
+            raise ValueError("CAD_DOCUMENT_SNAPSHOT_INVALID")
+        document = cls.from_dxf(payload, name=str(payload.get("name", "untitled")),
+                                document_id=str(payload.get("document_id") or ""))
+        document.schema_version = str(payload.get("schema_version", document.schema_version))
+        document.units = str(payload.get("units", document.units))
+        document.metadata = copy.deepcopy(payload.get("metadata") or {})
+        document.coordinate_systems = copy.deepcopy(payload.get("coordinate_systems") or [])
+        document.sheets = copy.deepcopy(payload.get("sheets") or {})
+        document.viewports = copy.deepcopy(payload.get("viewports") or {})
+        document.text_styles = copy.deepcopy(payload.get("text_styles") or {})
+        document.layers = {
+            str(name): Layer(str(name), str(item.get("color", "#6b7280")),
+                             bool(item.get("visible", True)), bool(item.get("locked", False)),
+                             str(item.get("linetype", "CONTINUOUS")))
+            for name, item in (payload.get("layers") or {}).items()
+            if isinstance(item, dict)
+        }
+        for entity in document.entities:
+            document.ensure_layer(str(entity.get("layer", "0")))
+        document.blocks = {
+            str(name): Block(str(name), _point(item.get("base_point")), copy.deepcopy(item.get("entities") or []))
+            for name, item in (payload.get("blocks") or {}).items()
+            if isinstance(item, dict)
+        }
+        document.selection_sets = {
+            str(name): SelectionSet(str(name), list(item.get("refs") or []), bool(item.get("active", True)))
+            for name, item in (payload.get("selection_sets") or {}).items()
+            if isinstance(item, dict)
+        }
+        document.constraints = [
+            Constraint(str(item.get("kind", "unknown")), list(item.get("refs") or []), item.get("value"),
+                       copy.deepcopy(item.get("parameters") or {}))
+            for item in (payload.get("constraints") or [])
+            if isinstance(item, dict)
+        ]
+        return document
+
     def clone(self) -> "CadDocument":
         return copy.deepcopy(self)
 
