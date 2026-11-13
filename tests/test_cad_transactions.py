@@ -342,7 +342,9 @@ def test_mcp_undo_and_conflict_are_exposed(tmp_path):
     assert pair(path) == original
     assert "error" not in call("redo")
     path.write_bytes(path.read_bytes() + b"\n")
-    assert call("undo")["error"]["code"] == "CONFLICT"
+    conflict = call("undo")
+    assert conflict["result"]["isError"] is True
+    assert conflict["result"]["structuredContent"]["error"]["code"] == "CONFLICT"
 
 
 def test_asset_preview_shares_the_writer_lock(tmp_path, monkeypatch):

@@ -345,7 +345,7 @@ def test_safe_mcp_job_api_cannot_cancel_or_publish(job_setup,tmp_path,monkeypatc
     schema=next(t for t in server._tools() if t['name']=='engineering_software_job')
     assert 'cancel' not in schema['inputSchema']['properties']['action']['enum']
     result=server.handle({'jsonrpc':'2.0','id':1,'method':'tools/call','params':{'name':'engineering_software_job','arguments':{'tool':'catia','action':'cancel','request_id':uuid.uuid4().hex}}})
-    assert 'error' in result
+    assert result['result']['isError'] is True
 
 
 def test_software_queue_follows_submission_order(job_setup,tmp_path):

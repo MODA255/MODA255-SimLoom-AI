@@ -209,7 +209,9 @@ def test_mcp_and_cli_use_verified_export(tmp_path):
     call = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
         "name": "operation.project.version_export", "arguments": {"project_dir": str(tmp_path),
         "version_id": saved["id"], "output_dir": "mcp-copy"}}}
-    assert "error" in MCPServer(EngineeringAgent(), profile="safe").handle(call)
+    denied = MCPServer(EngineeringAgent(), profile="safe").handle(call)
+    assert denied["result"]["isError"] is True
+    assert denied["result"]["structuredContent"]["error"]["code"] == "INVALID_ARGUMENTS"
     assert "result" in MCPServer(EngineeringAgent(), profile="full").handle(call)
     result = subprocess.run([sys.executable, "-m", "engineering_agent.cli", "version-export", saved["id"],
                              "cli-copy", "--root", str(tmp_path)], capture_output=True, text=True, timeout=25)
@@ -258,5 +260,6 @@ def test_safe_profile_rejects_direct_mutation_calls_not_just_discovery(tmp_path,
     assert name not in {tool["name"] for tool in server._tools()}
     result = server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
         "name": name, "arguments": {"project_dir": str(tmp_path)}}})
-    assert "MCP_PROFILE_READ_ONLY" in result["error"]["message"]
+    assert result["result"]["isError"] is True
+    assert "MCP_PROFILE_READ_ONLY" in result["result"]["structuredContent"]["error"]["message"]
     assert list(tmp_path.iterdir()) == []

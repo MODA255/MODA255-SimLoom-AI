@@ -91,7 +91,8 @@ def test_mcp_surface_lists_and_calls_tools():
     templates = server.handle({"jsonrpc": "2.0", "id": 3, "method": "resources/templates/list"})
     assert templates["result"]["resourceTemplates"]
     missing = server.handle({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "engineering_ingest", "arguments": {"path": str(Path("/does/not/exist"))}}})
-    assert missing["error"]["code"] == "RESOURCE_NOT_FOUND"
+    assert missing["result"]["isError"] is True
+    assert missing["result"]["structuredContent"]["error"]["code"] == "RESOURCE_NOT_FOUND"
 
 
 def test_mcp_returns_structured_content_and_operation_schema_metadata(tmp_path):
@@ -114,9 +115,23 @@ def test_mcp_returns_structured_content_and_operation_schema_metadata(tmp_path):
     unsupported = server.handle({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
         "name": "operation.cad.document_open",
         "arguments": {"input_file": str(drawing), "operation_schema_version": "99.0"}}})
-    assert unsupported["error"]["code"] == "SCHEMA_VERSION_UNSUPPORTED"
-    assert unsupported["error"]["schemaVersion"] == server.schema_version
-    assert unsupported["error"]["details"]["supported"] == ["1.0"]
+    assert unsupported["result"]["isError"] is True
+    error = unsupported["result"]["structuredContent"]["error"]
+    assert error["code"] == "SCHEMA_VERSION_UNSUPPORTED"
+    assert error["schemaVersion"] == server.schema_version
+    assert error["details"]["supported"] == ["1.0"]
+
+
+def test_mcp_tool_execution_errors_are_is_error_but_unknown_tools_are_jsonrpc_errors():
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="safe")
+    denied = server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+        "name": "engineering_run", "arguments": {"prompt": "执行任务", "dry_run": False}}})
+    assert denied["result"]["isError"] is True
+    assert denied["result"]["structuredContent"]["error"]["code"] == "INVALID_ARGUMENTS"
+
+    unknown = server.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+        "name": "engineering_missing_tool", "arguments": {}}})
+    assert unknown["error"]["code"] == "INVALID_ARGUMENTS"
 
 
 def test_version_timeline_svg_exposes_safe_keyboard_selectable_nodes():
@@ -146,7 +161,8 @@ def test_mcp_pagination_subscription_and_schema_compatibility(tmp_path):
     assert subscribed["result"]["subscribed"] is True
     server.handle({"jsonrpc": "2.0", "id": 5, "method": "resources/unsubscribe", "params": {"uri": uri}})
     unsupported = server.handle({"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {"name": "engineering_plan", "arguments": {"prompt": "用Adams做动力学", "schema_version": "engineering-agent/mcp/v99"}}})
-    assert unsupported["error"]["code"] == "SCHEMA_VERSION_UNSUPPORTED"
+    assert unsupported["result"]["isError"] is True
+    assert unsupported["result"]["structuredContent"]["error"]["code"] == "SCHEMA_VERSION_UNSUPPORTED"
 
 
 def test_mcp_subscription_queues_resource_update_after_mutation(tmp_path):
@@ -282,7 +298,8 @@ def test_measure_image_rejects_invalid_coordinate_system(tmp_path):
             "root": str(tmp_path), "path": source.name, "target_color": [0, 0, 255],
             "coordinate_system": {"x_min": 0, "x_max": 1, "y_min": 0, "y_max": 1, "y_axis": "sideways"},
         }}})
-    assert called["error"]["code"] == "BAD_IMAGE_COORDINATE_SYSTEM"
+    assert called["result"]["isError"] is True
+    assert called["result"]["structuredContent"]["error"]["code"] == "BAD_IMAGE_COORDINATE_SYSTEM"
 
 
 def test_mcp_operation_schema_exposes_output_contract_and_side_effects():

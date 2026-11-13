@@ -47,7 +47,8 @@ def test_mcp_full_profile_exposes_script_policy_and_error_code(tmp_path):
             "project_dir": str(tmp_path), "input_file": str(source), "output_file": str(tmp_path / "out.dxf"),
             "script": _script(),
         }}})
-    assert called["error"]["code"] == "CAD_SCRIPTS_DISABLED"
+    assert called["result"]["isError"] is True
+    assert called["result"]["structuredContent"]["error"]["code"] == "CAD_SCRIPTS_DISABLED"
 
 
 def test_cad_script_is_one_validated_diff_and_history_revision(tmp_path):

@@ -72,7 +72,8 @@ def test_stopped_watch_is_retained_and_mcp_safe_profile_hides_mutation(tmp_path)
     server = MCPServer(agent, profile="safe")
     response = server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
         "name": "operation.project.watch_start", "arguments": {"project_dir": str(tmp_path), "paths": ["x.rst"]}}})
-    assert response["error"]["code"] == "INVALID_ARGUMENTS"
+    assert response["result"]["isError"] is True
+    assert response["result"]["structuredContent"]["error"]["code"] == "INVALID_ARGUMENTS"
 
 
 def test_watch_is_available_through_mcp_full_and_does_not_mutate_vendor_files(tmp_path):

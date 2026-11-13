@@ -68,7 +68,7 @@ SimLoom 原有的 CATIA / Ansys / Adams / VI-grade 工程链、B-Rep 和仿真�
 | 行业图形库 | 已有符号/紧固件/表格等基础生成操作；新增 `cad.standard_catalog`、`cad.standard_library`、`cad.standard_parts_audit`，覆盖 P&ID 符号、14 类 GD&T 特征、M3～M24 紧固件、常用轴承系列和孔型查询，严格模式会拒绝未知输入 | 当前目录是可查询的规划与输入校验契约，不能视为 ISO P&ID、GD&T、标准紧固件/轴承/孔系尺寸库的合规实现；仍需有来源的尺寸表、符号几何和原生软件验收 |
 | 工程工作流 | 四软件离线链和基本 CAD 批次可运行；`cad.pid_audit` 可把 tagged P&ID 符号、端口和过程线读回为节点/边并检查孤立符号、连接段引用和要求连接；`cad.process_route_create` 支持正交路线，`cad.pid_valve_cut_pipe` 可在带语义管线上切断并插入带 inlet/outlet 关系的阀门 | 继续补有来源的 P&ID 标准符号几何、端口方向/规格约束、房间面积、回转件视图/BOM 等端到端工程任务；当前阀门操作仍是 vendor-neutral 关系模型，不是厂商 P&ID 对象 |
 | DWG、AutoCAD AUDIT 与实时同步 | 尚无等价实机验收 | 实现可选 AutoCAD 后端、版本/文件锁/冲突/回读契约，并在 Windows 真机验证 |
-| MCP、CLI、Python、HTTP 的一致性与策略 | 有统一 operation 调用、profiles、分页、schema/error envelope；MCP 可读取资产 JSON 和 SVG image content；写操作后发送资源更新。safe profile 已在实际调用入口拒绝写/执行操作及会保存产物的 run/generate/version 内置入口，并有绕过 discovery 的直接调用回归 | 继续补完整 schema/envelope 覆盖、allow-list 策略、跨客户端互操作和断线重连验证 |
+| MCP、CLI、Python、HTTP 的一致性与策略 | 有统一 operation 调用、profiles、分页、schema/error envelope；MCP 可读取资产 JSON 和 SVG image content；写操作后发送资源更新。safe profile 已在实际调用入口拒绝写/执行操作及会保存产物的 run/generate/version 内置入口，并有绕过 discovery 的直接调用回归。工具执行失败现在按 MCP 语义返回 `result.isError=true`、文本 `content` 和结构化 error envelope；JSON-RPC 顶层 error 保留给协议、未知工具和未知 operation | 继续补完整 schema/envelope 覆盖、allow-list 策略、跨客户端互操作和断线重连验证 |
 | 安装、发布与可重复环境 | 已有启动器和 CI 配置 | 干净 Windows/macOS/Linux 的实际安装、升级和发布产物验证；配置存在不代表通过 |
 | 对照验收与真实项目数据 | 当前主要为生成 fixture 和本地功能测试 | 用固定任务、相同输入、明确成功标准与参考系统对照；记录失败和不支持项，不借用上游自评分 |
 | 四款商业工程软件后端 | 脚本、桥接与离线验证链已有实现；本机无对应真实软件 | Windows 上 CATIA/Ansys/Adams/VI-grade 的建模、求解、结果回读、错误恢复逐项实测 |
@@ -147,3 +147,9 @@ ARC、ELLIPSE 和 SPLINE 会从渲染元数据生成夹点；拖动过程使用�
 可编辑同心孔轮廓，后者从直线型线网按容差追踪闭合边界并保存源实体追溯。两者都走统一事务、
 独立读回、验证、diff、checkpoint 和 rollback；它们仍是 vendor-neutral DXF 辅助能力，不代表
 CATIA 原生特征或标准件数据库已经验收。
+
+2026-11-14 后续：MCP `tools/call` 的工具执行失败改为标准 `result.isError=true`，同时保留
+文本 `content` 和结构化 `structuredContent.error`。这样客户端可以区分参数、权限、资源和后端
+执行失败与 JSON-RPC 传输/发现错误；safe/full profile、schema 版本拒绝和 CAD 事务冲突都经过
+同一错误 envelope 回归测试。这个对齐改善了 agent 的反馈闭环，但还需要真实 MCP 客户端互操作
+和断线重连验收。

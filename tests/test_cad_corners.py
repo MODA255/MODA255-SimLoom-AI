@@ -313,7 +313,7 @@ def test_mcp_exposes_radius_alias_and_reports_invalid_geometry(tmp_path):
             'name': 'operation.cad.entity_fillet', 'arguments': {'project_dir': str(tmp_path), 'input_file': str(path), 'output_file': str(path), 'entity_ids': ids, 'radius': radius}}})
     before = pair(path)
     invalid = call(-2)
-    assert 'error' in invalid and 'INVALID_FILLET_RADIUS' in json.dumps(invalid)
+    assert invalid['result']['isError'] is True and 'INVALID_FILLET_RADIUS' in json.dumps(invalid)
     assert pair(path) == before
     result = call(2)
     assert 'error' not in result

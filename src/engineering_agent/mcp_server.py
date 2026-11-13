@@ -136,10 +136,12 @@ class MCPServer:
                 return self._error(request_id, exc)
         if method == "tools/call":
             params = request.get("params", {})
+            tool_name = str(params.get("name", ""))
             try:
-                result = self.call(str(params.get("name", "")), params.get("arguments") or {})
-                self._queue_resource_updates(str(params.get("name", "")), params.get("arguments") or {})
-                tool_name = str(params.get("name", ""))
+                if not tool_name:
+                    raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "tool name is required")
+                result = self.call(tool_name, params.get("arguments") or {})
+                self._queue_resource_updates(tool_name, params.get("arguments") or {})
                 structured = self._structured_content(tool_name, result)
                 if isinstance(result, dict) and isinstance(result.get("_mcp_content"), list):
                     content = result["_mcp_content"]
@@ -149,10 +151,22 @@ class MCPServer:
                         "result": {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}],
                                    "structuredContent": structured}}
             except Exception as exc:
+                # A discovered tool that rejects or cannot complete its input
+                # reports a tool execution error in the MCP result.  JSON-RPC
+                # errors remain reserved for transport/protocol failures and
+                # unknown tools, which lets clients distinguish a fixable
+                # engineering failure from a broken MCP request.
+                if not self._is_unknown_tool_error(exc):
+                    return self._tool_error(request_id, tool_name, exc)
                 return self._error(request_id, exc)
         return self._error(request_id, ProtocolError(ErrorCode.INVALID_REQUEST, f"METHOD_NOT_FOUND:{method}"))
 
-    def _error(self, request_id: Any, exc: Exception) -> dict[str, Any]:
+    @staticmethod
+    def _is_unknown_tool_error(exc: Exception) -> bool:
+        text = str(exc)
+        return text.startswith("UNKNOWN_TOOL:") or text.startswith("UNKNOWN_OPERATION:")
+
+    def _error_payload(self, exc: Exception) -> dict[str, Any]:
         if isinstance(exc, ProtocolError):
             envelope = failure(exc)
         elif isinstance(exc, FileNotFoundError):
@@ -173,7 +187,29 @@ class MCPServer:
             envelope = failure(ProtocolError(ErrorCode.INTERNAL_ERROR, str(exc)))
         error = dict(envelope["error"])
         error.setdefault("schemaVersion", self.schema_version)
-        return {"jsonrpc": "2.0", "id": request_id, "error": error}
+        return error
+
+    def _tool_error(self, request_id: Any, tool_name: str, exc: Exception) -> dict[str, Any]:
+        error = self._error_payload(exc)
+        structured = {
+            "schemaVersion": self.schema_version,
+            "tool": tool_name,
+            "ok": False,
+            "error": error,
+        }
+        text = json.dumps({"error": error}, ensure_ascii=False)
+        return {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": {
+                "isError": True,
+                "content": [{"type": "text", "text": text}],
+                "structuredContent": structured,
+            },
+        }
+
+    def _error(self, request_id: Any, exc: Exception) -> dict[str, Any]:
+        return {"jsonrpc": "2.0", "id": request_id, "error": self._error_payload(exc)}
 
     def _tools(self) -> list[dict[str, Any]]:
         tools = [
