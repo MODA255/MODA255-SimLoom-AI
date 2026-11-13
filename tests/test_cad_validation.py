@@ -53,3 +53,29 @@ def test_validator_reports_dimension_crossing_and_can_reject_it():
     assert not strict["valid"]
     assert any(item["code"] == "DIMENSION_CROSSING" for item in strict["errors"])
 
+
+def test_validator_reports_self_crossing_polyline_and_strict_topology_rule():
+    document = _document(
+        {"id": "bow", "type": "LWPOLYLINE", "layer": "0", "closed": False,
+         "vertices": [{"x": 0, "y": 0}, {"x": 10, "y": 10},
+                      {"x": 0, "y": 10}, {"x": 10, "y": 0}]},
+    )
+    result = validate_cad_document(document)
+    assert result["valid"]
+    assert result["curve_topology"]
+    assert "CURVE_SELF_CROSSING:bow" in result["warnings"]
+    strict = validate_cad_document(document, {"reject_self_intersections": True})
+    assert not strict["valid"]
+    assert strict["errors"][0]["code"] == "CURVE_SELF_CROSSING"
+
+
+def test_validator_checks_bulged_polyline_topology_without_flagging_adjacent_join():
+    document = _document(
+        {"id": "arc-loop", "type": "LWPOLYLINE", "layer": "0", "closed": True,
+         "vertices": [{"x": 0, "y": 0}, {"x": 10, "y": 0}, {"x": 10, "y": 10}, {"x": 0, "y": 10}],
+         "bulges": [0.41421356237, 0, 0, 0]},
+    )
+    result = validate_cad_document(document)
+    assert result["valid"]
+    assert result["curve_topology"] == []
+

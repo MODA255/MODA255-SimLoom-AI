@@ -13,6 +13,8 @@ from pathlib import Path
 import ezdxf
 from ezdxf.lldxf.tagwriter import TagWriter
 
+from .curve_validation import find_self_intersections
+
 
 def _identifier(entity):
     if entity.has_xdata("SIMLOOM_AI"):
@@ -63,7 +65,7 @@ def _native_geometry_signature(entity):
         return None
 
 
-def inspect_native(path: str | Path, expected=None, *, corner_connections=None):
+def inspect_native(path: str | Path, expected=None, *, corner_connections=None, reject_curve_topology=False):
     path = Path(path)
     with path.open("rb") as stream:
         header = stream.read(16384)
@@ -71,6 +73,7 @@ def inspect_native(path: str | Path, expected=None, *, corner_connections=None):
         errors = [{"code": "CORNER_NATIVE_AUDIT_UNAVAILABLE"}] if corner_connections else []
         return {"valid": not errors, "available": False, "errors": errors, "warnings": ["LEGACY_DXF_NATIVE_AUDIT_UNAVAILABLE"]}
     errors, warnings = [], []
+    curve_topology = []
     drawing = ezdxf.readfile(path)
     # Check geometry before audit, as the native auditor may repair its own
     # in-memory drawing. Nothing in this function writes a file.
@@ -249,6 +252,33 @@ def inspect_native(path: str | Path, expected=None, *, corner_connections=None):
                 decimals = len(text.rsplit(".", 1)[1]) if "." in text else 0
                 if not math.isclose(float(text), measured, rel_tol=1e-9, abs_tol=0.5 * 10 ** -decimals):
                     errors.append({"code": "DIMENSION_TEXT_MISMATCH", "entity_id": _identifier(entity), "text": text, "measured": measured})
+        curve_entity = None
+        kind = entity.dxftype()
+        if kind in {"LWPOLYLINE", "POLYLINE"}:
+            if kind == "LWPOLYLINE":
+                points = list(entity.get_points("xy"))
+                curve_entity = {"type": kind, "vertices": [{"x": float(point[0]), "y": float(point[1])} for point in points],
+                                "bulges": [float(point[4]) for point in entity.get_points("xyseb")], "closed": bool(entity.closed)}
+            else:
+                curve_entity = {"type": kind, "vertices": [{"x": float(vertex.dxf.location.x), "y": float(vertex.dxf.location.y)} for vertex in entity.vertices],
+                                "bulges": [float(vertex.dxf.bulge) for vertex in entity.vertices], "closed": bool(entity.is_closed)}
+        elif kind == "SPLINE":
+            curve_entity = {"type": kind, "degree": int(entity.dxf.get("degree", 3)),
+                            "fit_points": [{"x": float(point[0]), "y": float(point[1]), "z": float(point[2])} for point in entity.fit_points],
+                            "control_points": [{"x": float(point[0]), "y": float(point[1]), "z": float(point[2])} for point in entity.control_points],
+                            "knots": list(entity.knots), "weights": list(entity.weights)}
+        if curve_entity is not None:
+            findings = find_self_intersections(curve_entity, 1e-7)
+            if findings is None:
+                warnings.append("NATIVE_CURVE_TOPOLOGY_UNCHECKED:" + _identifier(entity))
+            for finding in findings or []:
+                item = {"code": "NATIVE_CURVE_SELF_" + str(finding["kind"]).upper(),
+                        "entity_id": _identifier(entity), **finding}
+                curve_topology.append(item)
+                if reject_curve_topology:
+                    errors.append(item)
+                else:
+                    warnings.append(item["code"] + ":" + _identifier(entity))
     for signature, entity_ids in native_geometry_keys.items():
         if len(entity_ids) > 1:
             warnings.append("NATIVE_DUPLICATE_GEOMETRY:" + ",".join(entity_ids))
@@ -276,4 +306,4 @@ def inspect_native(path: str | Path, expected=None, *, corner_connections=None):
         errors.append({"code": "NATIVE_AUDIT_ERROR" if finding in audit.errors else "NATIVE_AUDIT_REPAIR_REQUIRED", "audit_code": int(finding.code), "message": finding.message})
     return {"valid": not errors, "available": True, "backend": "ezdxf", "errors": errors, "warnings": warnings,
             "entity_count": len(entities), "audit_error_count": len(audit.errors), "audit_repair_count": len(audit.fixes),
-            "corner_checks": corner_checks}
+            "corner_checks": corner_checks, "curve_topology": curve_topology}

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .dxf import bbox, diff_documents, read_dxf
+from .curve_validation import find_self_intersections
 
 
 def _number(value: Any, default: float = 0.0) -> float:
@@ -449,6 +450,7 @@ def validate_cad_document(document: CadDocument, requirements: dict[str, Any] | 
     errors: list[dict[str, Any]] = []
     warnings: list[str] = []
     duplicate_geometry: list[dict[str, Any]] = []
+    curve_topology: list[dict[str, Any]] = []
     requirements = requirements or {}
     ids: set[str] = set()
     geometry_entities: list[dict[str, Any]] = []
@@ -525,6 +527,37 @@ def validate_cad_document(document: CadDocument, requirements: dict[str, Any] | 
             if not all(math.isfinite(_number(point.get(axis))) for axis in ("x", "y", "z")):
                 errors.append({"code": "NON_FINITE_COORDINATE", "entity_id": entity_id})
                 break
+        if kind in {"LWPOLYLINE", "POLYLINE", "SPLINE"}:
+            topology = find_self_intersections(entity, association_tolerance)
+            if topology is None:
+                warnings.append("CURVE_TOPOLOGY_UNCHECKED:" + entity_id)
+            else:
+                for finding in topology:
+                    item = {"code": "CURVE_SELF_" + str(finding["kind"]).upper(),
+                            "entity_id": entity_id, **finding}
+                    curve_topology.append(item)
+                    if requirements.get("reject_self_intersections") or requirements.get("reject_curve_topology"):
+                        errors.append(item)
+                    else:
+                        warnings.append(item["code"] + ":" + entity_id)
+        if kind == "HATCH":
+            for path_index, boundary in enumerate(entity.get("boundary_paths") or []):
+                if str(boundary.get("kind", "polyline")).lower() != "polyline":
+                    continue
+                proxy = {"type": "LWPOLYLINE", "vertices": boundary.get("vertices") or [],
+                         "bulges": boundary.get("bulges") or [], "closed": True}
+                topology = find_self_intersections(proxy, association_tolerance)
+                if topology is None:
+                    warnings.append(f"CURVE_TOPOLOGY_UNCHECKED:{entity_id}:boundary:{path_index}")
+                    continue
+                for finding in topology:
+                    item = {"code": "HATCH_BOUNDARY_SELF_" + str(finding["kind"]).upper(),
+                            "entity_id": entity_id, "boundary_index": path_index, **finding}
+                    curve_topology.append(item)
+                    if requirements.get("reject_self_intersections") or requirements.get("reject_curve_topology"):
+                        errors.append(item)
+                    else:
+                        warnings.append(item["code"] + ":" + entity_id)
     handles = {str(item.get("handle")): str(item.get("id")) for item in document.entities if item.get("handle")}
     for entity in document.entities:
         if str(entity.get("type", "")).upper() != "HATCH" or not entity.get("associative"):
@@ -614,5 +647,5 @@ def validate_cad_document(document: CadDocument, requirements: dict[str, Any] | 
     return {"valid": not errors, "errors": errors, "warnings": warnings,
             "duplicate_geometry": duplicate_geometry, "entity_count": len(document.entities),
             "layer_count": len(document.layers), "dimension_count": len(dimension_entities),
-            "drafting_warnings": drafting_warnings}
+            "drafting_warnings": drafting_warnings, "curve_topology": curve_topology}
 

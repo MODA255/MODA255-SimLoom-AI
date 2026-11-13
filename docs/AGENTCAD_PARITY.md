@@ -52,6 +52,11 @@ SimLoom 原有的 CATIA / Ansys / Adams / VI-grade 工程链、B-Rep 和仿真�
 回路，生成带源实体追溯信息的闭合 LWPOLYLINE；bulge 曲线和找不到闭环的输入会明确失败，
 细节见 `CAD_TRACE_BOUNDARY.md`。
 
+`validate_cad_document` 和独立的 `dxf_validation.inspect_native` 现在会对非相邻多段线段、
+bulge 弧段、SPLINE 采样段和 HATCH 多段线边界检查自交/重叠；默认保留为可追溯 warning，
+工程要求设置 `reject_self_intersections` 或 `reject_curve_topology` 后升级为错误，细节见
+`CURVE_TOPOLOGY.md`。
+
 ## 必须逐项证明的能力
 
 | 能力 | 本地证据及现状 | 完成所需证据 / 下一步 |
@@ -60,7 +65,7 @@ SimLoom 原有的 CATIA / Ansys / Adams / VI-grade 工程链、B-Rep 和仿真�
 | 原子批次、checkpoint、diff、跨会话恢复 | `cad_history.py`、`transactions.py`；已有真实子进程中断和恢复测试 | 扩充外部编辑冲突及各写入口的覆盖；核对脚本等新增入口遵守同一契约 |
 | STEP B-Rep 写入可靠性 | `brep.boolean`、`brep.create_primitive`、`brep.build_feature_graph` 现在把输入和输出限制在项目目录，写入后先检查暂存文件，再从提交目标重新读取 STEP，验证形状、拓扑和体积；失败由事务恢复原文件；feature graph sidecar 随输出一起提交并在覆盖时清理 | 仍需在更多 OpenCascade 版本和真实复杂 STEP 数据上验收；布尔退化、装配、多实体和外部文件冲突的工程规则还需扩展 |
 | 受控脚本执行 | 已有 `cad.script_apply`：默认关闭；显式启用后在事务 staging 工作目录运行，静态检查高风险导入/调用，限制脚本时长、输出大小和输出文件，重新读取 DXF 做独立验证、diff、checkpoint、历史和失败恢复；`tests/test_controlled_cad_scripts.py` | 在 Windows worker 上把同一策略映射到受控脚本宿主，并补 OS 级隔离和真实项目脚本验收；当前策略不是完整安全沙箱 |
-| 独立工程验证 | `validate_cad_document` 和独立读取 DXF 的 `dxf_validation.inspect_native` 现在分别检查打印文字高度、闭合轮廓退化、重复几何、尺寸数值/引用和可配置尺寸关联；原生结构审计、几何读回、标注测量仍有测试 | 继续补齐字体实际字形覆盖、复杂拓扑、尺寸与实体的标准级关联规则，以及更完整的可修复错误分类 |
+| 独立工程验证 | `validate_cad_document` 和独立读取 DXF 的 `dxf_validation.inspect_native` 现在分别检查打印文字高度、闭合轮廓退化、重复几何、尺寸数值/引用、可配置尺寸关联，以及非相邻多段线段、bulge 弧段、SPLINE 采样段和 HATCH 边界的自交/重叠；原生结构审计、几何读回、标注测量仍有测试 | 继续补齐字体实际字形覆盖、精确 NURBS/厂商拓扑、尺寸与实体的标准级关联规则，以及更完整的可修复错误分类 |
 | 原生几何交互视图 | `cad_render.py`、`cad_viewer.py`、`test_cad_viewer.py`、真实浏览器几何检查；Viewer 已支持选择、图层、框选、缩放、平移、SVG 路径对象捕捉和 LINE/LWPOLYLINE/CIRCLE/ARC/ELLIPSE/SPLINE 的语义夹点编辑；夹点松开后复用 `cad.entity_update` 事务、验证、diff、历史和 rollback | 原生模型视图这一子项已有实现；客户图纸、复杂字体、性能、捕捉精度和真实浏览器夹点操作仍待验收 |
 | 历史版本查看、视觉 diff、实时查看 agent 修改 | 有持久撤销/重做、字段 diff、SVG 叠加和项目时间线。`cad.history_view` 校验并只读渲染事务保存的 DXF/sidecar，支持前后步和播放/暂停。批次现在为每个 operation 保存独立 before/after 统一对象快照、diff、验证摘要和可验证 SHA-256，并通过 `cad.batch_step_view` 只读渲染；Web 工作台的 2D Viewer 操作列表也能直接加载批次 after 快照并返回当前文件；详情见 `CAD_BATCH_REPLAY.md`。项目版本 schema 2 在同一事务中保存原始文件与配套元数据，支持历史原件下载、真实文件预览、向新目录导出，以及可离线打开的历史预览 HTML 和 diff HTML；版本时间线节点可点击并联动相邻版本比较。`project.watch_*` 现在可持久保存项目内文件指纹，跨进程轮询并识别 added/modified/touched/deleted/unstable，Web 工作台也可直接开始、轮询和停止；`project.dependency_scan` 可从显式清单、可读文本引用和配套文件生成保守依赖图；见 `PROJECT_VERSION_FILES.md`、`FILE_WATCH.md` 与 `DEPENDENCY_SCAN.md` | 依赖扫描仍不能解析专有二进制装配拓扑，也没有更大工程的回放验收；浏览器真实点击回放仍需 Playwright 环境验收。文件监测和依赖图只提供可审计证据，不等于厂商软件打开、求解成功或工程语义验收 |
 | 工程图排版和文件交付 | 原生标题栏、纸空间/视口、多页 PDF、单页 SVG/PNG、每页比例和尺寸校验；`DRAWING_EXPORT.md` | 标准比例、中文/SHX 字体和打印可读性仍需补齐 |

@@ -145,6 +145,22 @@ def test_bulges_widths_and_arc_angles_transform_using_native_geometry(tmp_path):
     assert native.entitydb[arc.dxf.handle].dxf.end_angle == pytest.approx(160)
 
 
+def test_native_audit_reports_curve_self_crossing_without_rewriting_file(tmp_path):
+    path = tmp_path / "self-crossing.dxf"
+    doc = ezdxf.new("R2013")
+    poly = doc.modelspace().add_lwpolyline([(0, 0), (10, 10), (0, 10), (10, 0)], close=False)
+    doc.saveas(path)
+    before = path.read_bytes()
+    report = inspect_native(path)
+    assert report["valid"]
+    assert any(item.startswith("NATIVE_CURVE_SELF_CROSSING:") for item in report["warnings"])
+    assert report["curve_topology"]
+    strict = inspect_native(path, reject_curve_topology=True)
+    assert not strict["valid"]
+    assert strict["errors"][0]["code"] == "NATIVE_CURVE_SELF_CROSSING"
+    assert path.read_bytes() == before
+
+
 def test_stale_sidecar_and_reordered_entities_cannot_reassign_ids(tmp_path):
     path = tmp_path / "ids.dxf"
     write_dxf(path, lines=[{"x1": 0, "y1": 0, "x2": 1, "y2": 0}, {"x1": 0, "y1": 5, "x2": 1, "y2": 5}])
