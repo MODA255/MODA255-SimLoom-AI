@@ -36,7 +36,21 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install -e ".[dev]"
-      - run: python -m pytest tests/test_cad_transactions.py tests/test_cad_replay.py tests/test_version_files.py tests/test_cad_editing.py tests/test_native_dxf.py tests/test_cad_plotting.py tests/test_cad_viewer.py tests/test_cad_corners.py tests/test_software_integration.py tests/test_worker_jobs.py tests/test_vendor_validation.py tests/test_native_vendor_evidence.py tests/test_four_vendor_runners.py tests/test_workflow_resume.py -q
+      - name: Run portability tests
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m pytest tests/test_cad_transactions.py tests/test_cad_replay.py tests/test_version_files.py tests/test_cad_editing.py tests/test_native_dxf.py tests/test_cad_plotting.py tests/test_cad_viewer.py tests/test_cad_corners.py tests/test_software_integration.py tests/test_worker_jobs.py tests/test_vendor_validation.py tests/test_native_vendor_evidence.py tests/test_four_vendor_runners.py tests/test_workflow_resume.py -q --junitxml="$RUNNER_TEMP/cad-portability.xml"
+      - name: Publish portability failure details
+        if: failure()
+        run: python scripts/ci/report_pytest_failures.py "$RUNNER_TEMP/cad-portability.xml"
+      - name: Upload portability test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cad-portability-${{ matrix.os }}
+          path: ${{ runner.temp }}/cad-portability.xml
+          if-no-files-found: warn
 
   cad-browser:
     runs-on: ubuntu-latest
