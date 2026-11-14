@@ -197,6 +197,8 @@ def test_version_timeline_svg_exposes_safe_keyboard_selectable_nodes():
     assert "class='timeline-node'" in svg
     assert "data-version-id='v-1'" in svg
     assert "tabindex='0'" in svg and "role='button'" in svg
+    assert "pointer-events='none'" in svg
+    assert "pointer-events='all'" in svg
     assert "方案 &lt;A&gt;" in svg
 
 

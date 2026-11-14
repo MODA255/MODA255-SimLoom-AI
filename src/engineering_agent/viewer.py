@@ -316,7 +316,7 @@ def render_mesh_svg(geometry: dict[str, Any], width: int = 720, height: int = 46
 
 def render_timeline_svg(events: list[dict[str, Any]]) -> str:
     width = max(640, 180 * len(events))
-    body = [f"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 {width} 180'><rect width='100%' height='100%' fill='#f7f9fc'/><line x1='50' y1='90' x2='{width-50}' y2='90' stroke='#8492a6' stroke-width='3'/>"]
+    body = [f"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 {width} 180'><rect width='100%' height='100%' fill='#f7f9fc' pointer-events='none'/><line x1='50' y1='90' x2='{width-50}' y2='90' stroke='#8492a6' stroke-width='3' pointer-events='none'/>"]
     for index, event in enumerate(events):
         x = 70 + index * 160
         version_id = str(event.get("version_id", ""))
@@ -327,7 +327,8 @@ def render_timeline_svg(events: list[dict[str, Any]]) -> str:
         body.append(
             f"<g class='timeline-node' data-version-id='{escape(version_id, quote=True)}' "
             f"data-event-index='{index}' tabindex='0' role='button' aria-label='{aria}'>"
-            f"<circle cx='{x}' cy='90' r='12' fill='#2855c5'/><text x='{x-55}' y='45' font-size='11'>{event_label}</text>"
+            f"<rect x='{x-72}' y='28' width='144' height='108' fill='transparent' pointer-events='all'/><circle cx='{x}' cy='90' r='12' fill='#2855c5'/>"
+            f"<text x='{x-55}' y='45' font-size='11'>{event_label}</text>"
             f"<text x='{x-55}' y='125' font-size='10'>{label}</text></g>"
         )
     body.append("</svg>")
