@@ -106,7 +106,7 @@ evidence 上传为 workflow artifact。没有配置脚本、输入工程或许�
 执行：
 
 ```powershell
-.scriptswindowsun-vendor-smoke.ps1 `
+.\scripts\windows\run-vendor-smoke.ps1 `
   -Software catia `
   -ConfigPath C:\SimLoom\worker.json `
   -ProjectDir C:\SimLoom\smoke-project\catia `
