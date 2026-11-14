@@ -48,6 +48,110 @@ def _refs(arguments: dict[str, Any], document: CadDocument) -> list[str]:
     return [str(value.get("entity_id") if isinstance(value, dict) else value) for value in values if value]
 
 
+def _entity_bounds(entity: dict[str, Any]) -> tuple[float, float, float, float] | None:
+    points = entity_points(entity)
+    if not points:
+        return None
+    xs = [float(point.get("x", 0)) for point in points]
+    ys = [float(point.get("y", 0)) for point in points]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _query_entities(document: CadDocument, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Run a deterministic, read-only semantic query over canonical entities."""
+    raw_types = arguments.get("entity_types") or []
+    if isinstance(raw_types, str):
+        raw_types = [raw_types]
+    if not isinstance(raw_types, list):
+        raise ValueError("CAD_QUERY_ENTITY_TYPES_INVALID")
+    types = {str(value).upper() for value in raw_types if str(value).strip()}
+    if arguments.get("entity_type"):
+        types.add(str(arguments["entity_type"]).upper())
+    raw_layers = arguments.get("layers") or []
+    if isinstance(raw_layers, str):
+        raw_layers = [raw_layers]
+    if not isinstance(raw_layers, list):
+        raise ValueError("CAD_QUERY_LAYERS_INVALID")
+    layers = {str(value) for value in raw_layers if str(value).strip()}
+    if arguments.get("layer"):
+        layers.add(str(arguments["layer"]))
+    requested_ids = {str(value) for value in (arguments.get("entity_ids") or [])}
+    if isinstance(arguments.get("entity_ids"), str):
+        requested_ids = {str(arguments["entity_ids"])}
+    selection_name = str(arguments.get("selection_set") or "")
+    if selection_name:
+        selection = document.selection_sets.get(selection_name)
+        if selection is None:
+            raise ValueError("SELECTION_NOT_FOUND:" + selection_name)
+        requested_ids.update(str(value) for value in selection.refs)
+    try:
+        offset = int(arguments.get("offset", 0))
+        limit = int(arguments.get("limit", 100))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("CAD_QUERY_PAGE_INVALID") from exc
+    if offset < 0 or not 1 <= limit <= 1000:
+        raise ValueError("CAD_QUERY_PAGE_INVALID")
+    case_sensitive = bool(arguments.get("case_sensitive", False))
+    text_query = arguments.get("text_contains")
+    if text_query is not None and not isinstance(text_query, str):
+        raise ValueError("CAD_QUERY_TEXT_INVALID")
+    properties = arguments.get("properties") or {}
+    if not isinstance(properties, dict):
+        raise ValueError("CAD_QUERY_PROPERTIES_INVALID")
+    window = arguments.get("window")
+    query_bounds = None
+    if window is not None:
+        if not isinstance(window, list) or len(window) != 2:
+            raise ValueError("CAD_QUERY_WINDOW_INVALID")
+        first, second = _point(window[0]), _point(window[1])
+        query_bounds = (min(first["x"], second["x"]), min(first["y"], second["y"]),
+                        max(first["x"], second["x"]), max(first["y"], second["y"]))
+    intersects = bool(arguments.get("intersects", True))
+    matched: list[dict[str, Any]] = []
+    for entity in document.entities:
+        entity_id = str(entity.get("id"))
+        handle = str(entity.get("handle")) if entity.get("handle") is not None else ""
+        if requested_ids and entity_id not in requested_ids and handle not in requested_ids:
+            continue
+        if types and str(entity.get("type", "")).upper() not in types:
+            continue
+        if layers and str(entity.get("layer", "0")) not in layers:
+            continue
+        if arguments.get("block_name") and str(entity.get("block_name", "")) != str(arguments["block_name"]):
+            continue
+        if arguments.get("layout") and str(entity.get("sheet", entity.get("layout", "Model"))) != str(arguments["layout"]):
+            continue
+        if text_query is not None:
+            haystack = str(entity.get("text", entity.get("tag", entity.get("prompt", ""))))
+            found = text_query in haystack if case_sensitive else str(text_query).casefold() in haystack.casefold()
+            if not found:
+                continue
+        if any(entity.get(key) != value for key, value in properties.items()):
+            continue
+        if query_bounds is not None:
+            bounds = _entity_bounds(entity)
+            if bounds is None:
+                continue
+            ex1, ey1, ex2, ey2 = bounds
+            qx1, qy1, qx2, qy2 = query_bounds
+            if intersects:
+                if ex2 < qx1 or ex1 > qx2 or ey2 < qy1 or ey1 > qy2:
+                    continue
+            elif not (ex1 >= qx1 and ey1 >= qy1 and ex2 <= qx2 and ey2 <= qy2):
+                continue
+        record = copy.deepcopy(entity)
+        record["ref"] = {"document_id": document.document_id, "entity_id": entity_id}
+        if not bool(arguments.get("include_geometry", True)):
+            record = {key: value for key, value in record.items()
+                      if key in {"id", "handle", "type", "layer", "sheet", "layout", "block_name", "ref"}}
+        matched.append(record)
+    matched_ids = [str(item.get("id")) for item in matched]
+    return {"entities": matched[offset:offset + limit], "total_count": len(matched),
+            "matched_ids": matched_ids, "offset": offset, "limit": limit,
+            "query": copy.deepcopy(arguments), "document_id": document.document_id,
+            "units": document.units, "selection_set": selection_name or None}
+
+
 def _expand_associative_refs(document: CadDocument, ids: list[str]) -> list[str]:
     """Expand a transform selection to keep associative HATCH boundaries intact."""
     by_ref = {str(item.get("id")): item for item in document.entities}
@@ -2967,14 +3071,18 @@ class CadOperationEngine:
             raise ValueError("PATH_OUTSIDE_PROJECT")
         if operation in {"cad.history", "cad.undo", "cad.redo"}:
             return self._history_operation(operation, project_root, input_file)
-        if operation in {"cad.audit", "cad.document_diff", "cad.visual_diff", "cad.pid_audit", "cad.standard_parts_audit", "cad.document_open", "cad.document_inspect", "cad.document_recompute"}:
+        if operation in {"cad.audit", "cad.document_diff", "cad.visual_diff", "cad.pid_audit", "cad.standard_parts_audit", "cad.document_open", "cad.document_inspect", "cad.document_recompute", "cad.query"}:
             with RunTransaction.read_lock(project_root):
                 if not input_file.is_file():
                     raise FileNotFoundError(input_file)
                 document = self.open(input_file)
                 validation = validate_cad_document(document, arguments.get("requirements") or {})
                 result = {"document": document.to_dict(), "validation": validation}
-                if operation == "cad.audit":
+                if operation == "cad.query":
+                    result = _query_entities(document, arguments)
+                    result["path"] = str(input_file)
+                    result["validation"] = validation
+                elif operation == "cad.audit":
                     from .dxf_validation import inspect_native
                     native = inspect_native(input_file, corner_connections=(arguments.get("requirements") or {}).get("corner_connections"))
                     validation["native"] = native

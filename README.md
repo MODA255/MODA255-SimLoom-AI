@@ -109,7 +109,7 @@ PYTHONPATH=src python -m engineering_agent.cli \
 | 能力 | 当前实现 | 说明 |
 | --- | --- | --- |
 | AI 规划 | ✅ | 确定性 planner；支持 OpenAI 兼容接口的可选 LLM planner |
-| 统一工程对象 | ✅ | 项目、几何、结果、表格、指标和 artifact 归一化 |
+| 统一工程对象 | ✅ | 项目、几何、结果、表格、指标和 artifact 归一化；CAD 查询返回稳定 `EntityRef` |
 | CATIA / Ansys / Adams / VI-grade 脚本生成 | ✅ | 生成可审计的 CATScript、Mechanical Python、Adams command 和 VI-grade scenario 模板 |
 | 离线四软件闭环 | ✅ | 无商业软件时生成本地 fixture（STEP、CSV、JSON）并验证 SimLoom 的流程和规则 |
 | STEP 读取 | ✅ | 保守实体解析；安装 OCP 后启用真实 B-Rep 检查 |
@@ -135,6 +135,21 @@ viewport、title block、hatch、线性/径向/角度/坐标 dimension、leader�
 选择集、约束等应用上下文。新建实体的稳定 ID 同时写入 DXF 的应用数据；已有实体继续使用原生 handle，外部重排不会按数组顺序重新分配 ID。
 
 DXF 读写使用 `ezdxf`，在原图纸上更新实体，保留未编辑对象的 handle、外部应用数据、扩展字典、样式、块属性和纸空间。原生标注含定义点和实际图形块；填充可以保留多个边界、孔洞与圆弧/样条边界。保存后会直接读取 DXF 做原生结构审计，并核对实体几何、标注测量值和视口。发现写入丢失或需要结构修复时，事务恢复原文件及历史。
+
+只读 `cad.query` 可以按实体类型、图层、选择集、块名、布局、属性、文字内容和空间窗口
+筛选实体，并支持分页和仅返回元数据。每个结果都带有稳定的 `EntityRef`，因此上层 Agent
+可以先查询，再把同一引用交给编辑、验证或 Viewer 高亮流程，而不依赖 DXF 数组顺序。
+
+```python
+agent.execute_operation("cad.query", {
+    "project_dir": "./project",
+    "input_file": "./project/drawing.dxf",
+    "entity_type": "CIRCLE",
+    "layer": "HOLES",
+    "window": [{"x": 0, "y": 0}, {"x": 100, "y": 100}],
+    "include_geometry": False,
+})
+```
 
 自动化测试覆盖独立库生成的复杂图纸、二进制输入、R12 多段线、自定义填充、嵌套块、SPLINE 和失效元数据。SPLINE 支持创建、原生读回和几何变换；关联 HATCH 在移动或旋转时会自动带上引用的边界实体，并由事务提交后的原生回读再次检查关联句柄。复杂曲线编辑、关联边界重构和厂商专有实体仍会明确拒绝。早期无版本头、含不透明记录的文件使用兼容写入路径，并报告无法执行原生审计；完整 DXF 解析失败时不会悄悄降级。详见 [DXF 读写与验证](docs/NATIVE_DXF.md)。
 
