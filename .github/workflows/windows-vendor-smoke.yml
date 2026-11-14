@@ -28,7 +28,6 @@ on:
 
 jobs:
   smoke:
-    if: ${{ inputs.software == 'all' || inputs.software == matrix.software }}
     strategy:
       fail-fast: false
       matrix:
