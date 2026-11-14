@@ -51,7 +51,10 @@ def test_vtu_mesh_and_node_result_field(tmp_path):
     assert mesh["face_count"] == 1 and mesh["scalar_name"] == "temperature"
     asset = EngineeringAgent().ingest(str(path))
     assert asset["geometry"]["vertex_count"] == 4
-    assert "VTU mesh wireframe" in asset_view(str(tmp_path), path.name)["svg"]
+    view = asset_view(str(tmp_path), path.name)
+    assert "VTU mesh wireframe" in view["svg"]
+    assert "temperature" in view["viewer"]
+    assert "linear-gradient" in view["viewer"]
     assert read_mesh(path)["scalar_range"] == [1.0, 4.0]
 
 

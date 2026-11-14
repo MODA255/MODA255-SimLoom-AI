@@ -203,10 +203,12 @@ def test_legacy_project_database_migrates_without_losing_rows(tmp_path):
 
 def test_mesh_camera_normalization_and_scalar_range():
     asset = {"geometry": {"vertices": [{"x": 9000, "y": 100, "z": 200}, {"x": 12000, "y": 100, "z": 200}, {"x": 9000, "y": 200, "z": 200}],
-                          "faces": [[0, 1, 2]], "scalars": [100, 200, 300]}}
+                          "faces": [[0, 1, 2]], "scalars": [100, 200, 300], "scalar_name": "stress"}}
     data = mesh_payload(asset)
     assert all(math.sqrt(sum(v*v for v in p)) <= .800001 for p in data["points"])
     assert data["scalar_range"] == [100, 300]
+    assert data["scalar_name"] == "stress"
+    assert data["vertex_count"] == 3 and data["triangle_count"] == 1
     assert data["colors"][0] == [0, 1, 1] and data["colors"][-1] == [1, 1, 0]
     asset["geometry"]["scalars"] = [1]
     with pytest.raises(ValueError, match="每个顶点"):

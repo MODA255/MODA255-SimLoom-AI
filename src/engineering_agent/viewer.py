@@ -172,7 +172,9 @@ def mesh_payload(asset: dict[str, Any]) -> dict[str, Any]:
         for value in scalars:
             t = (value-low)/(high-low) if high > low else .5
             colors.append([min(1, 2*t), min(1, 2*(1-abs(t-.5))), min(1, 2*(1-t))])
-    return {"points": normalized, "indices": indices, "colors": colors, "scalar_range": scalar_range}
+    return {"points": normalized, "indices": indices, "colors": colors,
+            "scalar_range": scalar_range, "scalar_name": geometry.get("scalar_name"),
+            "vertex_count": len(points), "triangle_count": len(indices) // 3}
 
 
 def render_interactive_viewer(asset: dict[str, Any]) -> str:
