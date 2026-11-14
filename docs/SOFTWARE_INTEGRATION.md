@@ -126,7 +126,7 @@ VI-grade 场景等工程参数必须显式给出。规划入口的 `parameters` 
 | configured | 保存了配置 | 地址可访问、软件已安装 |
 | reachable | 认证后的 worker 健康请求成功 | 软件可启动、许可证有效 |
 | executable_found / execution_ready | 脚本绑定存在、命令可解析到程序；实际脚本在运行准备时检查 | 厂商任务可执行、模板正确、工程结果合格 |
-| real_machine_verified | 本版固定为 false，待引入实机验收记录 | 不能用路径、COM dispatch 或 fixture 测试代填 |
+| real_machine_verified | 由 Windows worker 上可复核的 `simloom-ai/machine-evidence/v1` 记录驱动 | 不能用路径、COM dispatch 或 fixture 测试代填；输出哈希变化会使记录失效 |
 
 只要一个软件动作具备启动条件，就可以尝试该软件；不要求先配置全部四款。
 macOS/Linux 可以控制远程 Windows worker。pywin32 只用于 COM，不作为其他启动方式的门槛。
@@ -197,7 +197,9 @@ Ansys 当前只提取请求列出的总变形和等效应力最大值。模型�
 v1 自定义 `checks/passed` 报告继续兼容，但只标为 `artifact_and_report_schema`，表示格式与声明检查，
 不再称为独立工程验证。未配置报告契约的自定义动作仍仅为 `artifact_integrity`。
 runner 是受信任的观察来源，文件与数值检查不能证明安装许可证或报告真实性；`real_machine_verified`
-仍是 false。不能把受控测试程序的输出作为软件实机通过证据。
+只有在 Windows worker 上登记的有效 smoke-test 记录存在时才会为对应动作变为 true。登记要求
+软件版本、许可证状态、操作员和已完成 vendor evidence；不能把受控测试程序的输出作为软件
+实机通过证据。
 
 ### 配置与参数示例
 

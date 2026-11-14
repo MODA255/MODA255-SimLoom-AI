@@ -599,6 +599,41 @@ class EngineeringAgent:
     def validate_windows_backends(self, *, smoke: bool = False) -> dict[str, Any]:
         return self.windows.validate_backends(self.config.get("tools", {}), smoke=smoke)
 
+    def worker_evidence(self, tool: str, action: str = "list", *, request_id: str | None = None,
+                        project_dir: str = ".", **metadata: Any) -> dict[str, Any]:
+        """Read or record attested evidence on a configured Windows worker.
+
+        Recording is intentionally delegated to the worker.  The controller
+        cannot mark a local fixture or a COM probe as a real-machine result.
+        """
+        try:
+            tool_name = ToolName(tool)
+        except ValueError as exc:
+            raise WorkerError("INVALID_SOFTWARE_ACTION", tool) from exc
+        adapter = self.adapters.get(tool_name)
+        if adapter is None or not getattr(adapter, "bridge_url", None):
+            raise WorkerError("WINDOWS_WORKER_REQUIRED", tool)
+        payload: dict[str, Any] = {"schema_version": WORKER_SCHEMA,
+                                   "operation": "evidence.list" if action == "list" else "evidence.record"}
+        if action == "list":
+            if metadata.get("vendor_action"):
+                payload["action"] = metadata["vendor_action"]
+            payload["tool"] = tool
+            if metadata.get("limit") is not None:
+                payload["limit"] = metadata["limit"]
+        elif action == "record":
+            if not request_id:
+                raise WorkerError("MACHINE_EVIDENCE_REQUEST_REQUIRED")
+            payload.update({"evidence_schema": "simloom-ai/machine-evidence/v1", "request_id": request_id,
+                            "tool": tool, "action": metadata.get("vendor_action") or metadata.get("action"),
+                            "operator": metadata.get("operator"), "software_version": metadata.get("software_version"),
+                            "license_status": metadata.get("license_status"), "smoke_test_id": metadata.get("smoke_test_id"),
+                            "notes": metadata.get("notes", "")})
+            payload = {key: value for key, value in payload.items() if value is not None}
+        else:
+            raise WorkerError("INVALID_EVIDENCE_ACTION", action)
+        return adapter._post(payload, int(self.config.get("timeouts", {}).get("step_seconds", 600)))
+
     @staticmethod
     def load_config(path: str | Path) -> dict[str, Any]:
         with Path(path).open("r", encoding="utf-8") as handle:

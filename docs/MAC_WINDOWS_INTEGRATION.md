@@ -120,11 +120,38 @@ Mac 先检查 Windows worker，不要一开始就启动求解：
 ```text
 GET http://win-sim-01:8099/health
 GET http://win-sim-01:8099/capabilities
+GET http://win-sim-01:8099/evidence
 ```
 
 返回 `reachable` 只表示 worker 可访问，`configured` 只表示动作已配置，`executable_found`
 只表示命令能解析。它们都不能证明软件已安装、许可证有效、脚本正确或结果合格。项目中的
 `engineering_doctor`、`engineering_preflight(probe=true)` 也遵守这个边界。
+
+真实 smoke test 完成后，在 Windows worker 上登记一条验收记录。登记接口只接受 Windows
+交互式会话中已经完成、并通过 `artifact_and_vendor_evidence` 的任务；记录会绑定请求 ID、
+软件动作、软件版本、许可证状态、操作员和输出 SHA-256。Mac 控制端可以用同一个 worker
+token 调用：
+
+```json
+{
+  "schema_version": "simloom-ai/worker/v1",
+  "operation": "evidence.record",
+  "evidence_schema": "simloom-ai/machine-evidence/v1",
+  "request_id": "已经完成的 32 位请求 ID",
+  "tool": "catia",
+  "action": "update_parameters",
+  "software_version": "CATIA V5 R2025x",
+  "license_status": "available",
+  "smoke_test_id": "catia-parameter-step",
+  "operator": "engineer",
+  "notes": "参数读回、重新打开和 STEP 导出通过"
+}
+```
+
+`/capabilities` 中对应动作随后会出现在 `verified_actions`，并带有可复核的 evidence 记录。
+如果任务输出被替换、哈希变化、worker 重启后作业记录不可读，`/evidence` 会将记录标成
+`valid=false`，动作也不再显示为已验证。COM dispatch、fixture 或仅仅启动软件都不能生成
+这类记录。
 
 建议将以下信息保存到联调记录：Windows 主机名、Windows 用户、SimLoom commit、四款软件
 版本、Python 版本、许可证服务器、worker 配置摘要和 `/capabilities` 响应。

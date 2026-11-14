@@ -169,3 +169,9 @@ CATIA 原生特征或标准件数据库已经验收。
 不再为了验证而整体解码；worker 和控制端对文件流式计算 SHA-256，仅按契约读取需要解析的
 STEP、CSV、JSON 指标文件。大网格和求解数据库可以在 Windows worker 上完成完整性校验后
 按块回收，仍不把文件完整性误报为商业软件实机验收。
+
+2026-11-14 后续：Windows worker 增加 `simloom-ai/machine-evidence/v1` 验收记录。只有在
+Windows 交互式会话中完成并通过独立 vendor evidence 的任务，才能由操作员登记软件版本、
+许可证状态、smoke test 和输出哈希；`/capabilities` 的 `verified_actions` 会持续复核这些
+哈希，文件变化或作业记录丢失会自动失效。这样控制端可以明确区分“动作已配置”“结果契约
+通过”和“四款软件实机验收”，仍需要实际 Windows 许可证环境产生第一批记录。

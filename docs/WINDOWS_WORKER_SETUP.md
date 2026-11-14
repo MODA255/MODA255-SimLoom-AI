@@ -89,6 +89,11 @@ GET /capabilities
 真实软件动作完成前保持 `false`。它不会因为路径存在、COM dispatch 成功或 fixture 运行成功
 而宣称软件已验收。
 
+真实验收记录使用 `evidence.record`。它要求任务已经完成并通过独立 vendor evidence，且
+worker 正运行在 Windows；记录包含软件版本、许可证状态、smoke test 编号、操作员和输出
+哈希。通过 `GET /evidence` 可以查看记录，失效的输出会自动把记录降为 `valid=false`。
+只有有效记录对应的动作才会在 `/capabilities` 的 `verified_actions` 中出现。
+
 之后再提交 `job.submit`。每个作业写入独立的 `root_dir/jobs/<request_id>/`，保存输入、脚本、
 stdout、stderr、输出文件和 SHA-256 清单。Mac 断线时用同一个 request ID 查询状态或回收结果，
 不能重新提交一个不确定是否已经启动的求解。

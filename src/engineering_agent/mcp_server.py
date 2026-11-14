@@ -257,6 +257,17 @@ class MCPServer:
                           "stream": {"type": "string", "enum": ["stdout", "stderr"]},
                           "confirmed_stopped": {"type": "boolean", "description": "Only true after a human confirms the vendor operation is stopped"},
                           "reason": {"type": "string"}}}})
+        evidence_actions = ["list"] + (["record"] if self.profile == "full" else [])
+        tools.append({"name": "engineering_worker_evidence",
+                      "description": "Read Windows worker smoke-test evidence or record a completed real-software acceptance run",
+                      "inputSchema": {"type": "object", "required": ["tool", "action"], "properties": {
+                          "tool": {"type": "string", "enum": ["catia", "ansys", "adams", "vi-grade"]},
+                          "action": {"type": "string", "enum": evidence_actions},
+                          "project_dir": {"type": "string"}, "request_id": {"type": "string"},
+                          "vendor_action": {"type": "string"}, "operator": {"type": "string"},
+                          "software_version": {"type": "string"}, "license_status": {"type": "string", "enum": ["available", "borrowed"]},
+                          "smoke_test_id": {"type": "string"}, "notes": {"type": "string"},
+                          "limit": {"type": "integer"}}}})
         for operation in self.operations.list():
             if self.profile == "safe" and operation["safety"] in {"write", "execute"}:
                 continue
@@ -443,6 +454,16 @@ class MCPServer:
             return self.agent.software_job(arguments.get("tool", ""), action, arguments.get("request_id"),
                                           project_dir=arguments.get("project_dir", "."),
                                           **{k: v for k, v in arguments.items() if k in {"limit", "cursor", "offset", "after", "stream", "confirmed_stopped", "reason"}})
+        if name == "engineering_worker_evidence":
+            action = arguments.get("action", "list")
+            if self.profile == "safe" and action != "list":
+                raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "Safe profile permits worker evidence observation only")
+            metadata = {key: value for key, value in arguments.items()
+                         if key in {"vendor_action", "operator", "software_version", "license_status",
+                                    "smoke_test_id", "notes", "limit"}}
+            return self.agent.worker_evidence(arguments.get("tool", ""), action,
+                                              request_id=arguments.get("request_id"),
+                                              project_dir=arguments.get("project_dir", "."), **metadata)
         if name == "engineering_plan":
             plan = self.agent.plan(arguments.get("prompt", ""), project_dir=arguments.get("project_dir", "."), parameters=arguments.get("parameters"))
             return {"plan": plan.to_dict(), "validation": validate_plan(plan)}

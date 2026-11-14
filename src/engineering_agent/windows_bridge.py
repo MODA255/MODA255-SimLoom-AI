@@ -11,6 +11,7 @@ from typing import Any
 
 from .worker_jobs import JobManager, TERMINAL
 from .artifact_transfer import ArtifactTransferStore
+from .machine_evidence import MachineEvidenceStore, SCHEMA as EVIDENCE_SCHEMA
 from .windows_control import WindowsAutomation
 from .worker_protocol import SCHEMA, MAX_HTTP_BYTES, WorkerError, failure
 
@@ -37,6 +38,7 @@ class WindowsBridge:
         self.com = WindowsAutomation()
         self.jobs = JobManager(self.root, self.config.commands, self.config.timeout_seconds)
         self.transfers = ArtifactTransferStore(self.root)
+        self.evidence = MachineEvidenceStore(self.root, self.jobs.store)
 
     def health(self) -> dict[str, Any]:
         checks = {}
@@ -58,6 +60,7 @@ class WindowsBridge:
         it never marks a licensed vendor operation as real-machine verified.
         """
         health = self.health()
+        verified = self.evidence.verified_actions()
         tools: dict[str, dict[str, Any]] = {}
         for tool in ("catia", "ansys", "adams", "vi-grade"):
             actions = sorted(key.split(".", 1)[1] for key in self.config.commands
@@ -65,13 +68,18 @@ class WindowsBridge:
             checks = {key.split(".", 1)[1]: value for key, value in health["command_checks"].items()
                       if key.startswith(tool + ".")}
             token = tool.replace("-", "_")
+            verified_actions = {key.split(".", 1)[1]: value for key, value in verified.items()
+                                if key.startswith(tool + ".")}
             tools[tool] = {"actions": actions, "action_checks": checks,
                            "com_configured": any(token in str(key).lower() for key in self.config.com),
-                           "real_machine_verified": False}
+                           "verified_actions": sorted(verified_actions),
+                           "evidence": verified_actions,
+                           "real_machine_verified": bool(verified_actions)}
         return {"schema_version": SCHEMA, "capabilities_schema": "simloom-ai/worker-capabilities/v1",
                 "platform": health["platform"], "tools": tools,
                 "features": health["features"], "vendor_validation": "not_run",
-                "real_machine_verified": False}
+                "evidence_schema": EVIDENCE_SCHEMA,
+                "real_machine_verified": bool(verified)}
 
     def handle(self, payload: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(payload, dict):
@@ -101,6 +109,11 @@ class WindowsBridge:
             result = self.transfers.read_chunk(path, payload.get("offset", 0), payload.get("limit", 1024 * 1024))
             return {"schema_version": SCHEMA, "request_id": payload.get("request_id"),
                     "path": payload.get("path"), **result}
+        if operation == "evidence.record":
+            return self.evidence.record(payload)
+        if operation == "evidence.list":
+            return self.evidence.list(tool=payload.get("tool"), action=payload.get("action"),
+                                      limit=payload.get("limit", 100))
         if operation == "com.invoke":
             return self.invoke_com(payload)
         raise WorkerError("UNKNOWN_BRIDGE_OPERATION", str(operation))
@@ -165,6 +178,8 @@ def create_bridge_server(config: BridgeConfig | dict[str, Any]) -> ThreadingHTTP
                 return self._send(200, bridge.health())
             if self.path == "/capabilities":
                 return self._send(200, bridge.capabilities())
+            if self.path == "/evidence":
+                return self._send(200, bridge.evidence.list())
             return self._send(404, failure(WorkerError("NOT_FOUND")))
 
         def log_message(self, *_args):

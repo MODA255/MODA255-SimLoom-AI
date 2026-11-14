@@ -165,6 +165,11 @@ class CommandAdapter(ToolAdapter):
                 checks = health.get("command_checks", {})
                 item["actions"] = sorted(name for name in bound
                                          if checks.get(f"{self.name.value}.{name}", {}).get("executable_found") is True)
+                capabilities = self._post({"operation": "capabilities", "schema_version": SCHEMA}, 3)
+                tool_capabilities = (capabilities.get("tools", {}) or {}).get(self.name.value, {})
+                item["verified_actions"] = list(tool_capabilities.get("verified_actions", []))
+                item["real_machine_verified"] = bool(set(item["actions"]) & set(item["verified_actions"]))
+                item["evidence"] = list((tool_capabilities.get("evidence") or {}).values())
             except Exception as exc:
                 item["evidence"].append(str(exc))
         elif not self.bridge_url:
