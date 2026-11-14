@@ -15,7 +15,7 @@ from engineering_agent.brep import get_brep_backend
 from engineering_agent.desktop import LocalApplication, launch
 from engineering_agent.queue import TaskQueue
 from engineering_agent.viewer import artifact_listing, asset_view, mesh_payload, render_csv_svg
-from engineering_agent.web import create_server
+from engineering_agent.web import INDEX_HTML, STATIC_DIR, create_server
 from engineering_agent.workspace import Workspace
 
 
@@ -164,6 +164,16 @@ def test_capabilities_explain_offline_and_connected_modes(service):
     assert modes["offline"]["ready"] is True
     assert modes["rehearsal"]["ready"] is True
     assert "catia" in capabilities["tools"]
+
+
+def test_environment_panel_has_per_vendor_worker_capability_cards():
+    script = (STATIC_DIR / "workspace.js").read_text(encoding="utf-8")
+    stylesheet = (STATIC_DIR / "workspace.css").read_text(encoding="utf-8")
+    assert 'id="vendorCapabilities"' in INDEX_HTML
+    assert "renderVendorCapabilities" in script
+    assert "real_machine_verified" in script
+    assert "vendor-capability-grid" in stylesheet
+    assert "action-chip" in stylesheet
 
 
 def test_offline_failure_is_recorded_and_retry_works(service, monkeypatch):

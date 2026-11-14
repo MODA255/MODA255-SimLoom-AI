@@ -522,7 +522,32 @@ async function refreshDoctor() {
   $('#doctor').textContent='正在检查软件配置和连接…';
   const [capabilities,items]=await Promise.all([request('/api/capabilities'),request('/api/doctor')]);
   $('#capabilities').innerHTML=(capabilities.modes||[]).map(mode=>`<div class="status-card mode-card"><strong>${escapeHTML(mode.label)}</strong><p class="muted">${escapeHTML(mode.reason)}</p><span class="pill ${mode.ready?'green':'amber'}">${mode.ready?'可用':'未就绪'}</span></div>`).join('');
+  renderVendorCapabilities(capabilities.tools||{});
   $('#doctor').innerHTML=items.map(item=>`<div class="status-card"><strong>${escapeHTML(item.tool||item.name||'环境')}</strong><p class="muted">${escapeHTML(item.message||item.reason||item.status||'查看详情')}</p><span class="pill ${item.available?'green':'amber'}">${item.execution_ready?'启动程序已找到 · 实机待验收':item.reachable?'连接正常 · 需绑定动作':item.available?'可用':'未就绪 / 需配置'}</span><details><summary>诊断详情</summary><pre class="json">${escapeHTML(JSON.stringify(item,null,2))}</pre></details></div>`).join('');
+}
+const vendorNames = {catia:'CATIA', ansys:'Ansys', adams:'Adams', 'vi-grade':'VI-grade'};
+function vendorReadiness(item) {
+  if(item?.real_machine_verified) return {label:'实机已验证', className:'green', hint:'已有有效 Windows 机器证据，可执行已登记动作。'};
+  if(item?.execution_ready) return {label:'动作可执行', className:'amber', hint:'启动命令和脚本已就绪，仍需要真实软件结果和证据。'};
+  if(item?.reachable) return {label:'Worker 已连接', className:'amber', hint:'Windows worker 可访问，但还没有可执行动作。'};
+  if(item?.configured) return {label:'已配置', className:'amber', hint:'已保存连接或动作配置，尚未确认 worker 可访问。'};
+  return {label:'未配置', className:'amber', hint:'配置 Windows worker、脚本和软件动作后再检测。'};
+}
+function renderVendorCapabilities(tools) {
+  const order=['catia','ansys','adams','vi-grade'];
+  $('#vendorCapabilities').innerHTML=order.map(name=>{
+    const item=tools[name]||{};
+    const readiness=vendorReadiness(item);
+    const actions=Array.isArray(item.actions)?item.actions:[];
+    const verified=new Set(Array.isArray(item.verified_actions)?item.verified_actions:[]);
+    const actionHtml=actions.length
+      ? actions.map(action=>`<span class="action-chip ${verified.has(action)?'verified':''}">${escapeHTML(action)}${verified.has(action)?' · 已验收':''}</span>`).join('')
+      : '<span class="muted">暂无可执行动作</span>';
+    const mode=item.mode==='bridge'?'远程 Windows worker':'本机命令';
+    const platform=item.worker_platform?` · ${escapeHTML(item.worker_platform)}`:'';
+    const evidenceCount=verified.size;
+    return `<article class="vendor-capability-card"><div class="vendor-capability-head"><div class="vendor-title"><span class="vendor-icon">${escapeHTML(icons[name]||'◇')}</span><div><strong>${escapeHTML(vendorNames[name]||name)}</strong><p class="muted">${escapeHTML(mode)}${platform}</p></div></div><span class="pill ${readiness.className}">${escapeHTML(readiness.label)}</span></div><p class="vendor-hint">${escapeHTML(readiness.hint)}</p><div class="vendor-meta"><span>动作 ${actions.length}</span><span>已验收 ${evidenceCount}</span>${item.bridge_url?`<span class="vendor-url" title="${escapeHTML(item.bridge_url)}">${escapeHTML(item.bridge_url)}</span>`:''}</div><div class="vendor-actions">${actionHtml}</div></article>`;
+  }).join('');
 }
 document.addEventListener('click',event=>{
   const target=event.target.closest('button'); if(!target||target.disabled) return;
