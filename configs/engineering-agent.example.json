@@ -12,6 +12,12 @@
     "api_key_env": "OPENAI_API_KEY",
     "timeout_seconds": 60
   },
+  "mcp": {
+    "allow_tools": [],
+    "deny_tools": [],
+    "allow_operations": [],
+    "deny_operations": []
+  },
   "windows": {},
   "windows_bridge": {
     "root_dir": "C:/EngineeringAgent/projects",

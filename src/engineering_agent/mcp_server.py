@@ -4,6 +4,8 @@ import json
 import sys
 import base64
 import hashlib
+from dataclasses import dataclass
+from fnmatch import fnmatchcase
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from typing import Any
@@ -17,16 +19,100 @@ from .versioning import VersionStore
 from .viewer import asset_view
 
 
+@dataclass(frozen=True)
+class MCPPolicy:
+    """Discovery and execution policy for MCP tools.
+
+    Empty allow lists mean "no restriction".  Deny rules always win.  Rules
+    accept exact names or shell-style ``*`` patterns.  Operation rules may
+    use either ``cad.entity_move`` or ``operation.cad.entity_move``.
+    """
+
+    allow_tools: tuple[str, ...] = ()
+    deny_tools: tuple[str, ...] = ()
+    allow_operations: tuple[str, ...] = ()
+    deny_operations: tuple[str, ...] = ()
+
+    @staticmethod
+    def _patterns(value: Any, key: str) -> tuple[str, ...]:
+        if value is None:
+            return ()
+        if isinstance(value, str):
+            value = [value]
+        if not isinstance(value, (list, tuple)):
+            raise ValueError(f"mcp.{key} must be a list of strings")
+        patterns = []
+        for item in value:
+            if not isinstance(item, str) or not item.strip():
+                raise ValueError(f"mcp.{key} must contain non-empty strings")
+            pattern = item.strip()
+            if pattern not in patterns:
+                patterns.append(pattern)
+        return tuple(patterns)
+
+    @classmethod
+    def from_dict(cls, value: Any) -> "MCPPolicy":
+        if value is None:
+            return cls()
+        if not isinstance(value, dict):
+            raise ValueError("mcp configuration must be an object")
+        return cls(
+            allow_tools=cls._patterns(value.get("allow_tools"), "allow_tools"),
+            deny_tools=cls._patterns(value.get("deny_tools"), "deny_tools"),
+            allow_operations=cls._patterns(value.get("allow_operations"), "allow_operations"),
+            deny_operations=cls._patterns(value.get("deny_operations"), "deny_operations"),
+        )
+
+    def to_dict(self) -> dict[str, list[str]]:
+        return {
+            "allow_tools": list(self.allow_tools),
+            "deny_tools": list(self.deny_tools),
+            "allow_operations": list(self.allow_operations),
+            "deny_operations": list(self.deny_operations),
+        }
+
+    @staticmethod
+    def _matches(patterns: tuple[str, ...], names: tuple[str, ...]) -> str | None:
+        for pattern in patterns:
+            if any(fnmatchcase(name, pattern) for name in names):
+                return pattern
+        return None
+
+    def denial(self, tool_name: str) -> dict[str, Any] | None:
+        tool_match = self._matches(self.deny_tools, (tool_name,))
+        if tool_match:
+            return {"scope": "tool", "rule": tool_match, "reason": "deny_tools"}
+        if self.allow_tools and not self._matches(self.allow_tools, (tool_name,)):
+            return {"scope": "tool", "rule": None, "reason": "allow_tools"}
+        if not tool_name.startswith("operation."):
+            return None
+        operation_name = tool_name[len("operation."):]
+        names = (tool_name, operation_name)
+        operation_match = self._matches(self.deny_operations, names)
+        if operation_match:
+            return {"scope": "operation", "rule": operation_match, "reason": "deny_operations",
+                    "operation": operation_name}
+        if self.allow_operations and not self._matches(self.allow_operations, names):
+            return {"scope": "operation", "rule": None, "reason": "allow_operations",
+                    "operation": operation_name}
+        return None
+
+    def allows(self, tool_name: str) -> bool:
+        return self.denial(tool_name) is None
+
+
 class MCPServer:
     """Small stdio MCP-compatible tool surface for local agent clients."""
 
     SUPPORTED_PROTOCOL_VERSIONS = ("2024-11-05", "2025-03-26")
     DEFAULT_PROTOCOL_VERSION = "2025-03-26"
 
-    def __init__(self, agent: EngineeringAgent, profile: str = "safe"):
+    def __init__(self, agent: EngineeringAgent, profile: str = "safe", policy: dict[str, Any] | MCPPolicy | None = None):
         self.agent = agent
         self.operations = OperationRegistry()
         self.profile = profile if profile in {"safe", "full"} else "safe"
+        configured_policy = policy if policy is not None else getattr(agent, "config", {}).get("mcp", {})
+        self.policy = configured_policy if isinstance(configured_policy, MCPPolicy) else MCPPolicy.from_dict(configured_policy)
         self.schema_version = "engineering-agent/mcp/v1"
         self._subscriptions: set[str] = set()
         self._pending_notifications: list[dict[str, Any]] = []
@@ -94,7 +180,7 @@ class MCPServer:
             if requested and requested not in self.SUPPORTED_PROTOCOL_VERSIONS:
                 return self._error(request_id, ProtocolError(ErrorCode.INVALID_ARGUMENTS, f"UNSUPPORTED_PROTOCOL_VERSION:{requested}"))
             selected = requested or self.DEFAULT_PROTOCOL_VERSION
-            return {"jsonrpc": "2.0", "id": request_id, "result": {"protocolVersion": selected, "serverInfo": {"name": "engineering-agent", "version": "0.4.0", "schemaVersion": self.schema_version, "supportedSchemaVersions": [self.schema_version]}, "capabilities": {"tools": {"listChanged": False}, "resources": {"subscribe": True, "listChanged": False}, "prompts": {"listChanged": False}}, "profile": self.profile}}
+            return {"jsonrpc": "2.0", "id": request_id, "result": {"protocolVersion": selected, "serverInfo": {"name": "engineering-agent", "version": "0.4.0", "schemaVersion": self.schema_version, "supportedSchemaVersions": [self.schema_version]}, "capabilities": {"tools": {"listChanged": False}, "resources": {"subscribe": True, "listChanged": False}, "prompts": {"listChanged": False}}, "profile": self.profile, "policy": self.policy.to_dict()}}
         if method == "tools/list":
             try:
                 return {"jsonrpc": "2.0", "id": request_id, "result": self._paged(self._tools(), request.get("params") or {}, "tools")}
@@ -221,7 +307,7 @@ class MCPServer:
     def _error(self, request_id: Any, exc: Exception) -> dict[str, Any]:
         return {"jsonrpc": "2.0", "id": request_id, "error": self._error_payload(exc)}
 
-    def _tools(self) -> list[dict[str, Any]]:
+    def _tools(self, *, include_profile: bool = True, apply_policy: bool = True) -> list[dict[str, Any]]:
         tools = [
             {"name": "engineering_plan", "description": "Create a validated four-tool execution plan", "inputSchema": {"type": "object", "required": ["prompt"], "properties": {"prompt": {"type": "string"}, "project_dir": {"type": "string"}}}},
             {"name": "engineering_preflight", "description": "Check planned vendor action bindings, scripts, commands and output contracts without starting CATIA, Ansys, Adams or VI-grade", "inputSchema": {"type": "object", "required": ["prompt"], "properties": {"prompt": {"type": "string"}, "project_dir": {"type": "string"}, "parameters": {"type": "object"}, "probe": {"type": "boolean", "default": False}}}},
@@ -238,7 +324,7 @@ class MCPServer:
             {"name": "engineering_version", "description": "Create an immutable project snapshot", "inputSchema": {"type": "object", "required": ["project_dir", "label", "paths"], "properties": {"project_dir": {"type": "string"}, "label": {"type": "string"}, "paths": {"type": "array"}}}},
             {"name": "engineering_diff", "description": "Compare two immutable snapshots", "inputSchema": {"type": "object", "required": ["project_dir", "left", "right"], "properties": {"project_dir": {"type": "string"}, "left": {"type": "string"}, "right": {"type": "string"}}}},
         ]
-        if self.profile == "safe":
+        if include_profile and self.profile == "safe":
             tools = [tool for tool in tools if tool["name"] not in {
                 "engineering_run", "engineering_generate", "engineering_offline_run", "engineering_version"}]
         for tool in tools:
@@ -273,7 +359,7 @@ class MCPServer:
                           "smoke_test_id": {"type": "string"}, "notes": {"type": "string"},
                           "limit": {"type": "integer"}}}})
         for operation in self.operations.list():
-            if self.profile == "safe" and operation["safety"] in {"write", "execute"}:
+            if include_profile and self.profile == "safe" and operation["safety"] in {"write", "execute"}:
                 continue
             input_schema = {
                 "type": "object",
@@ -338,7 +424,27 @@ class MCPServer:
                 "type": "string",
                 "description": "Optional MCP schema version; rejected when unsupported",
             })
+        if apply_policy:
+            tools = [tool for tool in tools if self.policy.allows(tool["name"])]
         return tools
+
+    def _known_tool_names(self) -> set[str]:
+        """Names that are valid regardless of profile or allow-list filtering."""
+        return {tool["name"] for tool in self._tools(include_profile=False, apply_policy=False)}
+
+    def _visible_operation_names(self) -> set[str]:
+        return {tool["name"][len("operation."):]
+                for tool in self._tools()
+                if tool["name"].startswith("operation.")}
+
+    def _check_access(self, tool_name: str) -> None:
+        if tool_name not in self._known_tool_names():
+            raise ValueError(f"UNKNOWN_TOOL:{tool_name}")
+        denial = self.policy.denial(tool_name)
+        if denial:
+            details = {"tool": tool_name, **denial}
+            raise ProtocolError(ErrorCode.MCP_POLICY_DENIED,
+                                f"MCP policy denied tool: {tool_name}", details=details)
 
     @staticmethod
     def _encode_cursor(index: int) -> str:
@@ -403,7 +509,9 @@ class MCPServer:
         query = parse_qs(parsed.query)
         root = query.get("root", ["."])[0]
         if parsed.netloc == "operations":
-            value = {"operations": self.operations.list(), "schemaVersion": self.schema_version}
+            visible = self._visible_operation_names()
+            value = {"operations": [item for item in self.operations.list()
+                                     if item["name"] in visible], "schemaVersion": self.schema_version}
         elif parsed.netloc == "versions":
             value = {"versions": VersionStore(root).list(), "timeline": VersionStore(root).timeline(), "schemaVersion": self.schema_version}
         elif parsed.netloc == "project":
@@ -463,6 +571,7 @@ class MCPServer:
         raise ProtocolError(ErrorCode.RESOURCE_NOT_FOUND, f"unknown prompt: {name}")
 
     def call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        self._check_access(name)
         if self.profile == "safe":
             mutating = name in {"engineering_run", "engineering_generate", "engineering_offline_run", "engineering_version"}
             if name.startswith("operation."):
@@ -525,7 +634,9 @@ class MCPServer:
         if name == "engineering_doctor":
             return {"tools": self.agent.doctor()}
         if name == "engineering_operations":
-            return {"operations": self.operations.list()}
+            visible = self._visible_operation_names()
+            return {"operations": [item for item in self.operations.list()
+                                    if item["name"] in visible]}
         if name == "engineering_ingest":
             return self.agent.ingest(arguments["path"], arguments.get("kind"))
         if name == "engineering_project":
