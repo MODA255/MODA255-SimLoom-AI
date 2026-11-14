@@ -4,6 +4,7 @@ from pathlib import Path
 
 from engineering_agent import EngineeringAgent
 from engineering_agent.mesh import parse_vtk, parse_vtu, read_mesh, write_glb
+from engineering_agent.versioning import VersionStore
 from engineering_agent.viewer import asset_view
 
 
@@ -101,3 +102,10 @@ def test_glb_uses_common_artifact_write_transaction(tmp_path):
     })
     assert Path(result["path"]) == path
     assert read_mesh(path)["scalar_name"] == "temperature"
+
+
+def test_glb_is_included_in_project_version_assets(tmp_path):
+    path = tmp_path / "versioned.glb"
+    write_glb(path, [[0, 0, 0], [1, 0, 0], [0, 1, 0]], [[0, 1, 2]])
+    snapshot = VersionStore(tmp_path).ingest_and_create("glb", [path])
+    assert snapshot["objects"][0]["source"]["path"].endswith("versioned.glb")

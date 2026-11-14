@@ -16,7 +16,7 @@ from .object_model import ArtifactRef, AssetKind, EngineeringObject, Engineering
 from .transactions import RunTransaction, confined_path, file_hash
 
 
-VERSION_ASSET_EXTENSIONS = {".dxf", ".step", ".stp", ".obj", ".csv", ".json", ".svg", ".pdf", ".png",
+VERSION_ASSET_EXTENSIONS = {".dxf", ".step", ".stp", ".obj", ".vtk", ".vtu", ".glb", ".csv", ".json", ".svg", ".pdf", ".png",
                             ".catpart", ".catproduct", ".catdrawing", ".wbpj", ".mechdb", ".agdb",
                             ".rst", ".rth", ".res", ".adm", ".acf", ".cmd", ".sim", ".mat", ".xml"}
 

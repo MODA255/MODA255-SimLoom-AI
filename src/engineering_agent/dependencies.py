@@ -19,7 +19,7 @@ from .transactions import RunTransaction, confined_path
 
 SCHEMA_VERSION = "engineering-agent/dependencies/v1"
 TEXT_SUFFIXES = {".json", ".xml", ".csv", ".txt", ".step", ".stp", ".dxf", ".svg", ".py", ".js", ".m", ".cmd", ".acf", ".adm", ".sim"}
-REFERENCE_SUFFIXES = ("catpart", "catproduct", "catdrawing", "catfct", "step", "stp", "dxf", "obj", "csv", "json", "xml", "pdf", "rst", "rth", "res", "adm", "acf", "sim", "mat", "mechdb", "wbpj", "agdb")
+REFERENCE_SUFFIXES = ("catpart", "catproduct", "catdrawing", "catfct", "step", "stp", "dxf", "obj", "vtk", "vtu", "glb", "csv", "json", "xml", "pdf", "rst", "rth", "res", "adm", "acf", "sim", "mat", "mechdb", "wbpj", "agdb")
 COMPANIONS = {".dxf": ".cad.json", ".step": ".brep.json", ".stp": ".brep.json", ".pdf": ".plot.json", ".png": ".plot.json", ".svg": ".plot.json"}
 REFERENCE_RE = re.compile(r"(?<![A-Za-z0-9_])([A-Za-z0-9_./\\ -]+\.(?:" + "|".join(REFERENCE_SUFFIXES) + r"))(?![A-Za-z0-9_])", re.IGNORECASE)
 
@@ -34,7 +34,7 @@ def _sha256(path: Path) -> str:
 
 def _kind(path: str) -> str:
     suffix = Path(path).suffix.lower()
-    if suffix in {".catpart", ".catproduct", ".catdrawing", ".step", ".stp", ".dxf", ".obj"}:
+    if suffix in {".catpart", ".catproduct", ".catdrawing", ".step", ".stp", ".dxf", ".obj", ".vtk", ".vtu", ".glb"}:
         return "geometry"
     if suffix in {".rst", ".rth", ".res", ".adm", ".acf", ".sim", ".mat", ".csv", ".json", ".xml", ".pdf"}:
         return "result_or_project"
