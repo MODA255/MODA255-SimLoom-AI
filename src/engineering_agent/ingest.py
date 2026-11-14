@@ -35,14 +35,14 @@ class ArtifactReader:
         if not path.is_file():
             raise FileNotFoundError(path)
         suffix = path.suffix.lower()
-        detected = kind or ({".step": "geometry", ".stp": "geometry", ".dxf": "geometry", ".obj": "geometry", ".vtk": "geometry", ".vtu": "geometry", ".csv": "table", ".json": "result", ".svg": "geometry", ".pdf": "result"}.get(suffix, "unknown"))
+        detected = kind or ({".step": "geometry", ".stp": "geometry", ".dxf": "geometry", ".obj": "geometry", ".vtk": "geometry", ".vtu": "geometry", ".glb": "geometry", ".csv": "table", ".json": "result", ".svg": "geometry", ".pdf": "result"}.get(suffix, "unknown"))
         source = ArtifactRef(str(path), _sha256(path), path.stat().st_size, self._media_type(suffix))
         if detected == "geometry":
             if suffix == ".dxf":
                 return self._dxf(path, source)
             if suffix == ".svg":
                 return self._svg(path, source)
-            if suffix in {".obj", ".vtk", ".vtu"}:
+            if suffix in {".obj", ".vtk", ".vtu", ".glb"}:
                 return self._obj(path, source)
             return self._step(path, source)
         if detected == "table":
@@ -56,7 +56,7 @@ class ArtifactReader:
     def project(self, root: str | Path) -> EngineeringProject:
         root = Path(root).resolve()
         assets = []
-        for path in sorted(item for item in root.rglob("*") if item.is_file() and item.suffix.lower() in {".step", ".stp", ".dxf", ".obj", ".vtk", ".vtu", ".svg", ".pdf", ".csv", ".json"}):
+        for path in sorted(item for item in root.rglob("*") if item.is_file() and item.suffix.lower() in {".step", ".stp", ".dxf", ".obj", ".vtk", ".vtu", ".glb", ".svg", ".pdf", ".csv", ".json"}):
             try:
                 assets.append(self.read(path))
             except (OSError, ValueError, json.JSONDecodeError):
@@ -154,7 +154,7 @@ class ArtifactReader:
 
     @staticmethod
     def _media_type(suffix: str) -> str:
-        return {".step": "model/step", ".stp": "model/step", ".dxf": "image/vnd.dxf", ".obj": "model/obj", ".vtk": "model/vtk", ".vtu": "model/vtu", ".svg": "image/svg+xml", ".csv": "text/csv", ".json": "application/json", ".pdf": "application/pdf"}.get(suffix, "application/octet-stream")
+        return {".step": "model/step", ".stp": "model/step", ".dxf": "image/vnd.dxf", ".obj": "model/obj", ".vtk": "model/vtk", ".vtu": "model/vtu", ".glb": "model/gltf-binary", ".svg": "image/svg+xml", ".csv": "text/csv", ".json": "application/json", ".pdf": "application/pdf"}.get(suffix, "application/octet-stream")
 
 
 def _entity_points(entity: dict[str, Any]) -> list[dict[str, Any]]:

@@ -579,6 +579,12 @@ def test_brep_tessellate_step_exports_and_validates_display_mesh(tmp_path, monke
     assert result["persisted_validation"]["valid"] is True
     assert result["mesh"]["triangle_count"] == 1
 
+    glb_result = EngineeringAgent({"tools": {}}).execute_operation("brep.tessellate_step", {
+        "project_dir": str(tmp_path), "input_file": "part.step", "output_file": "preview.glb", "deflection": 0.25,
+    })
+    assert (tmp_path / "preview.glb").is_file()
+    assert glb_result["persisted_validation"]["valid"] is True
+
 
 def test_opencascade_brep_primitive_and_boolean_when_available(tmp_path):
     backend = get_brep_backend()

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from engineering_agent import EngineeringAgent
-from engineering_agent.mesh import parse_vtk, parse_vtu, read_mesh
+from engineering_agent.mesh import parse_vtk, parse_vtu, read_mesh, write_glb
 from engineering_agent.viewer import asset_view
 
 
@@ -70,3 +70,21 @@ def test_vtk_and_vtu_mesh_validation_is_clean(tmp_path):
         )
         assert result["validation"]["valid"]
         assert "UNKNOWN_GEOMETRY_FORMAT" not in result["validation"]["warnings"]
+
+
+def test_glb_round_trip_and_viewer_ingest(tmp_path):
+    path = tmp_path / "result.glb"
+    write_glb(path,
+              [{"x": 0, "y": 0, "z": 0}, {"x": 1, "y": 0, "z": 0}, {"x": 0, "y": 1, "z": 0}],
+              [[0, 1, 2]], colors=[[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+              scalar_name="stress", scalar_range=[0, 10])
+    mesh = read_mesh(path)
+    assert mesh["format"] == "GLB"
+    assert mesh["face_count"] == 1
+    assert mesh["colors"][0] == [1.0, 0.0, 0.0]
+    assert mesh["scalar_name"] == "stress"
+    asset = EngineeringAgent().ingest(str(path))
+    assert asset["geometry"]["format"] == "GLB"
+    view = asset_view(str(tmp_path), path.name)
+    assert "engineering-3d-viewer" in view["viewer"]
+    assert "stress" in view["viewer"] and "linear-gradient" in view["viewer"]

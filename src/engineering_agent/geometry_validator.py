@@ -18,7 +18,7 @@ def validate_geometry_object(asset: dict[str, Any]) -> dict[str, Any]:
         errors.append("NOT_GEOMETRY_ASSET")
     geometry = asset.get("geometry") or {}
     fmt = geometry.get("format")
-    if fmt in {"OBJ", "VTK", "VTU"}:
+    if fmt in {"OBJ", "VTK", "VTU", "GLB"}:
         vertices = geometry.get("vertices") or []
         faces = geometry.get("faces") or []
         if not vertices:

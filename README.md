@@ -84,7 +84,7 @@ PYTHONPATH=src python -m engineering_agent.cli \
 
 - 把一个车辆或机械研发目标拆成有依赖关系的 CATIA、Ansys、Adams、VI-grade 任务。
 - 从一份 vendor-neutral `ModelSpec` 生成四个软件各自需要的输入和脚本模板。
-- 将 STEP、CSV、JSON、DXF、OBJ、SVG、PDF 统一读入工程对象模型。
+- 将 STEP、CSV、JSON、DXF、OBJ、VTK、VTU、GLB、SVG、PDF 统一读入工程对象模型。
 - 在结果交付前独立检查几何、网格、指标、文件完整性和规则阈值。
 - 独立检查 CAD 的文字高度、闭合轮廓退化、重复几何和尺寸关联要求。
 - 查询内置 ISO/ASME 图形能力目录，并对需要严格目录校验的符号和紧固件输入给出明确错误；最终标准合规仍由原生 CAD 软件确认。
@@ -114,7 +114,7 @@ PYTHONPATH=src python -m engineering_agent.cli \
 | 离线四软件闭环 | ✅ | 无商业软件时生成本地 fixture（STEP、CSV、JSON）并验证 SimLoom 的流程和规则 |
 | STEP 读取 | ✅ | 保守实体解析；安装 OCP 后启用真实 B-Rep 检查 |
 | B-Rep 几何 | ✅ 可选 | box/cylinder/sphere/cone、fuse、cut、common、体积、表面积、拓扑和包围盒 |
-| DXF / OBJ | ✅ | 语义实体、图层、块、填充、坐标系、网格读取与独立校验 |
+| DXF / OBJ / VTK / VTU / GLB | ✅ | 语义实体、图层、块、填充、坐标系、网格读取、显示网格导出与独立校验 |
 | 结果解析 | ✅ | JSON、CSV 和文本结果；支持指标路径和阈值判断 |
 | 事务与恢复 | ✅ | staging、锁、journal、checkpoint、commit、rollback、stale recovery |
 | 版本与 diff | ✅ | 不可变快照、字段级差异、资产路径匹配和时间线 |
@@ -332,7 +332,7 @@ PYTHONPATH=src python -m engineering_agent.cli \
 2. 在第二步调整轴距、轮距、几何高度和载荷；这些参数会写入项目的 `simloom.project.json`。
 3. 用自然语言描述目标，点击“生成工程计划”查看阶段和依赖关系。
 4. 点击“运行离线闭环”生成 STEP、CSV、JSON 和报告；任务状态会自动记录。
-5. 进入“模型与结果”，点击文件即可查看 STEP 包围盒或 B-Rep 曲面网格、OBJ 网格、CSV 曲线和 JSON 指标。
+5. 进入“模型与结果”，点击文件即可查看 STEP 包围盒或 B-Rep 曲面网格、OBJ/VTK/VTU/GLB 网格、CSV 曲线和 JSON 指标。
 
 项目向导会为每个新项目创建独立目录；重复使用同一个目录会被拒绝，以避免覆盖已有工程。
 
@@ -453,7 +453,8 @@ Ansys → Adams → VI-grade 流程画布，右侧区域展示验证指标、任
 
 工程文件预览在安全的 iframe 中运行，避免模型/结果中的 HTML 或脚本影响工作台页面。
 STEP 有 OpenCascade 时会先三角化真实 B-Rep 曲面，然后自动居中、适配尺寸并支持旋转、
-缩放、重置和线框切换；没有内核时会明确显示包围盒预览。CSV 预览最多绘制前四个数值列，
+缩放、重置和线框切换；`brep.tessellate_step` 可以把同一份显示网格事务化导出为 OBJ 或 GLB。
+没有内核时会明确显示包围盒预览。CSV 预览最多绘制前四个数值列，
 大文件会抽样显示并保留完整原始文件下载。
 
 项目历史页会加载版本快照和时间线。选择两个包含 DXF 几何的版本后，工作台会显示新增、
@@ -601,7 +602,7 @@ begin → lock → stage → checkpoint → validate → commit
 PYTHONPATH=src python -m pytest -q
 ```
 
-测试覆盖规划、脚本生成、事务恢复、格式读写、DXF 语义实体、OBJ 网格、STEP B-Rep、
+测试覆盖规划、脚本生成、事务恢复、格式读写、DXF 语义实体、OBJ/VTK/VTU/GLB 网格、STEP B-Rep、
 MCP、Web API、版本 diff、Windows 探针和离线四软件闭环。CI 会在 Python 3.10、3.11
 和 3.12 上执行完整回归；本地运行前请先执行 `./install.sh`。
 

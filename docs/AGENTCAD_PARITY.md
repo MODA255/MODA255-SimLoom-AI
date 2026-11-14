@@ -188,6 +188,6 @@ SimLoom 的 schema、输出类型、事务副作用和安全级别扩展字段�
 输出契约，不必解析自定义元数据；仍需用不同 MCP 客户端做互操作和断线重连验收。
 
 2026-11-14 后续：新增 `brep.tessellate_step`，把 OpenCascade 读取到的 STEP 曲面三角化为项目内
-可追溯的 OBJ 显示网格；写入经过事务、checkpoint、原生 OBJ 重读和独立网格验证，失败会恢复
+可追溯的 OBJ 或 GLB 显示网格；写入经过事务、checkpoint、原生网格重读和独立网格验证，失败会恢复
 目标文件。这样 STEP 不再只能在内存中预览，控制端可以把同一份网格交给 3D viewer 或结果审查
 流程；它仍是显示网格，不改变 STEP B-Rep，也不替代 CATIA 原生模型。

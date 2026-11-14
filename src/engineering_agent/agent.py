@@ -11,7 +11,7 @@ from .cad_history import CadHistory
 from .ingest import ArtifactReader
 from .image_inspection import inspect_image as inspect_raster_image, measure_image as measure_raster_image
 from .formats import write_csv, write_dxf, write_json, write_pdf, write_step, write_svg
-from .mesh import read_mesh, write_obj
+from .mesh import read_mesh, write_glb, write_obj
 from .geometry_validator import validate_geometry_object
 from .dxf import diff_documents, read_dxf, transform_document
 from .brep import brep_doctor, get_brep_backend, solve_constraints
@@ -401,8 +401,8 @@ class EngineeringAgent:
             project_root = Path(arguments.get("project_dir", ".")).resolve()
             input_path = _project_path(project_root, arguments["input_file"], must_exist=True, require_file=True)
             output_path = _project_path(project_root, arguments["output_file"])
-            if output_path.suffix.lower() != ".obj":
-                raise ValueError("BREP_MESH_OUTPUT_MUST_BE_OBJ")
+            if output_path.suffix.lower() not in {".obj", ".glb"}:
+                raise ValueError("BREP_MESH_OUTPUT_MUST_BE_OBJ_OR_GLB")
             backend = get_brep_backend()
             txn = RunTransaction(project_root)
             txn.begin({"operation": name, "arguments": arguments})
@@ -411,8 +411,11 @@ class EngineeringAgent:
                 mesh = backend.tessellate_step(input_path, float(arguments.get("deflection", 0.5)))
                 vertices = mesh.get("vertices") or []
                 faces = mesh.get("faces") or []
-                write_obj(staged, ([point.get("x", 0), point.get("y", 0), point.get("z", 0)] for point in vertices), faces,
-                          name="simloom-step-tessellation")
+                vertex_values = ([point.get("x", 0), point.get("y", 0), point.get("z", 0)] for point in vertices)
+                if output_path.suffix.lower() == ".glb":
+                    write_glb(staged, vertex_values, faces, name="simloom-step-tessellation")
+                else:
+                    write_obj(staged, vertex_values, faces, name="simloom-step-tessellation")
                 staged_mesh = read_mesh(staged)
                 validation = validate_geometry_object({"kind": "geometry", "geometry": staged_mesh})
                 txn.record("mesh_staged_validation", validation)

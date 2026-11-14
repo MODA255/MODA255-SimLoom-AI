@@ -160,7 +160,13 @@ def mesh_payload(asset: dict[str, Any]) -> dict[str, Any]:
             if len(indices) > 600_000:
                 raise ValueError("模型超过预览三角形上限")
     values = geometry.get("scalars") or geometry.get("point_values") or []
-    scalar_range = None
+    scalar_range = geometry.get("scalar_range")
+    if scalar_range is not None:
+        if (not isinstance(scalar_range, (list, tuple)) or len(scalar_range) != 2
+                or not all(math.isfinite(float(value)) for value in scalar_range)
+                or float(scalar_range[0]) > float(scalar_range[1])):
+            raise ValueError("结果场范围无效")
+        scalar_range = [float(scalar_range[0]), float(scalar_range[1])]
     colors = [[.36, .62, .96] for _ in points]
     if values:
         scalars = [float(v) for v in values]
@@ -172,6 +178,11 @@ def mesh_payload(asset: dict[str, Any]) -> dict[str, Any]:
         for value in scalars:
             t = (value-low)/(high-low) if high > low else .5
             colors.append([min(1, 2*t), min(1, 2*(1-abs(t-.5))), min(1, 2*(1-t))])
+    elif geometry.get("colors"):
+        raw_colors = geometry.get("colors")
+        if len(raw_colors) != len(points) or any(len(color) < 3 or not all(math.isfinite(float(channel)) for channel in color[:3]) for color in raw_colors):
+            raise ValueError("顶点颜色必须与节点数量一致并且为有限数值")
+        colors = [[max(0.0, min(1.0, float(channel))) for channel in color[:3]] for color in raw_colors]
     return {"points": normalized, "indices": indices, "colors": colors,
             "scalar_range": scalar_range, "scalar_name": geometry.get("scalar_name"),
             "vertex_count": len(points), "triangle_count": len(indices) // 3}
@@ -189,7 +200,7 @@ def render_asset_svg(asset: dict[str, Any]) -> str:
     geometry = asset.get("geometry", {})
     if geometry.get("format") == "DXF" and geometry.get("entities"):
         return render_dxf_svg(geometry)
-    if str(geometry.get("format", "")).upper() in {"OBJ", "VTK", "VTU"} and geometry.get("vertices"):
+    if str(geometry.get("format", "")).upper() in {"OBJ", "VTK", "VTU", "GLB"} and geometry.get("vertices"):
         return render_mesh_svg(geometry)
     bbox = geometry.get("bbox") or {}
     if bbox:
