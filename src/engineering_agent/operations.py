@@ -228,6 +228,18 @@ OPERATION_SPECS: tuple[OperationSpec, ...] = (
             "layout": {"type": "string"}}}},
         output_schema={"schema_version": {"type": "string"}, "entities": {"type": "array"}, "walls": {"type": "array"}, "rooms": {"type": "array"}, "openings": {"type": "array"}},
         output_kinds=("cad_document", "architecture_plan"), side_effects=("write_artifacts", "journal", "checkpoint"), safety="write"),
+    OperationSpec("cad.draw_mechanical_assembly", ToolName.CATIA, "Draw checked front, end and section views of a revolved mechanical assembly with dimensions, holes, BOM and balloons", required_parameters=("input_file", "output_file", "spec"), parameters_schema={
+        "project_dir": {"type": "string"}, "input_file": {"type": "string"}, "output_file": {"type": "string"},
+        "spec": {"type": "object", "required": ["parts"], "properties": {
+            "origin": {"type": "object"}, "view_gap": {"type": "number", "minimum": 0}, "tolerance": {"type": "number", "minimum": 0},
+            "layout": {"type": "string"}, "sheet": {"type": "object"}, "bom_origin": {"type": "object"},
+            "parts": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["length"], "properties": {
+                "id": {"type": "string"}, "kind": {"type": "string"}, "length": {"type": "number", "exclusiveMinimum": 0},
+                "outer_diameter": {"type": "number", "exclusiveMinimum": 0}, "bore_diameter": {"type": "number", "minimum": 0},
+                "segments": {"type": "array"}, "holes": {"type": "array"}, "quantity": {"type": "integer", "minimum": 1}, "material": {"type": "string"}}}}}},
+        "layout": {"type": "string"}, "origin": {"type": "object"}},
+        output_schema={"schema_version": {"type": "string"}, "layout": {"type": "string"}, "entities": {"type": "array"}, "parts": {"type": "array"}, "holes": {"type": "array"}, "dimensions": {"type": "array"}, "bom_rows": {"type": "array"}},
+        output_kinds=("mechanical_assembly", "cad_document", "bom", "validation"), side_effects=("write_artifacts", "journal", "checkpoint"), safety="write"),
     OperationSpec("cad.table_create", ToolName.CATIA, "Create an editable table from rows and columns", required_parameters=("input_file", "output_file", "rows", "origin"), parameters_schema={"input_file": {"type": "string"}, "output_file": {"type": "string"}, "rows": {"type": "array"}, "origin": {"type": "object"}, "cell_width": {"type": "number"}, "cell_height": {"type": "number"}}, output_schema={"entities": {"type": "array"}, "rows": {"type": "integer"}, "columns": {"type": "integer"}}, output_kinds=("cad_document",), side_effects=("write_artifacts",), safety="write"),
     OperationSpec("cad.entity_trim", ToolName.CATIA, "Trim a line to a point or finite line/circle/arc/ellipse/spline/polyline cutting intersection", required_parameters=("input_file", "output_file", "entity_id"), parameters_schema={"input_file": {"type": "string"}, "output_file": {"type": "string"}, "entity_id": {"type": "string"}, "point": {"type": "object"}, "boundary_entity_id": {"type": "string"}, "keep": {"type": "string", "enum": ["start", "end"]}}, output_schema={"entity": {"type": "object"}}, output_kinds=("cad_document",), side_effects=("write_artifacts",), safety="write"),
     OperationSpec("cad.entity_extend", ToolName.CATIA, "Extend one LINE endpoint to the nearest intersection with finite LINE, CIRCLE, ARC, ELLIPSE, SPLINE or POLYLINE boundaries", version="1.0", required_parameters=("input_file", "output_file"), parameter_alternatives=(("target", "target_entity_id", "entity_id"), ("edges", "boundary_entity_ids", "boundary_entity_id")), parameters_schema={

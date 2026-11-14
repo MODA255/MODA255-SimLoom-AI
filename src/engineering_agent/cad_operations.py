@@ -288,6 +288,232 @@ def _draw_arch_plan(document: CadDocument, arguments: dict[str, Any]) -> dict[st
             "layout": layout, "schema_version": "simloom-ai/architecture-plan/v1"}
 
 
+def _mechanical_number(value: Any, code: str, *, minimum: float = 0.0, strict: bool = True) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(code) from exc
+    if not math.isfinite(number) or (strict and number <= minimum) or (not strict and number < minimum):
+        raise ValueError(code)
+    return number
+
+
+def _mechanical_layout_fields(layout: str) -> dict[str, str]:
+    return {} if layout in {"", "Model"} else {"sheet": layout, "layout": layout}
+
+
+def _mechanical_segment_profile(part: dict[str, Any]) -> tuple[float, list[dict[str, float]]]:
+    total = _mechanical_number(part.get("length"), "MECH_PART_LENGTH_INVALID")
+    raw_segments = part.get("segments")
+    if not raw_segments:
+        diameter = _mechanical_number(part.get("outer_diameter"), "MECH_OUTER_DIAMETER_INVALID")
+        return total, [{"length": total, "outer_diameter": diameter}]
+    if not isinstance(raw_segments, list) or not raw_segments:
+        raise ValueError("MECH_SEGMENTS_INVALID")
+    segments: list[dict[str, float]] = []
+    accumulated = 0.0
+    for segment in raw_segments:
+        if not isinstance(segment, dict):
+            raise ValueError("MECH_SEGMENT_INVALID")
+        length = _mechanical_number(segment.get("length"), "MECH_SEGMENT_LENGTH_INVALID")
+        diameter = _mechanical_number(segment.get("outer_diameter", part.get("outer_diameter")), "MECH_SEGMENT_DIAMETER_INVALID")
+        accumulated += length
+        segments.append({"length": length, "outer_diameter": diameter})
+    if not math.isclose(accumulated, total, rel_tol=1e-9, abs_tol=1e-7):
+        raise ValueError("MECH_SEGMENT_LENGTH_MISMATCH")
+    return total, segments
+
+
+def _draw_mechanical_assembly(document: CadDocument, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Create a checked, vendor-neutral mechanical drawing package.
+
+    The workflow deliberately stores semantic records beside ordinary DXF
+    geometry: front/end/section views, dimensions, holes, BOM rows and
+    balloons can be read back without requiring a CAD vendor application.
+    """
+    spec = arguments.get("spec") if isinstance(arguments.get("spec"), dict) else arguments
+    parts = spec.get("parts") or []
+    if not isinstance(parts, list) or not parts:
+        raise ValueError("MECH_PARTS_REQUIRED")
+    layout = str(arguments.get("layout", spec.get("layout", "Model")) or "Model")
+    origin = _point(spec.get("origin", arguments.get("origin", {"x": 40, "y": 160})))
+    view_gap = _mechanical_number(spec.get("view_gap", 30), "MECH_VIEW_GAP_INVALID", strict=False)
+    tolerance = _mechanical_number(spec.get("tolerance", 1e-6), "MECH_TOLERANCE_INVALID", strict=False)
+    if layout != "Model" and layout not in document.sheets:
+        raise ValueError("MECH_LAYOUT_NOT_FOUND:" + layout)
+    sheet_spec = spec.get("sheet")
+    if sheet_spec:
+        if not isinstance(sheet_spec, dict):
+            raise ValueError("MECH_SHEET_INVALID")
+        sheet_name = str(sheet_spec.get("name", "A3")).strip() or "A3"
+        paper = str(sheet_spec.get("paper", "A3")).upper()
+        sizes = {"A4": (297.0, 210.0), "A3": (420.0, 297.0), "A2": (594.0, 420.0), "A1": (841.0, 594.0), "A0": (1189.0, 841.0)}
+        if paper not in sizes:
+            raise ValueError("MECH_SHEET_PAPER_INVALID")
+        width, height = sizes[paper]
+        document.sheets.setdefault(sheet_name, {"name": sheet_name, "width": width, "height": height,
+                                                 "units": document.units, "layout": str(sheet_spec.get("orientation", "landscape")),
+                                                 "title_block": None})
+        layout = str(arguments.get("layout", sheet_name) or sheet_name)
+        if layout not in document.sheets:
+            raise ValueError("MECH_LAYOUT_NOT_FOUND:" + layout)
+    created: list[str] = []
+    reports: list[dict[str, Any]] = []
+    dimension_records: list[dict[str, Any]] = []
+    hole_records: list[dict[str, Any]] = []
+    bom_rows: list[list[str]] = [["ITEM", "PART", "TYPE", "QTY", "MATERIAL"]]
+    max_length = 0.0
+    max_diameter = 0.0
+    normalized_parts: list[dict[str, Any]] = []
+    for index, raw_part in enumerate(parts, 1):
+        if not isinstance(raw_part, dict):
+            raise ValueError("MECH_PART_INVALID")
+        part_id = str(raw_part.get("id", "")).strip() or f"part-{index}"
+        if any(item["id"] == part_id for item in normalized_parts):
+            raise ValueError("MECH_PART_ID_DUPLICATE:" + part_id)
+        length, segments = _mechanical_segment_profile(raw_part)
+        bore = _mechanical_number(raw_part.get("bore_diameter", 0), "MECH_BORE_DIAMETER_INVALID", strict=False)
+        largest = max(segment["outer_diameter"] for segment in segments)
+        if bore >= largest:
+            raise ValueError("MECH_BORE_NOT_SMALLER_THAN_OUTER:" + part_id)
+        holes = raw_part.get("holes") or []
+        if not isinstance(holes, list):
+            raise ValueError("MECH_HOLES_INVALID")
+        normalized = {"id": part_id, "kind": str(raw_part.get("kind", "revolved")), "length": length,
+                      "segments": segments, "bore_diameter": bore, "material": str(raw_part.get("material", "")),
+                      "holes": copy.deepcopy(holes), "quantity": int(raw_part.get("quantity", 1))}
+        if normalized["quantity"] < 1:
+            raise ValueError("MECH_PART_QUANTITY_INVALID")
+        normalized_parts.append(normalized)
+        max_length = max(max_length, length)
+        max_diameter = max(max_diameter, largest)
+
+    axis_y = origin["y"]
+    for part_index, part in enumerate(normalized_parts, 1):
+        part_id, length, bore = part["id"], part["length"], part["bore_diameter"]
+        segments = part["segments"]
+        row_y = axis_y - (part_index - 1) * (max_diameter + view_gap * 2)
+        x0 = origin["x"]
+        x1 = x0 + length
+        half_diameter = max(segment["outer_diameter"] for segment in segments) / 2
+        fields = _mechanical_layout_fields(layout)
+        profile_points: list[dict[str, float]] = []
+        cursor = x0
+        for segment in segments:
+            radius = segment["outer_diameter"] / 2
+            if not profile_points:
+                profile_points.append({"x": cursor, "y": row_y - radius, "z": 0})
+            else:
+                profile_points.append({"x": cursor, "y": row_y - radius, "z": 0})
+            cursor += segment["length"]
+            profile_points.append({"x": cursor, "y": row_y - radius, "z": 0})
+        upper: list[dict[str, float]] = []
+        cursor = x1
+        for segment in reversed(segments):
+            radius = segment["outer_diameter"] / 2
+            upper.extend(([{"x": cursor, "y": row_y + radius, "z": 0}, {"x": cursor - segment["length"], "y": row_y + radius, "z": 0}]))
+            cursor -= segment["length"]
+        profile = {"id": document.next_id("mech-profile"), "type": "LWPOLYLINE", "layer": "MECH_PROFILE",
+                   "vertices": profile_points + upper, "closed": True, "mechanical_part": part_id,
+                   "mechanical_view": "front", **fields}
+        document.ensure_layer("MECH_PROFILE"); document.entities.append(profile); created.append(profile["id"])
+        if bore > 0:
+            inner_bottom = {"id": document.next_id("mech-bore"), "type": "LINE", "layer": "MECH_SECTION",
+                            "start": {"x": x0, "y": row_y - bore / 2, "z": 0}, "end": {"x": x1, "y": row_y - bore / 2, "z": 0},
+                            "mechanical_part": part_id, "mechanical_view": "section", **fields}
+            document.ensure_layer("MECH_SECTION"); document.entities.append(inner_bottom); created.append(inner_bottom["id"])
+            inner_top = copy.deepcopy(inner_bottom) | {"id": document.next_id("mech-bore"),
+                                                      "start": {"x": x0, "y": row_y + bore / 2, "z": 0},
+                                                      "end": {"x": x1, "y": row_y + bore / 2, "z": 0}}
+            document.entities.append(inner_top); created.append(inner_top["id"])
+        hatch = {"id": document.next_id("mech-section"), "type": "HATCH", "layer": "MECH_SECTION", "pattern": "ANSI31", "solid": False,
+                 "boundary_vertices": copy.deepcopy(profile_points + upper), "mechanical_part": part_id,
+                 "mechanical_view": "section", **fields}
+        document.entities.append(hatch); created.append(hatch["id"])
+        end_center = {"x": origin["x"] + max_length + view_gap + max_diameter / 2, "y": row_y, "z": 0}
+        outer_circle = {"id": document.next_id("mech-end"), "type": "CIRCLE", "layer": "MECH_PROFILE", "center": end_center,
+                        "radius": half_diameter, "mechanical_part": part_id, "mechanical_view": "end", **fields}
+        document.entities.append(outer_circle); created.append(outer_circle["id"])
+        if bore > 0:
+            bore_circle = {"id": document.next_id("mech-end"), "type": "CIRCLE", "layer": "MECH_SECTION", "center": end_center,
+                           "radius": bore / 2, "mechanical_part": part_id, "mechanical_view": "end", "mechanical_role": "bore", **fields}
+            document.entities.append(bore_circle); created.append(bore_circle["id"])
+        for hole_index, raw_hole in enumerate(part["holes"], 1):
+            if not isinstance(raw_hole, dict):
+                raise ValueError("MECH_HOLE_INVALID")
+            count = int(raw_hole.get("count", 0))
+            if count < 1:
+                raise ValueError("MECH_HOLE_COUNT_INVALID")
+            diameter = _mechanical_number(raw_hole.get("diameter"), "MECH_HOLE_DIAMETER_INVALID")
+            pcd = _mechanical_number(raw_hole.get("pcd"), "MECH_HOLE_PCD_INVALID")
+            if pcd <= diameter:
+                raise ValueError("MECH_HOLE_PCD_INVALID")
+            start_angle = float(raw_hole.get("orientation_deg", 0.0))
+            for slot in range(count):
+                angle = math.radians(start_angle + 360.0 * slot / count)
+                center = {"x": end_center["x"] + pcd / 2 * math.cos(angle), "y": end_center["y"] + pcd / 2 * math.sin(angle), "z": 0}
+                circle = {"id": document.next_id("mech-hole"), "type": "CIRCLE", "layer": "MECH_HOLES", "center": center,
+                          "radius": diameter / 2, "mechanical_part": part_id, "mechanical_view": "end",
+                          "hole": {"group": hole_index, "index": slot + 1, "count": count, "diameter": diameter, "pcd": pcd}, **fields}
+                document.ensure_layer("MECH_HOLES"); document.entities.append(circle); created.append(circle["id"])
+                hole_records.append({"part_id": part_id, "entity_id": circle["id"], "group": hole_index, "index": slot + 1,
+                                     "diameter": diameter, "pcd": pcd, "center": center})
+        dimensions = [
+            ("overall_length", {"x": x0, "y": row_y - half_diameter - view_gap / 2, "z": 0}, {"x": x1, "y": row_y - half_diameter - view_gap / 2, "z": 0}, length),
+            ("outer_diameter", {"x": end_center["x"] - half_diameter, "y": row_y, "z": 0}, {"x": end_center["x"] + half_diameter, "y": row_y, "z": 0}, half_diameter * 2),
+        ]
+        if bore > 0:
+            dimensions.append(("bore_diameter", {"x": end_center["x"] - bore / 2, "y": row_y, "z": 0}, {"x": end_center["x"] + bore / 2, "y": row_y, "z": 0}, bore))
+        part_dimension_ids: list[str] = []
+        for kind, start, end, measurement in dimensions:
+            definition = {"x": (start["x"] + end["x"]) / 2, "y": min(start["y"], end["y"]) - view_gap / 3, "z": 0}
+            dimension = {"id": document.next_id("mech-dim"), "type": "DIMENSION", "layer": "MECH_ANNOTATION",
+                         "dimension_type": "linear", "start": start, "end": end, "definition": definition,
+                         "measurement": measurement, "text": "", "mechanical_part": part_id, "mechanical_dimension": kind, **fields}
+            document.ensure_layer("MECH_ANNOTATION"); document.entities.append(dimension); created.append(dimension["id"]); part_dimension_ids.append(dimension["id"])
+            dimension_records.append({"id": dimension["id"], "part_id": part_id, "kind": kind, "expected": measurement, "actual": _dimension_physical_value(dimension)})
+        label = {"id": document.next_id("mech-label"), "type": "MTEXT", "layer": "MECH_ANNOTATION",
+                 "insert": {"x": x0, "y": row_y + half_diameter + view_gap / 3, "z": 0},
+                 "text": part_id, "height": 3.0, "width": 0, "rotation": 0, "mechanical_part": part_id, **fields}
+        document.entities.append(label); created.append(label["id"])
+        bom_item = len(bom_rows)
+        bom_rows.append([str(bom_item), part_id, part["kind"], str(part["quantity"]), part["material"]])
+        balloon_center = {"x": x0 + length / 2, "y": row_y + half_diameter + view_gap, "z": 0}
+        balloon = {"id": document.next_id("mech-balloon"), "type": "CIRCLE", "layer": "MECH_ANNOTATION", "center": balloon_center,
+                   "radius": 5, "mechanical_part": part_id, "bom_balloon": {"label": str(bom_item)}, **fields}
+        document.entities.append(balloon); created.append(balloon["id"])
+        balloon_text = {"id": document.next_id("mech-balloon"), "type": "MTEXT", "layer": "MECH_ANNOTATION",
+                        "insert": {"x": balloon_center["x"] - 1.5, "y": balloon_center["y"] - 1, "z": 0}, "text": str(bom_item),
+                        "height": 3.0, "width": 0, "rotation": 0, "mechanical_part": part_id, "bom_balloon": {"label": str(bom_item)}, **fields}
+        leader = {"id": document.next_id("mech-balloon-leader"), "type": "LEADER", "layer": "MECH_ANNOTATION",
+                  "vertices": [balloon_center, {"x": x0 + length / 2, "y": row_y + half_diameter / 2, "z": 0}],
+                  "text": "", "arrowhead": True, "mechanical_part": part_id, **fields}
+        document.entities.extend((balloon_text, leader)); created.extend([balloon_text["id"], leader["id"]])
+        reports.append({"id": part_id, "kind": part["kind"], "length": length, "outer_diameter": largest,
+                        "bore_diameter": bore, "hole_count": sum(int(item.get("count", 0)) for item in part["holes"]),
+                        "entity_ids": [profile["id"], outer_circle["id"], *part_dimension_ids], "dimension_ids": part_dimension_ids})
+    bom_origin = _point(spec.get("bom_origin", {"x": origin["x"] + max_length + max_diameter + view_gap * 2, "y": origin["y"] - max_diameter / 2}))
+    bom_entities: list[str] = []
+    for row_index, row in enumerate(bom_rows):
+        for column, value in enumerate(row):
+            entity = {"id": document.next_id("mech-bom"), "type": "MTEXT", "layer": "MECH_BOM",
+                      "insert": {"x": bom_origin["x"] + column * 28, "y": bom_origin["y"] - row_index * 8, "z": 0},
+                      "text": str(value), "height": 2.5, "width": 26, "rotation": 0,
+                      "bom": {"row": row_index, "column": column}, **_mechanical_layout_fields(layout)}
+            document.ensure_layer("MECH_BOM"); document.entities.append(entity); created.append(entity["id"]); bom_entities.append(entity["id"])
+    for record in dimension_records:
+        if record["actual"] is None or not math.isclose(record["actual"], record["expected"], rel_tol=0, abs_tol=tolerance):
+            raise ValueError("MECH_DIMENSION_VALIDATION_FAILED:" + str(record["part_id"]))
+    metadata = {"schema_version": "simloom-ai/mechanical-assembly/v1", "layout": layout,
+                "parts": copy.deepcopy(reports), "holes": copy.deepcopy(hole_records),
+                "dimensions": copy.deepcopy(dimension_records), "bom_rows": copy.deepcopy(bom_rows),
+                "bom_entities": bom_entities, "spec_hash": hashlib.sha256(json.dumps(spec, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()}
+    document.metadata["mechanical_assembly"] = metadata
+    return {"schema_version": metadata["schema_version"], "layout": layout, "entities": created,
+            "parts": reports, "holes": hole_records, "dimensions": dimension_records,
+            "bom_rows": bom_rows, "bom_entities": bom_entities, "spec_hash": metadata["spec_hash"]}
+
+
 def _query_entities(document: CadDocument, arguments: dict[str, Any]) -> dict[str, Any]:
     """Run a deterministic, read-only semantic query over canonical entities."""
     raw_types = arguments.get("entity_types") or []
@@ -1579,6 +1805,8 @@ class CadOperationEngine:
                     "entities": changed, "changed": bool(changed) or not math.isclose(scale, previous)}
         if name == "draw_arch_plan":
             return _draw_arch_plan(document, arguments)
+        if name == "draw_mechanical_assembly":
+            return _draw_mechanical_assembly(document, arguments)
         if name in {"document_open", "document_inspect"}:
             return {"document": document.to_dict()}
         if name == "donut_create":
@@ -3297,6 +3525,27 @@ class CadOperationEngine:
         }
         if "annotation_scale" in expected.metadata:
             integrity["annotation_scale"] = persisted.metadata.get("annotation_scale") == expected.metadata.get("annotation_scale")
+        if "mechanical_assembly" in expected.metadata:
+            expected_assembly = expected.metadata.get("mechanical_assembly") or {}
+            persisted_assembly = persisted.metadata.get("mechanical_assembly") or {}
+            mechanical_errors: list[dict[str, Any]] = []
+            expected_dimensions = expected_assembly.get("dimensions") or []
+            persisted_entities = {str(item.get("id")): item for item in persisted.entities}
+            for record in expected_dimensions:
+                entity = persisted_entities.get(str(record.get("id")))
+                actual = _dimension_physical_value(entity) if entity else None
+                expected_value = record.get("expected")
+                if entity is None or actual is None or not math.isclose(float(actual), float(expected_value), rel_tol=0, abs_tol=1e-6):
+                    mechanical_errors.append({"code": "MECH_DIMENSION_READBACK_MISMATCH", "entity_id": record.get("id"),
+                                               "expected": expected_value, "actual": actual})
+            mechanical = {"valid": not mechanical_errors, "errors": mechanical_errors,
+                          "schema_version": persisted_assembly.get("schema_version"),
+                          "part_count": len(persisted_assembly.get("parts") or []),
+                          "hole_count": len(persisted_assembly.get("holes") or []),
+                          "dimension_count": len(persisted_assembly.get("dimensions") or [])}
+            validation["mechanical_assembly"] = mechanical
+            integrity["mechanical_assembly_metadata"] = persisted_assembly.get("schema_version") == expected_assembly.get("schema_version")
+            integrity["mechanical_assembly_dimensions"] = mechanical["valid"]
         validation["persisted"] = True
         validation["integrity"] = integrity
         validation["valid"] = bool(validation.get("valid")) and all(integrity.values())
