@@ -9,6 +9,8 @@ import pytest
 
 from engineering_agent.machine_evidence import MachineEvidenceStore, SCHEMA
 from engineering_agent.windows_bridge import WindowsBridge
+from engineering_agent import EngineeringAgent
+from engineering_agent.mcp_server import MCPServer
 from engineering_agent.worker_protocol import SCHEMA as WORKER_SCHEMA, WorkerError
 
 
@@ -83,4 +85,27 @@ def test_bridge_exposes_evidence_discovery_without_claiming_a_record(tmp_path):
     capabilities = bridge.capabilities()
     assert capabilities["real_machine_verified"] is False
     assert all(item["real_machine_verified"] is False for item in capabilities["tools"].values())
+
+
+def test_controller_and_mcp_surface_forward_worker_evidence(monkeypatch):
+    agent = EngineeringAgent({"tools": {"catia": {"bridge_url": "http://worker"}}})
+    captured = []
+
+    def post(payload, timeout):
+        captured.append(payload)
+        return {"schema_version": SCHEMA, "records": [], "count": 0}
+
+    monkeypatch.setattr(agent.adapters[next(key for key in agent.adapters if str(key.value) == "catia")], "_post", post)
+    result = agent.worker_evidence("catia", "record", request_id="a" * 32,
+                                   vendor_action="update_parameters", software_version="V5",
+                                   license_status="available", smoke_test_id="smoke")
+    assert result["count"] == 0
+    assert captured[0]["operation"] == "evidence.record"
+    assert captured[0]["action"] == "update_parameters"
+    safe = MCPServer(agent, profile="safe")
+    full = MCPServer(agent, profile="full")
+    safe_tool = next(item for item in safe._tools() if item["name"] == "engineering_worker_evidence")
+    full_tool = next(item for item in full._tools() if item["name"] == "engineering_worker_evidence")
+    assert safe_tool["inputSchema"]["properties"]["action"]["enum"] == ["list"]
+    assert full_tool["inputSchema"]["properties"]["action"]["enum"] == ["list", "record"]
 
