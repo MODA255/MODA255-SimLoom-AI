@@ -176,6 +176,11 @@ def test_environment_panel_has_per_vendor_worker_capability_cards():
     assert "action-chip" in stylesheet
 
 
+def test_windows_installer_includes_worker_dependencies():
+    installer = (Path(__file__).resolve().parents[1] / "install-windows.cmd").read_text(encoding="utf-8")
+    assert 'pip install -e ".[windows,desktop]"' in installer
+
+
 def test_offline_failure_is_recorded_and_retry_works(service, monkeypatch):
     call, queue, agent = service
     _, project = call("/api/projects", {"name": "failure-demo"})
