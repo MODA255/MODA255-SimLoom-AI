@@ -1,0 +1,72 @@
+name: Windows vendor smoke test
+
+on:
+  workflow_dispatch:
+    inputs:
+      software:
+        description: "Which licensed desktop backend to exercise"
+        required: true
+        type: choice
+        options:
+          - all
+          - catia
+          - ansys
+          - adams
+          - vi-grade
+      config_path:
+        description: "Path to the private worker/controller configuration on the runner"
+        required: true
+        default: "C:\\SimLoom\\worker.json"
+      project_dir:
+        description: "Empty or disposable project directory for this run"
+        required: true
+        default: "C:\\SimLoom\\smoke-project"
+      parameters_dir:
+        description: "Directory containing catia.json/ansys.json/adams.json/vi-grade.json"
+        required: true
+        default: "C:\\SimLoom\\smoke-parameters"
+
+jobs:
+  smoke:
+    if: ${{ inputs.software == 'all' || inputs.software == matrix.software }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - software: catia
+            runner_label: windows-catia
+          - software: ansys
+            runner_label: windows-ansys
+          - software: adams
+            runner_label: windows-adams
+          - software: vi-grade
+            runner_label: windows-vigrade
+    runs-on: [self-hosted, Windows, "${{ matrix.runner_label }}"]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install SimLoom
+        shell: pwsh
+        run: python -m pip install -e ".[windows]"
+      - name: Run licensed vendor smoke test
+        shell: pwsh
+        env:
+          SIMLOOM_CONFIG: ${{ inputs.config_path }}
+          SIMLOOM_PROJECT_DIR: ${{ inputs.project_dir }}\${{ matrix.software }}
+          SIMLOOM_PARAMETERS: ${{ inputs.parameters_dir }}\${{ matrix.software }}.json
+        run: >-
+          .\scripts\windows\run-vendor-smoke.ps1
+          -Software ${{ matrix.software }}
+          -ConfigPath $env:SIMLOOM_CONFIG
+          -ProjectDir $env:SIMLOOM_PROJECT_DIR
+          -ParametersPath $env:SIMLOOM_PARAMETERS
+      - name: Upload smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: simloom-${{ matrix.software }}-smoke
+          path: ${{ inputs.project_dir }}\${{ matrix.software }}
+          if-no-files-found: warn

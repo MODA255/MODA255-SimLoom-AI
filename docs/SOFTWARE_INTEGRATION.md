@@ -99,6 +99,33 @@ engineering-agent --config worker.json bridge --bridge-config worker.json
 特别是 Mechanical 脚本不应假定能直接当作 Workbench journal 运行。模板不会自动成为
 动作绑定，也不表示对应软件功能已经实现。须按实际产品、版本与团队模型模板编写 runner。
 
+当一条计划同时包含多个软件时，建议把每款软件的 vendor evidence 参数放在同名对象下，避免
+不同软件的 `report_output`、`native_output` 等字段互相覆盖：
+
+```json
+{
+  "catia": {
+    "input_model": "inputs/part.CATPart",
+    "native_output": "artifacts/catia/updated.CATPart",
+    "step_output": "artifacts/catia/updated.step",
+    "report_output": "artifacts/catia/evidence.json",
+    "parameter_updates": [{"name": "Part1\\Length", "value": "25mm"}]
+  },
+  "ansys": {
+    "db_file": "inputs/analysis.mechdat",
+    "analysis_name": "Static Structural",
+    "native_output": "artifacts/ansys/solved.mechdat",
+    "result_output": "artifacts/ansys/results.json",
+    "report_output": "artifacts/ansys/evidence.json",
+    "required_metrics": ["equivalent_stress"],
+    "metric_units": {"equivalent_stress": "MPa"}
+  }
+}
+```
+
+规划器会按每个软件对象选择对应的 typed runner，并把其输入、输出和 evidence contract 传给
+worker；单软件参数也可以继续使用顶层格式。
+
 ## 请求与结果
 
 请求含 `schema_version`、`request_id`、`operation=run`、`tool`、`action`、`script`、

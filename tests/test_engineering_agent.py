@@ -46,6 +46,23 @@ def test_structural_chain_uses_ansys_after_catia():
     assert plan.steps[1].depends_on == ["catia_model"]
 
 
+def test_explicit_vendor_evidence_parameters_select_native_runner_actions():
+    agent = EngineeringAgent({"tools": {}})
+    parameters = {
+        "catia": {"input_model": "inputs/part.CATPart", "native_output": "artifacts/updated.CATPart",
+                  "step_output": "artifacts/updated.step", "report_output": "artifacts/catia-evidence.json",
+                  "parameter_updates": [{"name": "Part1\\Length", "value": "25mm"}]},
+        "ansys": {"db_file": "inputs/analysis.mechdat", "analysis_name": "Static Structural",
+                  "native_output": "artifacts/solved.mechdat", "result_output": "artifacts/ansys-results.json",
+                  "report_output": "artifacts/ansys-evidence.json", "required_metrics": ["equivalent_stress"],
+                  "metric_units": {"equivalent_stress": "MPa"}},
+    }
+    plan = agent.plan("CATIA 参数更新后用 Ansys 求解", parameters=parameters)
+    assert [step.action for step in plan.steps] == ["update_parameters", "solve_configured_model"]
+    assert plan.steps[0].outputs == ["artifacts/updated.CATPart", "artifacts/updated.step", "artifacts/catia-evidence.json"]
+    assert plan.steps[1].outputs == ["artifacts/solved.mechdat", "artifacts/ansys-results.json", "artifacts/ansys-evidence.json"]
+
+
 def test_run_is_safe_dry_run_by_default():
     agent = EngineeringAgent({"tools": {}})
     report = agent.run("用Adams做机构动力学", dry_run=True)

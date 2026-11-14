@@ -175,3 +175,9 @@ Windows 交互式会话中完成并通过独立 vendor evidence 的任务，才�
 许可证状态、smoke test 和输出哈希；`/capabilities` 的 `verified_actions` 会持续复核这些
 哈希，文件变化或作业记录丢失会自动失效。这样控制端可以明确区分“动作已配置”“结果契约
 通过”和“四款软件实机验收”，仍需要实际 Windows 许可证环境产生第一批记录。
+
+2026-11-14 后续：规划器现在识别带有 CATIA/Ansys/Adams/VI-grade evidence 参数的请求，选择
+真实 typed runner 并从参数推导输入/输出契约；多软件请求支持按工具分组的参数对象。仓库同时
+提供手动触发的 Windows self-hosted smoke-test workflow，将 preflight、真实任务、输出归档和
+machine evidence 登记串成一条验收路径。它改善了四软件实际接入的可执行性，仍不能替代带许可
+桌面环境中的首次运行。

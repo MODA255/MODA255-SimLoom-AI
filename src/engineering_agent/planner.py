@@ -49,31 +49,62 @@ class EngineeringPlanner:
             intent = _Intent(intent.geometry, intent.structural, intent.multibody, True)
 
         steps: list[PlanStep] = []
+        def tool_parameters(name: str) -> dict:
+            nested = request.parameters.get(name)
+            if isinstance(nested, dict):
+                return {**request.parameters, **nested}
+            return request.parameters
+
+        catia_parameters = tool_parameters("catia")
+        ansys_parameters = tool_parameters("ansys")
+        adams_parameters = tool_parameters("adams")
+        vi_grade_parameters = tool_parameters("vi_grade")
         if intent.geometry:
+            typed_catia = all(key in catia_parameters for key in
+                              ("input_model", "native_output", "step_output", "report_output", "parameter_updates"))
+            catia_action = "update_parameters" if typed_catia else "create_or_update_model"
+            catia_outputs = ([catia_parameters["native_output"], catia_parameters["step_output"],
+                              catia_parameters["report_output"]]
+                             if typed_catia else ["artifacts/model.step"])
+            catia_inputs = [catia_parameters["input_model"]] if typed_catia else []
             steps.append(PlanStep(
                 id="catia_model",
                 tool=ToolName.CATIA,
-                action="create_or_update_model",
+                action=catia_action,
                 objective="建立或更新参数化几何/装配模型",
-                outputs=["artifacts/model.step"],
-                parameters={**request.parameters, "source_prompt": request.prompt},
+                inputs=catia_inputs,
+                outputs=catia_outputs,
+                parameters={**catia_parameters, "source_prompt": request.prompt},
             ))
         if intent.structural:
             dependencies = ["catia_model"] if intent.geometry else []
-            inputs = ["artifacts/model.step"] if intent.geometry else []
+            typed_ansys = all(key in ansys_parameters for key in
+                              ("db_file", "analysis_name", "native_output", "result_output", "report_output",
+                               "required_metrics", "metric_units"))
+            ansys_action = "solve_configured_model" if typed_ansys else "mesh_and_solve"
+            inputs = ([ansys_parameters["db_file"]] if typed_ansys else
+                      (["artifacts/model.step"] if intent.geometry else []))
+            ansys_outputs = ([ansys_parameters["native_output"], ansys_parameters["result_output"],
+                              ansys_parameters["report_output"]]
+                             if typed_ansys else ["artifacts/ansys/result.h5", "artifacts/ansys/report.json"])
             steps.append(PlanStep(
                 id="ansys_solve",
                 tool=ToolName.ANSYS,
-                action="mesh_and_solve",
+                action=ansys_action,
                 objective="建立网格并执行结构/热/模态分析",
                 depends_on=dependencies,
                 inputs=inputs,
-                outputs=["artifacts/ansys/result.h5", "artifacts/ansys/report.json"],
-                parameters={**request.parameters, "source_prompt": request.prompt},
+                outputs=ansys_outputs,
+                parameters={**ansys_parameters, "source_prompt": request.prompt},
             ))
         if intent.multibody:
             dependencies = ["catia_model"] if intent.geometry else []
-            inputs = ["artifacts/model.step"] if intent.geometry else []
+            typed_adams = all(key in adams_parameters for key in
+                              ("command_file", "result_output", "report_output", "required_metrics", "metric_units"))
+            inputs = ([adams_parameters["command_file"]] if typed_adams else
+                      (["artifacts/model.step"] if intent.geometry else []))
+            adams_outputs = ([adams_parameters["result_output"], adams_parameters["report_output"]]
+                             if typed_adams else ["artifacts/adams/motion.csv", "artifacts/adams/report.json"])
             steps.append(PlanStep(
                 id="adams_simulation",
                 tool=ToolName.ADAMS,
@@ -81,8 +112,8 @@ class EngineeringPlanner:
                 objective="建立机构/多体模型并执行运动学与动力学分析",
                 depends_on=dependencies,
                 inputs=inputs,
-                outputs=["artifacts/adams/motion.csv", "artifacts/adams/report.json"],
-                parameters={**request.parameters, "source_prompt": request.prompt},
+                outputs=adams_outputs,
+                parameters={**adams_parameters, "source_prompt": request.prompt},
             ))
         if intent.vehicle:
             dependencies = []
@@ -96,6 +127,13 @@ class EngineeringPlanner:
             if intent.geometry and not intent.multibody and not intent.structural:
                 dependencies.append("catia_model")
                 inputs.append("artifacts/model.step")
+            typed_vi_grade = all(key in vi_grade_parameters for key in
+                                 ("scenario_file", "metrics_output", "report_output", "required_metrics", "metric_units"))
+            if typed_vi_grade:
+                inputs = list(dict.fromkeys(inputs + [vi_grade_parameters["scenario_file"]]))
+                vi_outputs = [vi_grade_parameters["metrics_output"], vi_grade_parameters["report_output"]]
+            else:
+                vi_outputs = ["artifacts/vi-grade/metrics.json", "artifacts/vi-grade/report.html"]
             steps.append(PlanStep(
                 id="vigrade_vehicle_run",
                 tool=ToolName.VI_GRADE,
@@ -103,8 +141,8 @@ class EngineeringPlanner:
                 objective="执行车辆动力学/操稳工况并汇总指标",
                 depends_on=dependencies,
                 inputs=inputs,
-                outputs=["artifacts/vi-grade/metrics.json", "artifacts/vi-grade/report.html"],
-                parameters={**request.parameters, "source_prompt": request.prompt},
+                outputs=vi_outputs,
+                parameters={**vi_grade_parameters, "source_prompt": request.prompt},
             ))
 
         if not steps:

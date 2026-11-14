@@ -94,6 +94,31 @@ worker 正运行在 Windows；记录包含软件版本、许可证状态、smoke
 哈希。通过 `GET /evidence` 可以查看记录，失效的输出会自动把记录降为 `valid=false`。
 只有有效记录对应的动作才会在 `/capabilities` 的 `verified_actions` 中出现。
 
+## 用 self-hosted runner 做逐款 smoke test
+
+仓库提供了手动触发的 `.github/workflows/windows-vendor-smoke.yml`。给四个 Windows runner
+分别设置 `windows-catia`、`windows-ansys`、`windows-adams` 和 `windows-vigrade`
+标签，并在 runner 本机准备私有的 worker 配置和参数目录。workflow 会先调用 `health`、
+`capabilities` 和 `preflight --probe`，再执行一条隔离任务，最后把输出、日志和 machine
+evidence 上传为 workflow artifact。没有配置脚本、输入工程或许可证时，workflow 会失败，不会
+生成“已验收”状态。
+
+执行：
+
+```powershell
+.scriptswindowsun-vendor-smoke.ps1 `
+  -Software catia `
+  -ConfigPath C:\SimLoom\worker.json `
+  -ProjectDir C:\SimLoom\smoke-project\catia `
+  -ParametersPath C:\SimLoom\smoke-parameters\catia.json `
+  -SoftwareVersion "CATIA V5 R2025x"
+```
+
+参数文件可以使用 `examples/vendor_runners/parameters/` 中对应软件的结构。若一条自然语言
+计划同时包含多个软件，建议把参数按 `catia`、`ansys`、`adams`、`vi_grade` 分组；
+规划器会据此选择真实的 `update_parameters`、`solve_configured_model`、`build_and_run_multibody`
+和 `run_vehicle_dynamics` 动作，而不是退回通用 fixture 动作。
+
 之后再提交 `job.submit`。每个作业写入独立的 `root_dir/jobs/<request_id>/`，保存输入、脚本、
 stdout、stderr、输出文件和 SHA-256 清单。Mac 断线时用同一个 request ID 查询状态或回收结果，
 不能重新提交一个不确定是否已经启动的求解。
