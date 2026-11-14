@@ -11,7 +11,8 @@ from .cad_history import CadHistory
 from .ingest import ArtifactReader
 from .image_inspection import inspect_image as inspect_raster_image, measure_image as measure_raster_image
 from .formats import write_csv, write_dxf, write_json, write_pdf, write_step, write_svg
-from .mesh import write_obj
+from .mesh import read_mesh, write_obj
+from .geometry_validator import validate_geometry_object
 from .dxf import diff_documents, read_dxf, transform_document
 from .brep import brep_doctor, get_brep_backend, solve_constraints
 from .models import AgentRequest, ExecutionPlan, PlanStep, RunReport, ToolResult, ToolName
@@ -396,6 +397,45 @@ class EngineeringAgent:
                 input_path = _project_path(Path(arguments["project_dir"]).resolve(), input_path,
                                            must_exist=True, require_file=True)
             return {"brep": get_brep_backend().inspect_step(input_path)}
+        if name == "brep.tessellate_step":
+            project_root = Path(arguments.get("project_dir", ".")).resolve()
+            input_path = _project_path(project_root, arguments["input_file"], must_exist=True, require_file=True)
+            output_path = _project_path(project_root, arguments["output_file"])
+            if output_path.suffix.lower() != ".obj":
+                raise ValueError("BREP_MESH_OUTPUT_MUST_BE_OBJ")
+            backend = get_brep_backend()
+            txn = RunTransaction(project_root)
+            txn.begin({"operation": name, "arguments": arguments})
+            try:
+                staged = txn.stage_dir / output_path.name
+                mesh = backend.tessellate_step(input_path, float(arguments.get("deflection", 0.5)))
+                vertices = mesh.get("vertices") or []
+                faces = mesh.get("faces") or []
+                write_obj(staged, ([point.get("x", 0), point.get("y", 0), point.get("z", 0)] for point in vertices), faces,
+                          name="simloom-step-tessellation")
+                staged_mesh = read_mesh(staged)
+                validation = validate_geometry_object({"kind": "geometry", "geometry": staged_mesh})
+                txn.record("mesh_staged_validation", validation)
+                txn.checkpoint("after-step-tessellation", {"validation": validation, "mesh": {"vertex_count": staged_mesh.get("vertex_count"), "face_count": staged_mesh.get("face_count")}})
+                if not validation["valid"]:
+                    raise ValueError("BREP_MESH_VALIDATION_FAILED:" + ",".join(validation["errors"]))
+                relative = str(output_path.relative_to(project_root))
+                persisted: dict[str, Any] = {}
+
+                def validate_persisted(committed_files: dict[str, str]):
+                    persisted_mesh = read_mesh(committed_files[relative])
+                    persisted_validation = validate_geometry_object({"kind": "geometry", "geometry": persisted_mesh})
+                    persisted.update(mesh=persisted_mesh, validation=persisted_validation)
+                    txn.record("mesh_persisted_validation", persisted_validation)
+                    if not persisted_validation["valid"]:
+                        raise ValueError("BREP_MESH_PERSISTED_VALIDATION_FAILED:" + ",".join(persisted_validation["errors"]))
+
+                committed = txn.commit({relative: str(staged)}, destination_root=project_root, validate=validate_persisted)
+                return {"output": committed[relative], "mesh": persisted["mesh"], "validation": validation,
+                        "persisted_validation": persisted["validation"], "run_id": txn.run_id}
+            except Exception as exc:
+                txn.fail(str(exc))
+                raise
         if name in {"brep.boolean", "brep.create_primitive", "brep.build_feature_graph"}:
             project_root = Path(arguments.get("project_dir", ".")).resolve()
             output_path = _project_path(project_root, arguments["output_file"])
