@@ -100,6 +100,9 @@ async function main(){
     assert.match(await frame().locator('#selection').textContent(),new RegExp(ids.insert));
     bounds=await worldBounds(ids.insert);[87,0,95,16].forEach((v,i)=>close(bounds[i],v));
     await frame().locator('#fit').click();
+    // Previous transaction refreshes can move the iframe below the viewport.
+    // Re-centre it before sending screen-space mouse coordinates for panning.
+    await page.locator('#preview iframe').scrollIntoViewIfNeeded();
     const panStart=await screen(65,0);
     const beforePan=await frame().locator('#cad').getAttribute('viewBox');
     await page.mouse.move(panStart.x,panStart.y);await page.mouse.down({button:'middle'});
