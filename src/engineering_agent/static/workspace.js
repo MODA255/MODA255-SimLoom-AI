@@ -442,9 +442,21 @@ $('#prepareSheet').onclick=()=>changeDrawing(true);
 $('#saveTitle').onclick=()=>changeDrawing(false);
 window.addEventListener('message',async event=>{
   const data=event.data, frame=$('#preview iframe');
-  if(!['cad-history-request','cad-history-current','cad-history-cancel','cad-batch-step-request'].includes(data?.type)||!frame||event.source!==frame.contentWindow)return;
+  if(!['cad-history-request','cad-history-current','cad-history-cancel','cad-batch-step-request','cad-query'].includes(data?.type)||!frame||event.source!==frame.contentWindow)return;
   const assetPath=String(data.assetPath||'');
   if(!state.project||assetPath!==state.previewPath||!assetPath.toLowerCase().endsWith('.dxf'))return;
+  if(data.type==='cad-query'){
+    const reply=payload=>event.source.postMessage({type:'cad-query-result',requestId:data.requestId,...payload},'*');
+    if(state.busy){reply({ok:false,error:'另一项操作正在保存，请稍后重试'});return;}
+    if(state.cadHistory){reply({ok:false,error:'历史图纸只读，请先返回当前文件'});return;}
+    const project=state.project, version=state.preview;
+    try{
+      const result=await request('/api/cad/operation',{operation:'cad.query',arguments:{...(data.arguments||{}),project_dir:project.project_dir,input_file:project.project_dir.replace(/[\\/]$/,'')+'/'+assetPath}});
+      if(state.project?.id!==project.id||state.preview!==version||$('#preview iframe')!==frame)return;
+      reply({ok:true,result});
+    }catch(error){reply({ok:false,error:error.message});}
+    return;
+  }
   if(data.type==='cad-history-cancel'){
     if(state.activeHistoryRequest===data.requestId){state.historyRequest++;state.activeHistoryRequest=null;}
     return;

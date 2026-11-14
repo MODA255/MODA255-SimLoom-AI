@@ -4,6 +4,7 @@ body{margin:0;height:100vh;display:flex;flex-direction:column;background:#f7f9fc
 .toolbar button{border:1px solid #d6deee;background:#eef2ff;color:#2949cf;border-radius:7px;padding:6px 10px;cursor:pointer}
 .toolbar button:disabled{opacity:.4;cursor:default}.toolbar button.danger{background:#fff1f2;color:#be123c;border-color:#fecdd3}
 .toolbar input{width:62px;border:1px solid #d6deee;border-radius:6px;padding:5px 6px}.toolbar input.text{width:130px}.toolbar span{color:#64748b}
+.toolbar input.query-input{width:min(420px,48vw);font:12px ui-monospace,SFMono-Regular,Menlo,monospace}.query-controls{background:#f8fbff}.query-controls #queryStatus{font-size:11px;overflow-wrap:anywhere}
 .toolbar select{border:1px solid #d6deee;border-radius:6px;padding:5px 6px;background:#fff;color:#172033}.snap-control{white-space:nowrap}.snap-control input{width:auto}.toolbar #snapStatus{font-size:11px;color:#0f766e;min-width:150px}
 .history-controls{background:#f0f5ff}.history-controls select{max-width:360px;min-width:140px;border:1px solid #d6deee;border-radius:6px;padding:5px}.history-controls #historyStatus{font-size:11px;overflow-wrap:anywhere}.history-controls button{white-space:nowrap}.operations[hidden]{display:none}
 .layers{padding:6px 12px;background:#fff;border-bottom:1px solid #e5eaf2}.layers summary{cursor:pointer}.layer-list{display:flex;flex-wrap:wrap;gap:8px 14px;max-height:90px;overflow:auto;padding-top:8px}

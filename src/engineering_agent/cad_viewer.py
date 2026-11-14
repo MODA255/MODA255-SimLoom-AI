@@ -65,6 +65,7 @@ def render_cad_viewer(geometry, *, asset_path=None, history=None, source_path=No
         "<button id='fit'>适合窗口</button><button id='fitSelection'>放大选中</button><button id='clear'>清除选择</button>",
         "<label class='snap-control'><input id='snap' type='checkbox' checked> 对象捕捉</label><select id='snapMode' title='对象捕捉类型'><option value='auto'>智能</option><option value='endpoint'>端点</option><option value='midpoint'>中点</option><option value='center'>中心</option></select><span id='snapStatus' role='status'></span>",
         "<span id='selection' role='status'>未选择实体</span></div>",
+        "<div class='toolbar query-controls'><label>查询 JSON <input id='queryArgs' class='query-input' type='text' value='{}' spellcheck='false' aria-label='CAD 查询 JSON'></label><button id='query' type='button'>查询并高亮</button><button id='queryClear' type='button'>清除查询</button><span id='queryStatus' role='status'>按实体类型、图层、属性或空间窗口查询</span></div>",
         f"<div class='toolbar history-controls'><label>图纸版本 <select id='revision'><option value='current'>{'历史快照' if read_only else '当前文件'}</option></select></label>",
         "<button id='historyPrevious'>上一步</button><button id='historyNext'>下一步</button><button id='replay'>播放历史</button><button id='historyCurrent'>返回当前</button>",
         "<span id='historyStatus' role='status'>历史快照只读；批次支持独立子步骤快照。</span></div>",

@@ -94,6 +94,15 @@ def test_viewer_exposes_object_snap_controls(drawing):
     assert "value='center'" in viewer
 
 
+def test_viewer_exposes_semantic_query_controls(drawing):
+    path, _, _ = drawing
+    viewer = asset_view(path.parent, path.name)['viewer']
+    assert "id='queryArgs'" in viewer
+    assert "id='query'" in viewer
+    assert 'cad-query' in viewer
+    assert '查询并高亮' in viewer
+
+
 def test_viewer_exposes_semantic_grip_metadata_and_edit_hooks(drawing):
     path, handles, scene = drawing
     arc = next(e for e in ET.fromstring(scene['svg']).iter()

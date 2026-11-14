@@ -139,6 +139,8 @@ DXF 读写使用 `ezdxf`，在原图纸上更新实体，保留未编辑对象�
 只读 `cad.query` 可以按实体类型、图层、选择集、块名、布局、属性、文字内容和空间窗口
 筛选实体，并支持分页和仅返回元数据。每个结果都带有稳定的 `EntityRef`，因此上层 Agent
 可以先查询，再把同一引用交给编辑、验证或 Viewer 高亮流程，而不依赖 DXF 数组顺序。
+Viewer 的“查询并高亮”输入框会通过同一 `cad.query` operation 查询当前图纸，并自动选择和缩放
+当前页返回的实体；分页结果仍显示完整命中数。
 
 ```python
 agent.execute_operation("cad.query", {

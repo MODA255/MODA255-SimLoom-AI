@@ -22,6 +22,7 @@ let readOnly=viewer.dataset.readOnly==='true', historyIndex=-1, historyPending=n
 for(const [index,item] of frames.entries()){const option=document.createElement('option');option.value=String(index);option.textContent=item.label;revisionSelect.append(option);}
 function refreshControls(){
   document.querySelectorAll('.edits button,.edits input').forEach(el=>el.disabled=readOnly||pending!==null);
+  document.querySelectorAll('.query-controls button,.query-controls input').forEach(el=>el.disabled=readOnly||pending!==null);
   document.getElementById('undo').disabled=readOnly||pending!==null||!historyState.can_undo;
   document.getElementById('redo').disabled=readOnly||pending!==null||!historyState.can_redo;
   const unavailable=!frames.length||!assetPath||pending!==null;
@@ -286,6 +287,27 @@ function restoreView(state){
 }
 function clearReplay(){allPaths.forEach(el=>el.classList.remove('replay'));operationButtons.forEach(button=>button.classList.remove('active'));}
 function clearSelection(){clearReplay();selected.clear();paint();}
+function querySelection(arguments_){
+  if(readOnly){document.getElementById('queryStatus').textContent='历史图纸只读，请先返回当前文件';return;}
+  if(window.parent===window){document.getElementById('queryStatus').textContent='请在工作台中打开图纸后查询';return;}
+  if(pending)return;
+  pending=++requestSequence;
+  const statusNode=document.getElementById('queryStatus');
+  statusNode.textContent='正在查询…';
+  document.querySelectorAll('button').forEach(button=>button.disabled=true);
+  window.parent.postMessage({type:'cad-query',requestId:pending,assetPath,arguments:arguments_},'*');
+}
+function applyQueryResult(result){
+  const ids=Array.isArray(result?.entities)?result.entities.map(item=>item?.ref?.entity_id||item?.id).filter(Boolean):
+    (Array.isArray(result?.matched_ids)?result.matched_ids:[]);
+  const available=new Set(primitives.map(element=>element.dataset.entityId));
+  clearReplay();selected.clear();ids.map(String).filter(id=>available.has(id)).forEach(id=>selected.add(id));paint();
+  const visible=visiblePaths().filter(element=>selected.has(element.dataset.entityId));
+  if(visible.length)fit(visible);
+  const hidden=ids.filter(id=>!available.has(String(id))).length;
+  const total=Number.isFinite(Number(result?.total_count))?Number(result.total_count):ids.length;
+  document.getElementById('queryStatus').textContent=`查询命中 ${total} 个实体，当前高亮 ${ids.length} 个${hidden?`，其中 ${hidden} 个当前视图不可见`:''}`;
+}
 function showOperation(index){
   const step=operationHistory[index];if(!step)return;
   clearReplay();
@@ -488,6 +510,15 @@ snapMode?.addEventListener('change',()=>{activeSnap=null;});
 document.getElementById('fit').onclick=()=>fit(visiblePaths());
 document.getElementById('fitSelection').onclick=()=>fit(visiblePaths().filter(el=>selected.has(el.dataset.entityId)));
 document.getElementById('clear').onclick=clearSelection;
+document.getElementById('query').onclick=()=>{
+  const input=document.getElementById('queryArgs'), statusNode=document.getElementById('queryStatus');
+  try{
+    const arguments_=JSON.parse(input.value||'{}');
+    if(!arguments_||Array.isArray(arguments_)||typeof arguments_!=='object')throw new Error('查询参数必须是 JSON 对象');
+    querySelection(arguments_);
+  }catch(error){statusNode.textContent='查询参数错误：'+error.message;}
+};
+document.getElementById('queryClear').onclick=()=>{document.getElementById('queryArgs').value='{}';clearSelection();document.getElementById('queryStatus').textContent='已清除查询结果';};
 ensureSnapMarker();ensureGripLayer();setView(initialView);
 document.getElementById('undo').onclick=()=>requestEdit('cad.undo',{});
 document.getElementById('redo').onclick=()=>requestEdit('cad.redo',{});
@@ -503,6 +534,12 @@ operationButtons.forEach(button=>button.onclick=()=>{
 });
 window.addEventListener('message',event=>{
   if(event.source===window.parent&&event.data?.type==='cad-view-restore'&&event.data.assetPath===assetPath)restoreView(event.data.state);
+});
+window.addEventListener('message',event=>{
+  if(event.source!==window.parent||event.data?.type!=='cad-query-result'||event.data.requestId!==pending)return;
+  pending=null;document.querySelectorAll('button').forEach(button=>button.disabled=false);refreshControls();
+  if(event.data.ok)applyQueryResult(event.data.result||event.data);
+  else document.getElementById('queryStatus').textContent='查询失败：'+(event.data.error||'未知错误');
 });
 window.addEventListener('message',event=>{if(event.source!==window.parent || event.data?.type!=='cad-operation-result' || event.data.requestId!==pending)return;pending=null;clearGripPreview();document.querySelectorAll('button').forEach(button=>button.disabled=false);if(event.data.history)historyState=event.data.history;refreshControls();if(event.data.deleted){svg.replaceChildren();gripLayer=null;snapMarker=null;selected.clear();paint();}else renderGrips();editStatus.textContent=event.data.ok?(event.data.deleted?'文件创建已撤销，可以重做':'已保存并刷新'):'保存失败：'+(event.data.error||'未知错误');});
 if(readOnly){historyStatus.textContent='历史图纸只读';editStatus.textContent='历史图纸只读';}refreshControls();
