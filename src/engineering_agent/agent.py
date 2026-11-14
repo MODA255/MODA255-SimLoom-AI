@@ -260,6 +260,10 @@ class EngineeringAgent:
             return write_step(path, payload.get("points", []), payload.get("name", "engineering_agent"))
         if format_name == "obj":
             return write_obj(path, payload.get("vertices", []), payload.get("faces", []), name=payload.get("name", "engineering_agent"))
+        if format_name == "glb":
+            return write_glb(path, payload.get("vertices", []), payload.get("faces", []),
+                             colors=payload.get("colors"), scalar_name=payload.get("scalar_name"),
+                             scalar_range=payload.get("scalar_range"), name=payload.get("name", "engineering_agent"))
         if format_name == "dxf":
             return write_dxf(
                 path,

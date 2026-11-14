@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from engineering_agent import EngineeringAgent
 from engineering_agent.mesh import parse_vtk, parse_vtu, read_mesh, write_glb
 from engineering_agent.viewer import asset_view
@@ -88,3 +90,14 @@ def test_glb_round_trip_and_viewer_ingest(tmp_path):
     view = asset_view(str(tmp_path), path.name)
     assert "engineering-3d-viewer" in view["viewer"]
     assert "stress" in view["viewer"] and "linear-gradient" in view["viewer"]
+
+
+def test_glb_uses_common_artifact_write_transaction(tmp_path):
+    path = tmp_path / "written.glb"
+    result = EngineeringAgent().execute_operation("artifact.write", {
+        "project_dir": str(tmp_path), "path": "written.glb", "format": "glb",
+        "payload": {"vertices": [[0, 0, 0], [1, 0, 0], [0, 1, 0]], "faces": [[0, 1, 2]],
+                    "scalar_name": "temperature", "scalar_range": [1, 4]},
+    })
+    assert Path(result["path"]) == path
+    assert read_mesh(path)["scalar_name"] == "temperature"
