@@ -11,6 +11,7 @@ import copy
 import hashlib
 import json
 import math
+import re
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -1331,6 +1332,99 @@ def _dimension_remeasure(entity: dict[str, Any]) -> None:
     elif kind == "ordinate" and entity.get("start") is not None:
         point = _point(entity.get("start"))
         entity["measurement"] = point["x"] if str(entity.get("axis", "x")).lower() == "x" else point["y"]
+
+
+def _dimension_physical_value(entity: dict[str, Any]) -> float | None:
+    measured = copy.deepcopy(entity)
+    _dimension_remeasure(measured)
+    try:
+        value = float(measured.get("measurement"))
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) else None
+
+
+def _dimension_display_value(entity: dict[str, Any]) -> float | None:
+    text = str(entity.get("text", "")).strip()
+    if not text or text == "<>":
+        return None
+    match = re.search(r"[-+]?(?:\d+(?:[.,]\d*)?|[.,]\d+)(?:[eE][-+]?\d+)?", text)
+    if not match:
+        return None
+    try:
+        value = float(match.group(0).replace(",", "."))
+    except ValueError:
+        return None
+    return value if math.isfinite(value) else None
+
+
+def _verify_dimensions(document: CadDocument, arguments: dict[str, Any]) -> dict[str, Any]:
+    checks = arguments.get("checks", arguments.get("dimension_requirements"))
+    if not isinstance(checks, list) or not checks:
+        raise ValueError("DIMENSION_CHECKS_REQUIRED")
+    entities = {str(entity.get("id")): entity for entity in document.entities}
+    entities.update({str(entity.get("handle")): entity for entity in document.entities if entity.get("handle")})
+    results: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+    for index, requirement in enumerate(checks):
+        if not isinstance(requirement, dict):
+            raise ValueError(f"DIMENSION_CHECK_INVALID:{index}")
+        selector = requirement.get("entity_id", requirement.get("id", requirement.get("handle")))
+        if isinstance(selector, dict):
+            selector = _query_identifier(selector)
+        if selector is None:
+            errors.append({"code": "DIMENSION_SELECTOR_MISSING", "index": index})
+            continue
+        entity = entities.get(str(selector))
+        if entity is None:
+            errors.append({"code": "DIMENSION_NOT_FOUND", "selector": str(selector), "index": index})
+            continue
+        if str(entity.get("type", "")).upper() != "DIMENSION":
+            errors.append({"code": "DIMENSION_ENTITY_REQUIRED", "selector": str(selector), "index": index})
+            continue
+        try:
+            expected = float(requirement.get("value"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"DIMENSION_EXPECTED_VALUE_INVALID:{index}") from exc
+        if not math.isfinite(expected):
+            raise ValueError(f"DIMENSION_EXPECTED_VALUE_INVALID:{index}")
+        actual = _dimension_physical_value(entity)
+        tolerance = requirement.get("tolerance", arguments.get("tolerance", 1e-6))
+        if isinstance(tolerance, dict):
+            try:
+                lower = expected + float(tolerance.get("lower", 0))
+                upper = expected + float(tolerance.get("upper", 0))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"DIMENSION_TOLERANCE_INVALID:{index}") from exc
+            if lower > upper:
+                raise ValueError(f"DIMENSION_TOLERANCE_INVALID:{index}")
+        else:
+            try:
+                absolute = float(tolerance)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"DIMENSION_TOLERANCE_INVALID:{index}") from exc
+            if not math.isfinite(absolute) or absolute < 0:
+                raise ValueError(f"DIMENSION_TOLERANCE_INVALID:{index}")
+            lower, upper = expected - absolute, expected + absolute
+        physical_valid = actual is not None and lower <= actual <= upper
+        display = _dimension_display_value(entity)
+        display_valid = True
+        if bool(requirement.get("check_display", False)):
+            display_valid = display is not None and lower <= display <= upper
+            if not display_valid:
+                errors.append({"code": "DIMENSION_DISPLAY_MISMATCH", "selector": str(selector),
+                               "expected": expected, "display": display, "lower": lower, "upper": upper})
+        if not physical_valid:
+            errors.append({"code": "DIMENSION_VALUE_MISMATCH", "selector": str(selector),
+                           "expected": expected, "actual": actual, "lower": lower, "upper": upper})
+        results.append({"selector": str(selector), "ref": {"document_id": document.document_id, "entity_id": str(entity.get("id"))},
+                        "dimension_type": entity.get("dimension_type", "linear"), "expected": expected,
+                        "actual": actual, "display": display, "lower": lower, "upper": upper,
+                        "physical_valid": physical_valid, "display_valid": display_valid})
+    return {"schema_version": "simloom-ai/dimension-verification/v1", "valid": not errors,
+            "checks": results, "errors": errors, "warnings": warnings, "document_id": document.document_id,
+            "units": document.units}
 
 
 def suggest_repairs(document: CadDocument, validation: dict[str, Any]) -> list[dict[str, Any]]:
@@ -3356,15 +3450,23 @@ class CadOperationEngine:
             raise ValueError("PATH_OUTSIDE_PROJECT")
         if operation in {"cad.history", "cad.undo", "cad.redo"}:
             return self._history_operation(operation, project_root, input_file)
-        if operation in {"cad.audit", "cad.document_diff", "cad.visual_diff", "cad.pid_audit", "cad.standard_parts_audit", "cad.document_open", "cad.document_inspect", "cad.document_recompute", "cad.query"}:
+        if operation in {"cad.audit", "cad.document_diff", "cad.visual_diff", "cad.pid_audit", "cad.standard_parts_audit", "cad.document_open", "cad.document_inspect", "cad.document_recompute", "cad.query", "cad.verify_dimensions"}:
             with RunTransaction.read_lock(project_root):
                 if not input_file.is_file():
                     raise FileNotFoundError(input_file)
                 document = self.open(input_file)
-                validation = validate_cad_document(document, arguments.get("requirements") or {})
+                # Dimension checks have their own requirement list. Passing the
+                # list to the generic CAD validator would make it fail before
+                # the physical measurement verifier gets a chance to run.
+                requirements = arguments.get("requirements") or {}
+                validation = validate_cad_document(document, requirements if isinstance(requirements, dict) else {})
                 result = {"document": document.to_dict(), "validation": validation}
                 if operation == "cad.query":
                     result = _query_entities(document, arguments)
+                    result["path"] = str(input_file)
+                    result["validation"] = validation
+                elif operation == "cad.verify_dimensions":
+                    result = _verify_dimensions(document, arguments)
                     result["path"] = str(input_file)
                     result["validation"] = validation
                 elif operation == "cad.audit":

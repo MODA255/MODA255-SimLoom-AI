@@ -142,6 +142,10 @@ DXF 读写使用 `ezdxf`，在原图纸上更新实体，保留未编辑对象�
 Viewer 的“查询并高亮”输入框会通过同一 `cad.query` operation 查询当前图纸，并自动选择和缩放
 当前页返回的实体；分页结果仍显示完整命中数。
 
+只读 `cad.verify_dimensions` 会按稳定实体引用重新计算线性、径向、直径和坐标尺寸的物理值，
+并可同时检查标注显示文字。它返回目标值、实际值、容差边界、显示值和错误列表，不写入 DXF，
+适合在 CAD 写事务提交后作为独立尺寸验收步骤。
+
 ```python
 agent.execute_operation("cad.query", {
     "project_dir": "./project",
@@ -150,6 +154,14 @@ agent.execute_operation("cad.query", {
     "layer": "HOLES",
     "window": [{"x": 0, "y": 0}, {"x": 100, "y": 100}],
     "include_geometry": False,
+})
+```
+
+```python
+agent.execute_operation("cad.verify_dimensions", {
+    "project_dir": "./project",
+    "input_file": "./project/drawing.dxf",
+    "checks": [{"entity_id": "e00001", "value": 50.0, "tolerance": 0.01, "check_display": True}],
 })
 ```
 
