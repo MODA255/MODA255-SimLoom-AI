@@ -18,6 +18,7 @@ from engineering_agent.web import create_server
 from engineering_agent.operations import OperationRegistry
 from engineering_agent.validation import validate_plan
 from engineering_agent.versioning import VersionStore
+from engineering_agent.mcp_config import build_config, render_config, write_config
 from engineering_agent.formats import write_csv, write_dxf, write_json, write_pdf, write_step, write_svg
 from engineering_agent.dxf import diff_documents, read_dxf, transform_document
 from engineering_agent.protocol import ErrorCode, ProtocolError, failure
@@ -113,6 +114,26 @@ def test_mcp_surface_lists_and_calls_tools():
     missing = server.handle({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "engineering_ingest", "arguments": {"path": str(Path("/does/not/exist"))}}})
     assert missing["result"]["isError"] is True
     assert missing["result"]["structuredContent"]["error"]["code"] == "RESOURCE_NOT_FOUND"
+
+
+def test_mcp_client_config_generates_generic_claude_and_codex_shapes(tmp_path):
+    config_path = tmp_path / "agent.json"
+    config_path.write_text("{}", encoding="utf-8")
+    generic = build_config(client="generic", config_path=config_path, profile="safe")
+    command = generic["mcpServers"]["simloom-ai"]
+    assert command["args"][-3:] == ["mcp", "--profile", "safe"]
+    assert command["args"][-1] == "safe"
+    assert command["args"][3] == str(config_path.resolve())
+
+    claude = render_config(client="claude", name="simloom", config_path=config_path, profile="full")
+    assert '"mcpServers"' in claude and '"--profile"' in claude and '"full"' in claude
+
+    codex = render_config(client="codex", name="simloom-ai", config_path=config_path)
+    assert "[mcp_servers.simloom_ai]" in codex
+    assert "startup_timeout_sec = 20" in codex
+
+    written = write_config(tmp_path / "nested" / ".mcp.json", client="generic", config_path=config_path)
+    assert written.exists() and '"mcpServers"' in written.read_text(encoding="utf-8")
 
 
 def test_mcp_returns_structured_content_and_operation_schema_metadata(tmp_path):

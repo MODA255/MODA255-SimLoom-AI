@@ -535,6 +535,17 @@ MCP 层支持资源发现、资源模板、分页、订阅、schema version、�
 源像素区域做受限颜色测量并返回 overlay。写操作完成后会发送标准
 `notifications/resources/updated`，便于工作台刷新订阅资源。
 
+外部客户端可以直接生成连接配置：
+
+```bash
+PYTHONPATH=src python -m engineering_agent.cli \
+  --config configs/my-engineering-agent.json \
+  mcp-config --client claude --profile safe --output .mcp.json
+```
+
+支持 `generic`、`claude` JSON 和 `codex` TOML，详细说明见
+[`docs/MCP_CLIENT_SETUP.md`](docs/MCP_CLIENT_SETUP.md)。
+
 ## Windows 软件接入
 
 Mac 开发机连接 Windows 实机、配置 worker、逐款 smoke test 和跨软件联调的操作顺序见

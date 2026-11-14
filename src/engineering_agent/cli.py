@@ -13,6 +13,7 @@ from .mcp_server import serve_stdio
 from .validation import validate_plan
 from .windows_bridge import serve_bridge
 from .brep import brep_doctor
+from .mcp_config import render_config, write_config
 
 
 def _default_config() -> Path:
@@ -117,6 +118,12 @@ def _parser() -> argparse.ArgumentParser:
     projects.add_argument("--db", default="engineering-agent.db")
     mcp = sub.add_parser("mcp", help="启动 stdio MCP tool server")
     mcp.add_argument("--profile", choices=["safe", "full"], default="safe")
+    mcp_config = sub.add_parser("mcp-config", help="生成外部 MCP 客户端配置")
+    mcp_config.add_argument("--client", choices=["generic", "claude", "codex"], default="generic")
+    mcp_config.add_argument("--name", default="simloom-ai")
+    mcp_config.add_argument("--profile", choices=["safe", "full"], default="safe")
+    mcp_config.add_argument("--python", dest="python_executable", help="MCP server 使用的 Python 可执行文件")
+    mcp_config.add_argument("--output", help="写入配置文件；省略时打印到标准输出")
     validate = sub.add_parser("validate", help="校验自然语言生成的执行计划")
     validate.add_argument("prompt")
     validate.add_argument("--parameters", default="{}", help="校验计划时使用的工程参数 JSON")
@@ -225,6 +232,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "mcp":
         serve_stdio(agent, args.profile)
+        return 0
+    if args.command == "mcp-config":
+        options = {"client": args.client, "name": args.name, "config_path": args.config,
+                   "profile": args.profile, "python_executable": args.python_executable}
+        if args.output:
+            target = write_config(args.output, **options)
+            print(json.dumps({"path": str(target), "client": args.client, "profile": args.profile}, ensure_ascii=False))
+        else:
+            print(render_config(**options), end="")
         return 0
     if args.command == "validate":
         print(json.dumps(validate_plan(agent.plan(args.prompt, project_dir=args.project_dir, parameters=json.loads(args.parameters))), ensure_ascii=False, indent=2))

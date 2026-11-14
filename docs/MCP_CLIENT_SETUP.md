@@ -1,0 +1,44 @@
+# 外部 MCP 客户端接入
+
+SimLoom 的 MCP server 使用标准 stdio 传输。安装项目后，可以用一条 CLI 命令生成客户端配置，
+不需要手工拼接 Python 路径、配置文件和 profile 参数。
+
+## 生成配置
+
+通用 JSON（也可用于支持 `mcpServers` 的客户端）：
+
+```bash
+PYTHONPATH=src python -m engineering_agent.cli \
+  --config configs/my-engineering-agent.json \
+  mcp-config --client generic --profile safe
+```
+
+Claude 风格的 `.mcp.json`：
+
+```bash
+PYTHONPATH=src python -m engineering_agent.cli \
+  --config configs/my-engineering-agent.json \
+  mcp-config --client claude --profile safe --output .mcp.json
+```
+
+Codex 风格的 TOML 片段：
+
+```bash
+PYTHONPATH=src python -m engineering_agent.cli \
+  --config configs/my-engineering-agent.json \
+  mcp-config --client codex --profile safe
+```
+
+命令默认使用当前 Python 解释器。Windows 工作站上应在 SimLoom 虚拟环境中运行，或显式指定：
+
+```bat
+engineering-agent.exe --config C:\SimLoom\worker.json mcp-config ^
+  --client generic --python C:\SimLoom\SimLoom-AI\.venv\Scripts\python.exe
+```
+
+默认 profile 是 `safe`，只暴露只读能力。需要执行软件任务、写入 CAD 或登记真实 Windows
+证据时，必须显式使用 `--profile full`，并同时配置 MCP allow-list/deny-list 以缩小工具范围。
+
+生成器只写 MCP 客户端配置，不会启动 server，也不会修改工程文件。`--output` 使用临时文件替换
+目标文件，父目录不存在时会创建。
+
