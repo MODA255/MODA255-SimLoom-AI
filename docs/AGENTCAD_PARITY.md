@@ -71,7 +71,7 @@ bulge 弧段、SPLINE 采样段和 HATCH 多段线边界检查自交/重叠；�
 | 工程图排版和文件交付 | 原生标题栏、纸空间/视口、多页 PDF、单页 SVG/PNG、每页比例和尺寸校验；`DRAWING_EXPORT.md` | 标准比例、中文/SHX 字体和打印可读性仍需补齐 |
 | Agent 能直接看图与检查源图细节 | Web/本地 viewer 已有 SVG/PNG；MCP `engineering_asset_view`、`engineering://asset`、`engineering_inspect_image` 和 `engineering_measure_image` 可返回结构化数据、局部 PNG 预览、颜色区域的源像素边界/质心、overlay，以及可选的源像素到工程图纸坐标映射（见 `IMAGE_INSPECTION.md`） | 继续补通用安全图像脚本、尺寸证据标注和客户端互操作验收 |
 | 行业图形库 | 已有符号/紧固件/表格等基础生成操作；新增 `cad.standard_catalog`、`cad.standard_library`、`cad.standard_parts_audit`，覆盖 P&ID 符号、14 类 GD&T 特征、M3～M24 紧固件、常用轴承系列和孔型查询，严格模式会拒绝未知输入 | 当前目录是可查询的规划与输入校验契约，不能视为 ISO P&ID、GD&T、标准紧固件/轴承/孔系尺寸库的合规实现；仍需有来源的尺寸表、符号几何和原生软件验收 |
-| 工程工作流 | 四软件离线链和基本 CAD 批次可运行；`cad.pid_audit` 可把 tagged P&ID 符号、端口和过程线读回为节点/边并检查孤立符号、连接段引用和要求连接；`cad.process_route_create` 支持正交路线，`cad.pid_valve_cut_pipe` 可在带语义管线上切断并插入带 inlet/outlet 关系的阀门 | 继续补有来源的 P&ID 标准符号几何、端口方向/规格约束、房间面积、回转件视图/BOM 等端到端工程任务；当前阀门操作仍是 vendor-neutral 关系模型，不是厂商 P&ID 对象 |
+| 工程工作流 | 四软件离线链和基本 CAD 批次可运行；`cad.pid_audit` 可把 tagged P&ID 符号、端口和过程线读回为节点/边并检查孤立符号、连接段引用和要求连接；`cad.process_route_create` 支持正交路线，`cad.pid_valve_cut_pipe` 可在带语义管线上切断并插入带 inlet/outlet 关系的阀门；新增 `cad.draw_arch_plan`，在事务中生成轴对齐墙环、门窗标记、房间面积标签和尺寸，并在落盘读回后核对面积 | 继续补有来源的 P&ID 标准符号几何、端口方向/规格约束、内部岛/复杂开口、回转件视图/BOM 和厂商工程对象；当前建筑和阀门操作仍是 vendor-neutral 关系模型，不是厂商建筑/P&ID 对象 |
 | DWG、AutoCAD AUDIT 与实时同步 | 尚无等价实机验收 | 实现可选 AutoCAD 后端、版本/文件锁/冲突/回读契约，并在 Windows 真机验证 |
 | MCP、CLI、Python、HTTP 的一致性与策略 | 有统一 operation 调用、profiles、分页、schema/error envelope；MCP 可读取资产 JSON 和 SVG image content；写操作后发送资源更新。safe profile 已在实际调用入口拒绝写/执行操作及会保存产物的 run/generate/version 内置入口，并有绕过 discovery 的直接调用回归。工具执行失败现在按 MCP 语义返回 `result.isError=true`、文本 `content` 和结构化 error envelope；stdio server 支持标准 `ping`、初始化/取消通知且通知不产生响应，已有真实子进程 round-trip 回归。新增可配置的 tool/operation allow-list、deny-list，`tools/list`、operation resource 和直接调用使用同一策略，详见 `MCP_POLICY.md`；新增 `mcp-config` 生成通用、Claude 和 Codex 客户端配置，详见 `MCP_CLIENT_SETUP.md` | 继续补完整 schema/envelope 覆盖、更多外部 MCP 客户端互操作和断线重连验证 |
 | 安装、发布与可重复环境 | 已有启动器和 CI 配置 | 干净 Windows/macOS/Linux 的实际安装、升级和发布产物验证；配置存在不代表通过 |
@@ -202,3 +202,8 @@ safe/full profile 继续叠加生效。这样控制端可以按项目或部署�
 由工作台通过统一 operation 调用读取当前 DXF；返回的稳定 `EntityRef` 会自动选择、变更高亮并
 缩放到当前视图，分页时同时显示完整命中数。查询不会进入写事务，也不会改变图纸文件；历史快照
 保持只读。后续仍需补大图纸查询性能、复杂块实例过滤和真实浏览器交互回归。
+
+2026-11-14 后续：新增 `cad.draw_arch_plan` 工程工作流。它接受轴对齐闭合墙环、厚度、开口和
+房间位置，在一个 CAD 事务中生成墙体边界、开口标记、房间面积标签和外形尺寸；房间面积由保存
+后的墙体边界重新计算并与请求值核对，失败会回滚。当前只覆盖矩形/正交墙环，内部岛、复杂弧墙
+和厂商建筑对象仍未实现。

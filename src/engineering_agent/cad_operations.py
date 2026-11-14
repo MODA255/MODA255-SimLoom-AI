@@ -86,6 +86,207 @@ def _query_number(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
+def _arch_point(value: Any, code: str = "ARCH_POINT_INVALID") -> dict[str, float]:
+    if isinstance(value, (list, tuple)) and len(value) >= 2:
+        value = {"x": value[0], "y": value[1], "z": value[2] if len(value) > 2 else 0}
+    if not isinstance(value, dict):
+        raise ValueError(code)
+    point = _point(value)
+    if not all(math.isfinite(point[axis]) for axis in ("x", "y", "z")):
+        raise ValueError(code)
+    return point
+
+
+def _arch_axis_points(wall: dict[str, Any]) -> list[dict[str, float]]:
+    raw = wall.get("axis", wall.get("vertices"))
+    if not isinstance(raw, list) or len(raw) < 4:
+        raise ValueError("ARCH_WALL_AXIS_TOO_SHORT")
+    points = [_arch_point(value, "ARCH_WALL_POINT_INVALID") for value in raw]
+    if _distance(points[0], points[-1]) <= 1e-9:
+        points.pop()
+    if len(points) < 4:
+        raise ValueError("ARCH_WALL_AXIS_TOO_SHORT")
+    for first, second in zip(points, points[1:] + points[:1]):
+        if abs(first["x"] - second["x"]) > 1e-9 and abs(first["y"] - second["y"]) > 1e-9:
+            raise ValueError("ARCH_WALL_MUST_BE_ORTHOGONAL")
+    area = abs(0.5 * sum(first["x"] * second["y"] - second["x"] * first["y"]
+                         for first, second in zip(points, points[1:] + points[:1])))
+    if area <= 1e-9:
+        raise ValueError("ARCH_WALL_AREA_INVALID")
+    return points
+
+
+def _arch_bounds(points: list[dict[str, float]], padding: float = 0) -> tuple[float, float, float, float]:
+    return (min(point["x"] for point in points) - padding,
+            min(point["y"] for point in points) - padding,
+            max(point["x"] for point in points) + padding,
+            max(point["y"] for point in points) + padding)
+
+
+def _arch_perimeter(points: list[dict[str, float]]) -> float:
+    return sum(_distance(first, second) for first, second in zip(points, points[1:] + points[:1]))
+
+
+def _arch_point_inside(point: dict[str, float], points: list[dict[str, float]], tolerance: float = 1e-7) -> bool:
+    x, y = point["x"], point["y"]
+    inside = False
+    for first, second in zip(points, points[1:] + points[:1]):
+        if ((first["y"] > y) != (second["y"] > y)):
+            denominator = second["y"] - first["y"]
+            if abs(denominator) <= tolerance:
+                continue
+            crossing = (second["x"] - first["x"]) * (y - first["y"]) / denominator + first["x"]
+            if x < crossing:
+                inside = not inside
+    return inside
+
+
+def _arch_along(points: list[dict[str, float]], distance: float) -> tuple[dict[str, float], dict[str, float]]:
+    total = _arch_perimeter(points)
+    if distance < -1e-7 or distance > total + 1e-7:
+        raise ValueError("ARCH_OPENING_OFFSET_OUTSIDE_WALL")
+    remaining = min(max(distance, 0.0), total)
+    for first, second in zip(points, points[1:] + points[:1]):
+        length = _distance(first, second)
+        if remaining <= length + 1e-9:
+            ratio = remaining / length if length else 0.0
+            point = {axis: first[axis] + (second[axis] - first[axis]) * ratio for axis in ("x", "y", "z")}
+            tangent = {axis: (second[axis] - first[axis]) / length if length else 0.0 for axis in ("x", "y", "z")}
+            return point, tangent
+        remaining -= length
+    return copy.deepcopy(points[0]), {"x": 1.0, "y": 0.0, "z": 0.0}
+
+
+def _arch_layout_fields(layout: str) -> dict[str, str]:
+    return {} if layout in {"", "Model"} else {"sheet": layout, "layout": layout}
+
+
+def _draw_arch_plan(document: CadDocument, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Create a bounded orthogonal architectural plan with measured room labels."""
+    spec = arguments.get("spec") if isinstance(arguments.get("spec"), dict) else arguments
+    walls = spec.get("walls") or []
+    if not isinstance(walls, list) or not walls:
+        raise ValueError("ARCH_WALLS_REQUIRED")
+    layout = str(arguments.get("layout", spec.get("layout", "Model")) or "Model")
+    tolerance = float(spec.get("area_tolerance", arguments.get("area_tolerance", 1e-6)))
+    if not math.isfinite(tolerance) or tolerance < 0:
+        raise ValueError("ARCH_AREA_TOLERANCE_INVALID")
+    wall_records: dict[str, dict[str, Any]] = {}
+    created: list[str] = []
+    rooms_report: list[dict[str, Any]] = []
+    openings_report: list[dict[str, Any]] = []
+    wall_layer = str(spec.get("wall_layer", "ARCH_WALL"))
+    axis_layer = str(spec.get("axis_layer", "ARCH_AXIS"))
+    annotation_layer = str(spec.get("annotation_layer", "ARCH_ANNOTATION"))
+    for wall in walls:
+        if not isinstance(wall, dict):
+            raise ValueError("ARCH_WALL_INVALID")
+        wall_id = str(wall.get("id", "")).strip()
+        if not wall_id or wall_id in wall_records:
+            raise ValueError("ARCH_WALL_ID_INVALID")
+        points = _arch_axis_points(wall)
+        try:
+            thickness = float(wall.get("thickness", 0))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("ARCH_WALL_THICKNESS_INVALID") from exc
+        if not math.isfinite(thickness) or thickness <= 0:
+            raise ValueError("ARCH_WALL_THICKNESS_INVALID")
+        document.ensure_layer(axis_layer); document.ensure_layer(wall_layer)
+        common = {"arch_wall": {"id": wall_id, "thickness": thickness}, **_arch_layout_fields(layout)}
+        axis = {"id": document.next_id("arch-axis"), "type": "LWPOLYLINE", "layer": axis_layer,
+                "vertices": copy.deepcopy(points), "closed": True, **copy.deepcopy(common)}
+        document.entities.append(axis); created.append(axis["id"])
+        low_x, low_y, high_x, high_y = _arch_bounds(points)
+        outer = [{"x": low_x - thickness / 2, "y": low_y - thickness / 2, "z": 0},
+                 {"x": high_x + thickness / 2, "y": low_y - thickness / 2, "z": 0},
+                 {"x": high_x + thickness / 2, "y": high_y + thickness / 2, "z": 0},
+                 {"x": low_x - thickness / 2, "y": high_y + thickness / 2, "z": 0}]
+        inner = [{"x": low_x + thickness / 2, "y": low_y + thickness / 2, "z": 0},
+                 {"x": high_x - thickness / 2, "y": low_y + thickness / 2, "z": 0},
+                 {"x": high_x - thickness / 2, "y": high_y - thickness / 2, "z": 0},
+                 {"x": low_x + thickness / 2, "y": high_y - thickness / 2, "z": 0}]
+        for role, vertices in (("outer", outer), ("inner", inner)):
+            boundary = {"id": document.next_id("arch-wall"), "type": "LWPOLYLINE", "layer": wall_layer,
+                        "vertices": vertices, "closed": True, **copy.deepcopy(common),
+                        "arch_wall_boundary": {"role": role, "wall_id": wall_id}}
+            document.entities.append(boundary); created.append(boundary["id"])
+        width, height = high_x - low_x, high_y - low_y
+        inner_area = max(0.0, (width - thickness) * (height - thickness))
+        wall_records[wall_id] = {"id": wall_id, "points": points, "thickness": thickness,
+                                 "bounds": (low_x, low_y, high_x, high_y), "inner_area": inner_area,
+                                 "inner_bounds": (low_x + thickness / 2, low_y + thickness / 2,
+                                                   high_x - thickness / 2, high_y - thickness / 2)}
+        if bool(spec.get("dimensions", True)):
+            for axis, start, end, measurement in (("x", points[0], {"x": high_x, "y": low_y, "z": 0}, width),
+                                                   ("y", {"x": low_x, "y": low_y, "z": 0}, {"x": low_x, "y": high_y, "z": 0}, height)):
+                dimension = {"id": document.next_id("arch-dim"), "type": "DIMENSION", "layer": annotation_layer,
+                             "dimension_type": "linear", "axis": axis, "start": start, "end": end,
+                             "definition": {"x": (low_x + high_x) / 2 if axis == "x" else low_x - thickness * 2,
+                                            "y": low_y - thickness * 2 if axis == "x" else (low_y + high_y) / 2, "z": 0},
+                             "measurement": measurement, "text": "", "arch_dimension": {"wall_id": wall_id, "axis": axis},
+                             **_arch_layout_fields(layout)}
+                document.ensure_layer(annotation_layer); document.entities.append(dimension); created.append(dimension["id"])
+    for opening in spec.get("openings") or []:
+        if not isinstance(opening, dict):
+            raise ValueError("ARCH_OPENING_INVALID")
+        opening_id = str(opening.get("id", "")).strip() or f"opening-{len(openings_report) + 1}"
+        wall_id = str(opening.get("wall", ""))
+        wall = wall_records.get(wall_id)
+        if wall is None:
+            raise ValueError("ARCH_OPENING_WALL_NOT_FOUND:" + wall_id)
+        offset = float(opening.get("offset", 0)); width = float(opening.get("width", 0))
+        if not math.isfinite(offset) or not math.isfinite(width) or width <= 0:
+            raise ValueError("ARCH_OPENING_DIMENSION_INVALID")
+        start, tangent = _arch_along(wall["points"], offset)
+        end, _ = _arch_along(wall["points"], offset + width)
+        normal = {"x": -tangent["y"], "y": tangent["x"], "z": 0}
+        mark = {"id": document.next_id("arch-opening"), "type": "LINE", "layer": annotation_layer,
+                "start": start, "end": end, "arch_opening": {"id": opening_id, "wall_id": wall_id,
+                "kind": str(opening.get("kind", "door")), "width": width, "offset": offset}, **_arch_layout_fields(layout)}
+        document.entities.append(mark); created.append(mark["id"])
+        label_point = {"x": (start["x"] + end["x"]) / 2 + normal["x"] * wall["thickness"],
+                       "y": (start["y"] + end["y"]) / 2 + normal["y"] * wall["thickness"], "z": 0}
+        label = {"id": document.next_id("arch-opening-label"), "type": "MTEXT", "layer": annotation_layer,
+                 "insert": label_point, "text": str(opening.get("tag", opening_id)), "height": float(opening.get("text_height", 2.5)),
+                 "width": 0, "rotation": 0, "arch_opening": {"id": opening_id, "wall_id": wall_id}, **_arch_layout_fields(layout)}
+        document.entities.append(label); created.append(label["id"])
+        openings_report.append({"id": opening_id, "wall": wall_id, "kind": str(opening.get("kind", "door")),
+                                "offset": offset, "width": width, "entity_ids": [mark["id"], label["id"]]})
+    for room in spec.get("rooms") or []:
+        if not isinstance(room, dict):
+            raise ValueError("ARCH_ROOM_INVALID")
+        room_id = str(room.get("id", "")).strip() or f"room-{len(rooms_report) + 1}"
+        at = _arch_point(room.get("at"), "ARCH_ROOM_POINT_INVALID")
+        candidates = [(record, record["inner_area"]) for record in wall_records.values()
+                      if _arch_point_inside(at, [{"x": record["inner_bounds"][0], "y": record["inner_bounds"][1]},
+                                                  {"x": record["inner_bounds"][2], "y": record["inner_bounds"][1]},
+                                                  {"x": record["inner_bounds"][2], "y": record["inner_bounds"][3]},
+                                                  {"x": record["inner_bounds"][0], "y": record["inner_bounds"][3]}])]
+        if not candidates:
+            raise ValueError("ARCH_ROOM_OUTSIDE_WALL:" + room_id)
+        if len(candidates) > 1:
+            raise ValueError("ARCH_ROOM_AMBIGUOUS:" + room_id)
+        wall, area = candidates[0]
+        supplied = room.get("area")
+        if supplied is not None and abs(float(supplied) - area) > max(tolerance, abs(area) * tolerance):
+            raise ValueError("ARCH_ROOM_AREA_MISMATCH:" + room_id)
+        number, name = str(room.get("number", room_id)), str(room.get("name", ""))
+        label = {"id": document.next_id("arch-room"), "type": "MTEXT", "layer": annotation_layer,
+                 "insert": at, "text": f"{number} {name} {area / 1_000_000:.3f} m²".strip(),
+                 "height": float(room.get("text_height", 2.5)), "width": 0, "rotation": 0,
+                 "arch_room": {"id": room_id, "number": number, "name": name, "area_mm2": area, "wall_id": wall["id"]},
+                 **_arch_layout_fields(layout)}
+        document.ensure_layer(annotation_layer); document.entities.append(label); created.append(label["id"])
+        rooms_report.append({"id": room_id, "number": number, "name": name, "area_mm2": area, "area_m2": area / 1_000_000,
+                             "wall_id": wall["id"], "entity_id": label["id"], "area_verified": True})
+    document.metadata["architecture_plan"] = {"schema_version": "simloom-ai/architecture-plan/v1",
+                                                "layout": layout, "rooms": copy.deepcopy(rooms_report),
+                                                "openings": copy.deepcopy(openings_report)}
+    return {"entities": created, "rooms": rooms_report, "openings": openings_report,
+            "walls": [{"id": record["id"], "inner_area_mm2": record["inner_area"]} for record in wall_records.values()],
+            "layout": layout, "schema_version": "simloom-ai/architecture-plan/v1"}
+
+
 def _query_entities(document: CadDocument, arguments: dict[str, Any]) -> dict[str, Any]:
     """Run a deterministic, read-only semantic query over canonical entities."""
     raw_types = arguments.get("entity_types") or []
@@ -1282,6 +1483,8 @@ class CadOperationEngine:
             document.metadata["annotation_scale_updated_by"] = "cad.set_annotation_scale"
             return {"scale": scale, "previous_scale": previous, "factor": factor,
                     "entities": changed, "changed": bool(changed) or not math.isclose(scale, previous)}
+        if name == "draw_arch_plan":
+            return _draw_arch_plan(document, arguments)
         if name in {"document_open", "document_inspect"}:
             return {"document": document.to_dict()}
         if name == "donut_create":
