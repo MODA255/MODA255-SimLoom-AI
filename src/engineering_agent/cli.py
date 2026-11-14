@@ -118,12 +118,16 @@ def _parser() -> argparse.ArgumentParser:
     projects.add_argument("--db", default="engineering-agent.db")
     mcp = sub.add_parser("mcp", help="启动 stdio MCP tool server")
     mcp.add_argument("--profile", choices=["safe", "full"], default="safe")
+    mcp.add_argument("--allow-scripts", action="store_true", help="显式允许受控 CAD 辅助脚本策略")
     mcp_config = sub.add_parser("mcp-config", help="生成外部 MCP 客户端配置")
     mcp_config.add_argument("--client", choices=["generic", "claude", "codex"], default="generic")
     mcp_config.add_argument("--name", default="simloom-ai")
     mcp_config.add_argument("--profile", choices=["safe", "full"], default="safe")
     mcp_config.add_argument("--python", dest="python_executable", help="MCP server 使用的 Python 可执行文件")
-    mcp_config.add_argument("--output", help="写入配置文件；省略时打印到标准输出")
+    mcp_config.add_argument("--read-only", action="store_true", help="生成 safe profile 配置")
+    mcp_config.add_argument("--allow-scripts", action="store_true", help="让生成的 server 显式允许受控 CAD 辅助脚本")
+    mcp_config.add_argument("--write", action="store_true", help="写入默认客户端配置文件")
+    mcp_config.add_argument("--output", help="写入指定配置文件；省略时打印到标准输出")
     validate = sub.add_parser("validate", help="校验自然语言生成的执行计划")
     validate.add_argument("prompt")
     validate.add_argument("--parameters", default="{}", help="校验计划时使用的工程参数 JSON")
@@ -231,14 +235,20 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     if args.command == "mcp":
+        if args.allow_scripts:
+            agent.config.setdefault("cad", {})["allow_scripts"] = True
         serve_stdio(agent, args.profile)
         return 0
     if args.command == "mcp-config":
+        profile = "safe" if args.read_only else args.profile
         options = {"client": args.client, "name": args.name, "config_path": args.config,
-                   "profile": args.profile, "python_executable": args.python_executable}
-        if args.output:
-            target = write_config(args.output, **options)
-            print(json.dumps({"path": str(target), "client": args.client, "profile": args.profile}, ensure_ascii=False))
+                   "profile": profile, "python_executable": args.python_executable,
+                   "allow_scripts": args.allow_scripts}
+        if args.output or args.write:
+            output = args.output or (str(Path.home() / ".codex" / "config.toml")
+                                     if args.client == "codex" else ".mcp.json")
+            target = write_config(output, **options)
+            print(json.dumps({"path": str(target), "client": args.client, "profile": profile}, ensure_ascii=False))
         else:
             print(render_config(**options), end="")
         return 0

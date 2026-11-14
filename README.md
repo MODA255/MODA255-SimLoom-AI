@@ -540,7 +540,7 @@ MCP 层支持资源发现、资源模板、分页、订阅、schema version、�
 ```bash
 PYTHONPATH=src python -m engineering_agent.cli \
   --config configs/my-engineering-agent.json \
-  mcp-config --client claude --profile safe --output .mcp.json
+  mcp-config --client claude --profile safe --write --output .mcp.json
 ```
 
 支持 `generic`、`claude` JSON 和 `codex` TOML，详细说明见

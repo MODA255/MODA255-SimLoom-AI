@@ -119,10 +119,10 @@ def test_mcp_surface_lists_and_calls_tools():
 def test_mcp_client_config_generates_generic_claude_and_codex_shapes(tmp_path):
     config_path = tmp_path / "agent.json"
     config_path.write_text("{}", encoding="utf-8")
-    generic = build_config(client="generic", config_path=config_path, profile="safe")
+    generic = build_config(client="generic", config_path=config_path, profile="safe", allow_scripts=True)
     command = generic["mcpServers"]["simloom-ai"]
-    assert command["args"][-3:] == ["mcp", "--profile", "safe"]
-    assert command["args"][-1] == "safe"
+    assert command["args"][4:7] == ["mcp", "--profile", "safe"]
+    assert command["args"][-1] == "--allow-scripts"
     assert command["args"][3] == str(config_path.resolve())
 
     claude = render_config(client="claude", name="simloom", config_path=config_path, profile="full")
@@ -131,9 +131,21 @@ def test_mcp_client_config_generates_generic_claude_and_codex_shapes(tmp_path):
     codex = render_config(client="codex", name="simloom-ai", config_path=config_path)
     assert "[mcp_servers.simloom_ai]" in codex
     assert "startup_timeout_sec = 20" in codex
+    assert 'default_tools_approval_mode = "approve"' in codex
 
-    written = write_config(tmp_path / "nested" / ".mcp.json", client="generic", config_path=config_path)
-    assert written.exists() and '"mcpServers"' in written.read_text(encoding="utf-8")
+    json_target = tmp_path / "nested" / ".mcp.json"
+    json_target.parent.mkdir()
+    json_target.write_text('{"other": true, "mcpServers": {"existing": {"command": "keep"}}}', encoding="utf-8")
+    written = write_config(json_target, client="generic", config_path=config_path)
+    text = written.read_text(encoding="utf-8")
+    assert written.exists() and '"other": true' in text and '"existing"' in text and '"simloom-ai"' in text
+
+    toml_target = tmp_path / "codex" / "config.toml"
+    toml_target.parent.mkdir()
+    toml_target.write_text('[mcp_servers.simloom_ai]\ncommand = "old"\n\n[profiles.default]\nname = "keep"\n', encoding="utf-8")
+    write_config(toml_target, client="codex", config_path=config_path)
+    toml = toml_target.read_text(encoding="utf-8")
+    assert 'command = "old"' not in toml and 'mcp_servers.simloom_ai' in toml and '[profiles.default]' in toml
 
 
 def test_mcp_returns_structured_content_and_operation_schema_metadata(tmp_path):
