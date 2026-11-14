@@ -16,10 +16,15 @@ from pathlib import Path
 def _annotation_text(testcase: ET.Element, failure: ET.Element) -> str:
     name = testcase.get("name", "unknown test")
     classname = testcase.get("classname", "")
-    detail = " ".join((failure.get("message") or "", "".join(failure.itertext()))).strip()
-    detail = " ".join(detail.split())
-    if len(detail) > 900:
-        detail = detail[:897] + "..."
+    raw_detail = " ".join((failure.get("message") or "", "".join(failure.itertext()))).strip()
+    # Pytest puts the useful assertion or subprocess stderr at the end of the
+    # traceback. Keep both ends so long tracebacks remain actionable in an
+    # annotation instead of ending before the actual failure reason.
+    compact = " ".join(raw_detail.split())
+    if len(compact) > 900:
+        detail = compact[:300] + " … " + compact[-580:]
+    else:
+        detail = compact
     return f"{classname}.{name}: {detail}" if classname else f"{name}: {detail}"
 
 
