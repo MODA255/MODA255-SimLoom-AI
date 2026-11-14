@@ -51,7 +51,7 @@
     canvas.addEventListener('dblclick',reset);root.querySelector('.reset').onclick=reset;
     root.querySelector('.wire').onclick=()=>{wire=!wire;draw();};
     new ResizeObserver(draw).observe(canvas);
-    root.querySelector('.legend').textContent=data.scalar_range?'结果场：'+data.scalar_range.join(' → '):'几何视图 · 未加载结果场';
+    root.querySelector('.legend').textContent=data.scalar_range?('结果场'+(data.scalar_name?'（'+data.scalar_name+'）':'')+'：'+data.scalar_range.join(' → ')):'几何视图 · 未加载结果场';
     status.textContent=data.indices.length/3+' 个三角形 · 自动适配模型尺寸';
     canvas.dataset.triangleCount=String(data.indices.length/3);draw();
   })();

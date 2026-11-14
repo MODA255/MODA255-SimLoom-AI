@@ -187,7 +187,7 @@ def render_asset_svg(asset: dict[str, Any]) -> str:
     geometry = asset.get("geometry", {})
     if geometry.get("format") == "DXF" and geometry.get("entities"):
         return render_dxf_svg(geometry)
-    if geometry.get("format") == "OBJ" and geometry.get("vertices"):
+    if str(geometry.get("format", "")).upper() in {"OBJ", "VTK", "VTU"} and geometry.get("vertices"):
         return render_mesh_svg(geometry)
     bbox = geometry.get("bbox") or {}
     if bbox:
@@ -288,7 +288,7 @@ def render_mesh_svg(geometry: dict[str, Any], width: int = 720, height: int = 46
         z = float(point.get("z", 0)) - z_min
         return 40 + (x - 0.45 * y) * scale, height - 40 - (0.75 * y + 0.5 * z) * scale
 
-    body = [f"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 {width} {height}' role='img'><rect width='100%' height='100%' fill='#f7f9fc'/><text x='18' y='24' font-family='system-ui' font-size='14'>OBJ mesh wireframe</text>"]
+    body = [f"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 {width} {height}' role='img'><rect width='100%' height='100%' fill='#f7f9fc'/><text x='18' y='24' font-family='system-ui' font-size='14'>{escape(str(geometry.get('format', 'mesh')))} mesh wireframe</text>"]
     for face in geometry.get("faces", []):
         if len(face) < 2:
             continue
