@@ -514,6 +514,130 @@ def _draw_mechanical_assembly(document: CadDocument, arguments: dict[str, Any]) 
             "bom_rows": bom_rows, "bom_entities": bom_entities, "spec_hash": metadata["spec_hash"]}
 
 
+def _pid_default_ports(symbol: str, center: dict[str, float], radius: float) -> list[dict[str, Any]]:
+    name = str(symbol).lower()
+    if "pump" in name or "compressor" in name:
+        names = [("suction", -2.0, 0.0, "in"), ("discharge", 2.0, 0.0, "out")]
+    elif "valve" in name or "filter" in name or "strainer" in name:
+        names = [("inlet", -2.0, 0.0, "in"), ("outlet", 2.0, 0.0, "out")]
+    elif "instrument" in name or name.startswith(("fi", "ti", "pi", "li")):
+        names = [("process", -2.0, 0.0, "in"), ("signal", 2.0, 0.0, "out")]
+    else:
+        names = [("inlet", -2.0, 0.0, "in"), ("outlet", 2.0, 0.0, "out")]
+    return [{"name": port, "direction": direction, "point": {"x": center["x"] + dx * radius, "y": center["y"] + dy * radius, "z": center["z"]},
+             "vector": {"x": -1.0 if dx < 0 else 1.0, "y": 0.0, "z": 0.0}} for port, dx, dy, direction in names]
+
+
+def _draw_pid(document: CadDocument, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Create a port-connected P&ID and independently audit its graph."""
+    spec = arguments.get("spec") if isinstance(arguments.get("spec"), dict) else arguments
+    layout = str(arguments.get("layout", spec.get("layout", "Model")) or "Model")
+    if layout != "Model" and layout not in document.sheets:
+        raise ValueError("PID_LAYOUT_NOT_FOUND:" + layout)
+    created: list[str] = []
+    ports_by_ref: dict[str, dict[str, dict[str, Any]]] = {}
+    symbol_records: list[dict[str, Any]] = []
+    entity_groups = [("equipment", spec.get("equipment") or []), ("valves", spec.get("valves") or []),
+                     ("instruments", spec.get("instruments") or []), ("connectors", spec.get("connectors") or [])]
+    fields = _mechanical_layout_fields(layout)
+    for group_name, items in entity_groups:
+        if not isinstance(items, list):
+            raise ValueError("PID_" + group_name.upper() + "_INVALID")
+        for index, item in enumerate(items, 1):
+            if not isinstance(item, dict):
+                raise ValueError("PID_SYMBOL_INVALID")
+            ref = str(item.get("id", "")).strip() or f"{group_name[:3]}-{index}"
+            if ref in ports_by_ref:
+                raise ValueError("PID_SYMBOL_ID_DUPLICATE:" + ref)
+            center = _point(item.get("center", {"x": item.get("x", 0), "y": item.get("y", 0), "z": item.get("z", 0)}))
+            radius = _mechanical_number(item.get("radius", 5), "PID_SYMBOL_RADIUS_INVALID")
+            symbol = str(item.get("symbol", group_name.rstrip("s").upper()))
+            raw_ports = item.get("ports")
+            if raw_ports is None:
+                ports = _pid_default_ports(symbol, center, radius)
+            else:
+                if not isinstance(raw_ports, list) or not raw_ports:
+                    raise ValueError("PID_PORTS_INVALID:" + ref)
+                ports = []
+                for port in raw_ports:
+                    if not isinstance(port, dict) or not str(port.get("name", "")).strip():
+                        raise ValueError("PID_PORT_INVALID:" + ref)
+                    point = _point(port.get("point", {"x": center["x"] + float((port.get("offset") or {}).get("x", 0)),
+                                                         "y": center["y"] + float((port.get("offset") or {}).get("y", 0)), "z": center["z"]}))
+                    ports.append({"name": str(port["name"]), "direction": str(port.get("direction", "bidirectional")),
+                                  "point": point, "vector": _point(port.get("vector", {"x": 1, "y": 0, "z": 0}))})
+            if len({str(port["name"]) for port in ports}) != len(ports):
+                raise ValueError("PID_PORT_DUPLICATE:" + ref)
+            circle = {"id": document.next_id("pid-symbol"), "type": "CIRCLE", "layer": str(item.get("layer", "PID_SYMBOLS")),
+                      "center": center, "radius": radius, "pid_symbol": symbol, "pid_ports": copy.deepcopy(ports),
+                      "pid_ref": ref, "pid_group": group_name, **fields}
+            document.ensure_layer(circle["layer"]); document.entities.append(circle); created.append(circle["id"])
+            label = {"id": document.next_id("pid-label"), "type": "MTEXT", "layer": circle["layer"],
+                     "insert": {"x": center["x"] + radius + 2, "y": center["y"], "z": center["z"]},
+                     "text": str(item.get("label", ref)), "height": float(item.get("text_height", 2.5)), "width": 0, "rotation": 0,
+                     "pid_symbol": symbol, "pid_ref": ref, **fields}
+            document.entities.append(label); created.append(label["id"])
+            ports_by_ref[ref] = {str(port["name"]): copy.deepcopy(port) for port in ports}
+            symbol_records.append({"id": ref, "symbol": symbol, "group": group_name, "entity_id": circle["id"], "ports": copy.deepcopy(ports)})
+    lines = spec.get("lines") or []
+    if not isinstance(lines, list):
+        raise ValueError("PID_LINES_INVALID")
+    line_records: list[dict[str, Any]] = []
+    line_numbers: set[str] = set()
+    for index, raw_line in enumerate(lines, 1):
+        if not isinstance(raw_line, dict):
+            raise ValueError("PID_LINE_INVALID")
+        left, right = str(raw_line.get("from", "")), str(raw_line.get("to", ""))
+        if "." not in left or "." not in right:
+            raise ValueError("PID_LINE_PORT_REFERENCE_INVALID")
+        left_ref, left_port = left.split(".", 1); right_ref, right_port = right.split(".", 1)
+        if left_ref not in ports_by_ref or left_port not in ports_by_ref[left_ref]:
+            raise ValueError("PID_PORT_NOT_FOUND:" + left)
+        if right_ref not in ports_by_ref or right_port not in ports_by_ref[right_ref]:
+            raise ValueError("PID_PORT_NOT_FOUND:" + right)
+        start, end = ports_by_ref[left_ref][left_port]["point"], ports_by_ref[right_ref][right_port]["point"]
+        route = raw_line.get("points")
+        if route is None:
+            route_points = [start]
+            if bool(raw_line.get("orthogonal", spec.get("orthogonal", True))) and abs(start["x"] - end["x"]) > 1e-9 and abs(start["y"] - end["y"]) > 1e-9:
+                corner = str(raw_line.get("corner", "x_then_y"))
+                route_points.append({"x": end["x"], "y": start["y"], "z": start["z"]} if corner == "x_then_y" else {"x": start["x"], "y": end["y"], "z": start["z"]})
+            route_points.append(end)
+        else:
+            if not isinstance(route, list) or len(route) < 2:
+                raise ValueError("PID_LINE_ROUTE_INVALID")
+            route_points = [_point(value) for value in route]
+            route_points[0], route_points[-1] = start, end
+        number = str(raw_line.get("number", "")).strip()
+        if number and number in line_numbers:
+            raise ValueError("PID_LINE_NUMBER_DUPLICATE:" + number)
+        if number:
+            line_numbers.add(number)
+        process = {"service": str(raw_line.get("service", "")), "line_type": str(raw_line.get("line_type", "CONTINUOUS")),
+                   "number": number, "from": left, "to": right}
+        entity = {"id": document.next_id("pid-line"), "type": "LWPOLYLINE", "layer": str(raw_line.get("layer", "PID_PROCESS")),
+                  "vertices": route_points, "closed": False, "process_line": process,
+                  "process_route": {"orthogonal": len(route_points) <= 3, "corner": str(raw_line.get("corner", "x_then_y"))},
+                  "pid_from": left, "pid_to": right, **fields}
+        document.ensure_layer(entity["layer"]); document.entities.append(entity); created.append(entity["id"])
+        line_records.append({"id": entity["id"], "from": left, "to": right, "number": number, "route": copy.deepcopy(route_points)})
+        if number:
+            mid = route_points[len(route_points) // 2]
+            label = {"id": document.next_id("pid-line-label"), "type": "MTEXT", "layer": entity["layer"],
+                     "insert": {"x": mid["x"], "y": mid["y"] + 2, "z": mid["z"]}, "text": number, "height": 2.0, "width": 0, "rotation": 0,
+                     "pid_line_id": entity["id"], **fields}
+            document.entities.append(label); created.append(label["id"])
+    audit = audit_pid(document.to_dxf(), tolerance=float(spec.get("tolerance", 1e-6)), requirements=spec.get("requirements") or {})
+    if not audit["valid"]:
+        raise ValueError("PID_DRAW_VALIDATION_FAILED:" + json.dumps(audit["errors"], ensure_ascii=False))
+    metadata = {"schema_version": "simloom-ai/pid/v1", "layout": layout, "symbols": copy.deepcopy(symbol_records),
+                "lines": copy.deepcopy(line_records), "audit": copy.deepcopy(audit),
+                "spec_hash": hashlib.sha256(json.dumps(spec, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()}
+    document.metadata["pid"] = metadata
+    return {"schema_version": metadata["schema_version"], "layout": layout, "entities": created,
+            "symbols": symbol_records, "lines": line_records, "graph": audit, "spec_hash": metadata["spec_hash"]}
+
+
 def _query_entities(document: CadDocument, arguments: dict[str, Any]) -> dict[str, Any]:
     """Run a deterministic, read-only semantic query over canonical entities."""
     raw_types = arguments.get("entity_types") or []
@@ -1807,6 +1931,8 @@ class CadOperationEngine:
             return _draw_arch_plan(document, arguments)
         if name == "draw_mechanical_assembly":
             return _draw_mechanical_assembly(document, arguments)
+        if name == "draw_pid":
+            return _draw_pid(document, arguments)
         if name in {"document_open", "document_inspect"}:
             return {"document": document.to_dict()}
         if name == "donut_create":
@@ -3546,6 +3672,13 @@ class CadOperationEngine:
             validation["mechanical_assembly"] = mechanical
             integrity["mechanical_assembly_metadata"] = persisted_assembly.get("schema_version") == expected_assembly.get("schema_version")
             integrity["mechanical_assembly_dimensions"] = mechanical["valid"]
+        if "pid" in expected.metadata:
+            expected_pid = expected.metadata.get("pid") or {}
+            from .pid_validation import audit_pid
+            pid_audit = audit_pid(persisted.to_dxf(), tolerance=1e-6, requirements={})
+            validation["pid"] = pid_audit
+            integrity["pid_metadata"] = (persisted.metadata.get("pid") or {}).get("schema_version") == expected_pid.get("schema_version")
+            integrity["pid_graph"] = bool(pid_audit.get("valid"))
         validation["persisted"] = True
         validation["integrity"] = integrity
         validation["valid"] = bool(validation.get("valid")) and all(integrity.values())

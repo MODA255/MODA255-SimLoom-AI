@@ -54,6 +54,13 @@ def audit_pid(document: dict[str, Any], *, tolerance: float = 1e-6,
     points: list[tuple[float, float, str, str]] = []
     for item in symbols:
         points.append((*_point(item["center"]), "symbol", item["id"]))
+        # A process line normally terminates at a named port rather than at
+        # the symbol's visual centre.  Include those absolute port anchors in
+        # the same connectivity cluster so readback can distinguish a real
+        # connected instrument from an orphaned symbol.
+        for port in item.get("ports", []):
+            if isinstance(port, dict) and port.get("point") is not None:
+                points.append((*_point(port["point"]), "symbol", item["id"]))
     for item in lines:
         route = item.get("route") or [item["start"], item["end"]]
         for index, point in enumerate(route):
