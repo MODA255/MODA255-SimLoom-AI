@@ -46,3 +46,18 @@ def test_cad_query_is_discoverable_through_mcp(tmp_path):
     })
     query = next(item for item in listed["result"]["tools"] if item["name"] == "operation.cad.query")
     assert query["outputSchema"]["properties"]["entities"]["type"] == "array"
+
+
+def test_cad_query_accepts_entity_refs_and_numeric_closed_filters(tmp_path):
+    source = _drawing(tmp_path)
+    agent = EngineeringAgent({"tools": {}})
+    first = agent.execute_operation("cad.query", {
+        "project_dir": str(tmp_path), "input_file": source, "entity_type": "CIRCLE",
+    })
+    entity_ref = first["entities"][0]["ref"]
+    result = agent.execute_operation("cad.query", {
+        "project_dir": str(tmp_path), "input_file": source,
+        "entity_ids": [entity_ref], "number_ranges": {"radius": {"min": 1, "max": 3}},
+        "closed": False,
+    })
+    assert result["matched_ids"] == [first["matched_ids"][0]]

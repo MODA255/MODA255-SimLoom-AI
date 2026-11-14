@@ -57,6 +57,35 @@ def _entity_bounds(entity: dict[str, Any]) -> tuple[float, float, float, float] 
     return min(xs), min(ys), max(xs), max(ys)
 
 
+def _query_identifier(value: Any) -> str:
+    """Normalize an entity id or an EntityRef-shaped value for read queries."""
+    if isinstance(value, dict):
+        nested = value.get("ref")
+        if isinstance(nested, dict):
+            value = nested
+        for key in ("entity_id", "id", "handle"):
+            if isinstance(value, dict) and value.get(key) is not None:
+                return str(value[key])
+    return str(value)
+
+
+def _query_property(entity: dict[str, Any], key: str) -> Any:
+    value: Any = entity
+    for part in str(key).split("."):
+        if not isinstance(value, dict) or part not in value:
+            return None
+        value = value[part]
+    return value
+
+
+def _query_number(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
 def _query_entities(document: CadDocument, arguments: dict[str, Any]) -> dict[str, Any]:
     """Run a deterministic, read-only semantic query over canonical entities."""
     raw_types = arguments.get("entity_types") or []
@@ -75,9 +104,12 @@ def _query_entities(document: CadDocument, arguments: dict[str, Any]) -> dict[st
     layers = {str(value) for value in raw_layers if str(value).strip()}
     if arguments.get("layer"):
         layers.add(str(arguments["layer"]))
-    requested_ids = {str(value) for value in (arguments.get("entity_ids") or [])}
-    if isinstance(arguments.get("entity_ids"), str):
-        requested_ids = {str(arguments["entity_ids"])}
+    raw_ids = arguments.get("entity_ids") or []
+    if isinstance(raw_ids, (str, dict)):
+        raw_ids = [raw_ids]
+    if not isinstance(raw_ids, list):
+        raise ValueError("CAD_QUERY_ENTITY_IDS_INVALID")
+    requested_ids = {_query_identifier(value) for value in raw_ids if value is not None}
     selection_name = str(arguments.get("selection_set") or "")
     if selection_name:
         selection = document.selection_sets.get(selection_name)
@@ -98,6 +130,23 @@ def _query_entities(document: CadDocument, arguments: dict[str, Any]) -> dict[st
     properties = arguments.get("properties") or {}
     if not isinstance(properties, dict):
         raise ValueError("CAD_QUERY_PROPERTIES_INVALID")
+    numeric_ranges = arguments.get("number_ranges", arguments.get("numeric_ranges", {})) or {}
+    if not isinstance(numeric_ranges, dict):
+        raise ValueError("CAD_QUERY_NUMBER_RANGES_INVALID")
+    closed = arguments.get("closed")
+    if closed is not None and not isinstance(closed, bool):
+        raise ValueError("CAD_QUERY_CLOSED_INVALID")
+    has_constraint = arguments.get("has_constraint")
+    if has_constraint is not None and not isinstance(has_constraint, bool):
+        raise ValueError("CAD_QUERY_CONSTRAINT_FILTER_INVALID")
+    constraint_refs = {str(ref) for constraint in document.constraints for ref in constraint.refs}
+    constraint_kinds: dict[str, set[str]] = {}
+    for constraint in document.constraints:
+        for ref in constraint.refs:
+            constraint_kinds.setdefault(str(ref), set()).add(str(constraint.kind))
+    constraint_kind = arguments.get("constraint_kind")
+    if constraint_kind is not None and not isinstance(constraint_kind, str):
+        raise ValueError("CAD_QUERY_CONSTRAINT_KIND_INVALID")
     window = arguments.get("window")
     query_bounds = None
     if window is not None:
@@ -117,16 +166,49 @@ def _query_entities(document: CadDocument, arguments: dict[str, Any]) -> dict[st
             continue
         if layers and str(entity.get("layer", "0")) not in layers:
             continue
-        if arguments.get("block_name") and str(entity.get("block_name", "")) != str(arguments["block_name"]):
+        block_name = entity.get("block_name", entity.get("name", entity.get("block", "")))
+        if arguments.get("block_name") and str(block_name) != str(arguments["block_name"]):
             continue
         if arguments.get("layout") and str(entity.get("sheet", entity.get("layout", "Model"))) != str(arguments["layout"]):
             continue
+        if closed is not None and bool(entity.get("closed", False)) is not closed:
+            continue
+        if has_constraint is not None and ((entity_id in constraint_refs or handle in constraint_refs) is not has_constraint):
+            continue
+        if constraint_kind:
+            kinds = constraint_kinds.get(entity_id, set()) | constraint_kinds.get(handle, set())
+            if str(constraint_kind) not in kinds:
+                continue
         if text_query is not None:
             haystack = str(entity.get("text", entity.get("tag", entity.get("prompt", ""))))
             found = text_query in haystack if case_sensitive else str(text_query).casefold() in haystack.casefold()
             if not found:
                 continue
-        if any(entity.get(key) != value for key, value in properties.items()):
+        if any(_query_property(entity, key) != value for key, value in properties.items()):
+            continue
+        numeric_match = True
+        for key, specification in numeric_ranges.items():
+            value = _query_number(_query_property(entity, key))
+            if value is None:
+                numeric_match = False
+                break
+            if isinstance(specification, (int, float)):
+                if value != float(specification):
+                    numeric_match = False
+                    break
+                continue
+            if not isinstance(specification, dict):
+                raise ValueError("CAD_QUERY_NUMBER_RANGE_INVALID:" + str(key))
+            if specification.get("equals") is not None and value != float(specification["equals"]):
+                numeric_match = False
+                break
+            if specification.get("min") is not None and value < float(specification["min"]):
+                numeric_match = False
+                break
+            if specification.get("max") is not None and value > float(specification["max"]):
+                numeric_match = False
+                break
+        if not numeric_match:
             continue
         if query_bounds is not None:
             bounds = _entity_bounds(entity)
