@@ -185,6 +185,24 @@ def test_mcp_pagination_subscription_and_schema_compatibility(tmp_path):
     assert unsupported["result"]["structuredContent"]["error"]["code"] == "SCHEMA_VERSION_UNSUPPORTED"
 
 
+def test_mcp_negotiates_requested_protocol_and_publishes_standard_output_schema():
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="full")
+    initialized = server.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                                 "params": {"protocolVersion": "2025-03-26"}})
+    assert initialized["result"]["protocolVersion"] == "2025-03-26"
+    defaulted = server.handle({"jsonrpc": "2.0", "id": 2, "method": "initialize", "params": {}})
+    assert defaulted["result"]["protocolVersion"] == "2025-03-26"
+
+    listed = server.handle({"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {"limit": 500}})
+    plan = next(item for item in listed["result"]["tools"] if item["name"] == "engineering_plan")
+    operation = next(item for item in listed["result"]["tools"] if item["name"] == "operation.cad.entity_move")
+    assert plan["outputSchema"]["type"] == "object"
+    assert "schema_version" in plan["inputSchema"]["properties"]
+    assert operation["outputSchema"]["type"] == "object"
+    assert "document" in operation["outputSchema"]["properties"]
+    assert "operationSchemaVersion" in operation["inputSchema"]["properties"]
+
+
 def test_mcp_stdio_notifications_ping_and_real_subprocess_round_trip(tmp_path):
     environment = dict(os.environ)
     environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")

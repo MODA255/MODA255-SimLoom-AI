@@ -181,3 +181,8 @@ Windows 交互式会话中完成并通过独立 vendor evidence 的任务，才�
 提供手动触发的 Windows self-hosted smoke-test workflow，将 preflight、真实任务、输出归档和
 machine evidence 登记串成一条验收路径。它改善了四软件实际接入的可执行性，仍不能替代带许可
 桌面环境中的首次运行。
+
+2026-11-14 后续：MCP 初始化现在会回显调用方请求的受支持协议版本，未指定版本时选择当前默认
+版本；`tools/list` 对内置工具和 typed operation 都发布标准 `outputSchema`，同时保留
+SimLoom 的 schema、输出类型、事务副作用和安全级别扩展字段。外部客户端可以直接发现输入与
+输出契约，不必解析自定义元数据；仍需用不同 MCP 客户端做互操作和断线重连验收。

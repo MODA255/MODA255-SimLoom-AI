@@ -20,6 +20,9 @@ from .viewer import asset_view
 class MCPServer:
     """Small stdio MCP-compatible tool surface for local agent clients."""
 
+    SUPPORTED_PROTOCOL_VERSIONS = ("2024-11-05", "2025-03-26")
+    DEFAULT_PROTOCOL_VERSION = "2025-03-26"
+
     def __init__(self, agent: EngineeringAgent, profile: str = "safe"):
         self.agent = agent
         self.operations = OperationRegistry()
@@ -88,9 +91,10 @@ class MCPServer:
         if method == "initialize":
             params = request.get("params") or {}
             requested = params.get("protocolVersion")
-            if requested and requested not in {"2024-11-05", "2025-03-26"}:
+            if requested and requested not in self.SUPPORTED_PROTOCOL_VERSIONS:
                 return self._error(request_id, ProtocolError(ErrorCode.INVALID_ARGUMENTS, f"UNSUPPORTED_PROTOCOL_VERSION:{requested}"))
-            return {"jsonrpc": "2.0", "id": request_id, "result": {"protocolVersion": "2024-11-05", "serverInfo": {"name": "engineering-agent", "version": "0.4.0", "schemaVersion": self.schema_version, "supportedSchemaVersions": [self.schema_version]}, "capabilities": {"tools": {"listChanged": False}, "resources": {"subscribe": True, "listChanged": False}, "prompts": {"listChanged": False}}, "profile": self.profile}}
+            selected = requested or self.DEFAULT_PROTOCOL_VERSION
+            return {"jsonrpc": "2.0", "id": request_id, "result": {"protocolVersion": selected, "serverInfo": {"name": "engineering-agent", "version": "0.4.0", "schemaVersion": self.schema_version, "supportedSchemaVersions": [self.schema_version]}, "capabilities": {"tools": {"listChanged": False}, "resources": {"subscribe": True, "listChanged": False}, "prompts": {"listChanged": False}}, "profile": self.profile}}
         if method == "tools/list":
             try:
                 return {"jsonrpc": "2.0", "id": request_id, "result": self._paged(self._tools(), request.get("params") or {}, "tools")}
@@ -284,14 +288,56 @@ class MCPServer:
                 "x-side-effects": operation.get("side_effects", []),
                 "x-safety": operation.get("safety", "safe"),
             }
+            input_schema["properties"]["schema_version"] = {
+                "type": "string",
+                "description": "Optional MCP schema version; rejected when unsupported",
+            }
             input_schema["properties"]["operation_schema_version"] = {
                 "type": "string",
                 "description": "Optional operation contract version; rejected when unsupported",
             }
+            input_schema["properties"]["operationSchemaVersion"] = {
+                "type": "string",
+                "description": "Camel-case alias for operation_schema_version",
+            }
             if operation.get("parameter_alternatives"):
                 input_schema["allOf"] = [{"anyOf": [{"required": [key]} for key in group]}
                                          for group in operation["parameter_alternatives"]]
-            tools.append({"name": "operation." + operation["name"], "description": operation["description"], "inputSchema": input_schema})
+            output_properties = operation.get("output_schema") or {}
+            tools.append({"name": "operation." + operation["name"], "description": operation["description"],
+                          "inputSchema": input_schema,
+                          "outputSchema": {"type": "object", "properties": output_properties}})
+        # MCP clients should be able to discover a typed output contract using
+        # the standard field.  Keep the schemas intentionally permissive for
+        # built-in tools because their result shape is versioned in
+        # structuredContent and can include vendor-specific details.
+        builtin_outputs = {
+            "engineering_plan": {"type": "object", "properties": {"plan": {"type": "object"}, "validation": {"type": "object"}}},
+            "engineering_preflight": {"type": "object"},
+            "engineering_run": {"type": "object"},
+            "engineering_generate": {"type": "object"},
+            "engineering_offline_run": {"type": "object"},
+            "engineering_doctor": {"type": "object"},
+            "engineering_operations": {"type": "object", "properties": {"operations": {"type": "array"}}},
+            "engineering_ingest": {"type": "object"},
+            "engineering_project": {"type": "object"},
+            "engineering_asset_view": {"type": "object", "properties": {"asset": {"type": "object"}, "preview_note": {"type": ["string", "null"]}}},
+            "engineering_inspect_image": {"type": "object"},
+            "engineering_measure_image": {"type": "object"},
+            "engineering_version": {"type": "object"},
+            "engineering_diff": {"type": "object"},
+            "engineering_workflow": {"type": "object"},
+            "engineering_software_job": {"type": "object"},
+            "engineering_worker_evidence": {"type": "object"},
+        }
+        for tool in tools:
+            tool.setdefault("outputSchema", builtin_outputs.get(tool["name"], {"type": "object"}))
+            schema = tool.setdefault("inputSchema", {"type": "object", "properties": {}})
+            schema.setdefault("properties", {})
+            schema["properties"].setdefault("schema_version", {
+                "type": "string",
+                "description": "Optional MCP schema version; rejected when unsupported",
+            })
         return tools
 
     @staticmethod
