@@ -72,6 +72,12 @@ def _json_write(path: Path, value: Any):
     _atomic_write(path, json.dumps(value, ensure_ascii=False, indent=2).encode("utf-8"))
 
 
+def portable_relative(value: str | Path) -> str:
+    """Return a project-relative path using the manifest's POSIX separators."""
+
+    return str(value).replace("\\", "/")
+
+
 def _alive(pid: int) -> bool:
     if pid <= 0:
         return False
@@ -104,17 +110,20 @@ def _alive(pid: int) -> bool:
 
 def confined_path(root: Path, relative: str) -> Path:
     """Reject traversal and symlinks, including links within the workspace."""
-    part = Path(relative)
+    root = Path(root).resolve()
+    part = Path(portable_relative(relative))
     if part.is_absolute() or not part.parts or ".." in part.parts:
         raise ValueError("TRANSACTION_PATH_OUTSIDE_PROJECT")
     target = root / part
     for component in (target, *target.parents):
         if component == root:
             break
-        if component.is_symlink():
+        is_junction = getattr(component, "is_junction", lambda: False)()
+        if component.is_symlink() or is_junction:
             raise ValueError("TRANSACTION_SYMLINK_PATH")
-    if not target.resolve().is_relative_to(root):
-        raise ValueError("TRANSACTION_PATH_OUTSIDE_PROJECT")
+    # The normalized relative path has no traversal components. Avoid
+    # resolving a path that may be created concurrently on Windows; its
+    # extended-prefix representation can otherwise look like an escape.
     return target
 
 
@@ -197,9 +206,13 @@ class RunTransaction:
                 raise ValueError("TRANSACTION_DESTINATION_OUTSIDE_PROJECT")
             entries = []
             targets: set[Path] = set()
+            normalized_expected = {
+                portable_relative(name): value for name, value in (expected_before or {}).items()
+            }
             for relative, staged in generated.items():
-                target = confined_path(final_root, relative)
-                project_relative = str(target.relative_to(self.project_dir))
+                portable = portable_relative(relative)
+                target = confined_path(final_root, portable)
+                project_relative = target.relative_to(self.project_dir).as_posix()
                 confined_path(self.project_dir, project_relative)
                 if target in targets or target in {self.lock_path, self.guard_path} or target.is_relative_to(self.project_dir / "artifacts/runs"):
                     raise ValueError("TRANSACTION_RESERVED_OR_DUPLICATE_PATH")
@@ -211,8 +224,9 @@ class RunTransaction:
                     raise FileNotFoundError(source)
                 entry = {"key": relative, "path": project_relative, "before": file_hash(target),
                          "after": file_hash(source) if source is not None else None,
-                         "backup": str(Path("backup") / relative), "snapshot": str(Path("after") / relative)}
-                if expected_before is not None and project_relative in expected_before and entry["before"] != expected_before[project_relative]:
+                         "backup": portable_relative(Path("backup") / portable),
+                         "snapshot": portable_relative(Path("after") / portable)}
+                if project_relative in normalized_expected and entry["before"] != normalized_expected[project_relative]:
                     raise RuntimeError("TRANSACTION_CONFLICT:" + project_relative)
                 if entry["before"] is not None:
                     _atomic_copy(target, confined_path(self.run_dir, entry["backup"]))

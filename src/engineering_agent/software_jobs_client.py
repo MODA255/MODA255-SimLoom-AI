@@ -54,7 +54,7 @@ class ReceiptStore:
                        output_manifest=output_manifest, updated_at=time.time())
         staged = transaction.stage_dir / "job-receipts" / (identifier + ".json")
         _json_write(staged, receipt)
-        return {str(self.path(identifier).relative_to(self.project)): str(staged)}
+        return {self.path(identifier).relative_to(self.project).as_posix(): str(staged)}
 
     def list(self):
         folder = confined_path(self.project, ".engineering-agent/software-jobs")

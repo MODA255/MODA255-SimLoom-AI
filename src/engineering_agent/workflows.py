@@ -14,7 +14,7 @@ from .models import AgentRequest, ExecutionPlan, PlanStep, RunReport, ToolName, 
 from .script_gen import ModelSpec, ScriptGenerator
 from .software_jobs_client import ReceiptStore, execute_remote
 from .software_worker import run_job
-from .transactions import RunTransaction, _atomic_copy, _json_write, confined_path, file_hash
+from .transactions import RunTransaction, _atomic_copy, _json_write, confined_path, file_hash, portable_relative
 from .validation import validate_plan, validate_report
 from .worker_jobs import job_id, request_digest
 from .worker_protocol import WorkerError, safe_file
@@ -142,6 +142,9 @@ class DurableWorkflow:
                     not adapter.bridge_url and not adapter._valid_command(binding.get('command'))):
                 raise WorkerError('ACTION_BINDING_REQUIRED', step.id)
             script, inputs, outputs, _validation, _kind = adapter.file_contract(step, binding)
+            script = portable_relative(script)
+            inputs = [portable_relative(name) for name in inputs]
+            outputs = [portable_relative(name) for name in outputs]
             if not outputs:
                 raise WorkerError('OUTPUT_CONTRACT_REQUIRED', step.id)
             ancestors[step.id] = set(step.depends_on)
@@ -157,7 +160,7 @@ class DurableWorkflow:
                 produced[name] = step.id
             state['steps'][step.id] = {'status': 'not_started', 'binding_digest': self.binding_fingerprint(step)}
         for path in path_cases:
-            if any(str(parent) in path_cases for parent in Path(path).parents if str(parent) != "."):
+            if any(str(parent) in path_cases for parent in Path(path.replace("\\", "/")).parents if str(parent) != "."):
                 raise WorkerError("WORKFLOW_PATH_COLLISION", path)
         external = set()
         for step in ordered_steps(plan):
@@ -352,13 +355,13 @@ class DurableWorkflow:
             final = copy.deepcopy(state)
             final.update(status='completed', updated_at=time.time(), publication_run_id=txn.run_id,
                          report=report.to_dict(), published=[
-                             {'path': str(Path(path).relative_to(self.store.project)),
+                             {'path': portable_relative(Path(path).relative_to(self.store.project)),
                               'sha256': file_hash(Path((generated | software_outputs)[name]))}
                              for name, path in report.generated_files.items()])
             final['published'].extend({'path': item['path'], 'sha256': item['sha256']} for item in report.artifact_manifest)
             staged = txn.stage_dir / 'workflow-state.json'
             _json_write(staged, final)
-            metadata[str(self.store.path(state['workflow_id']).relative_to(self.store.project))] = str(staged)
+            metadata[portable_relative(self.store.path(state['workflow_id']).relative_to(self.store.project))] = str(staged)
             files, manifest = commit_outputs(txn, generated, software_outputs, metadata, expected_before=state["before"])
             report.generated_files, report.artifact_manifest, report.timeline = files, manifest, txn.events()
             self.progress.emit('workflow', self.store.summary(final))

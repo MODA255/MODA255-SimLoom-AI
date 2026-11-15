@@ -60,7 +60,7 @@ def _project_path(project_root: Path, value: str | Path, *, must_exist: bool = F
     candidate = lexical.resolve()
     if candidate == root or not candidate.is_relative_to(root):
         raise ValueError("PATH_OUTSIDE_PROJECT")
-    relative = str(candidate.relative_to(root))
+    relative = candidate.relative_to(root).as_posix()
     target = confined_path(root, relative)
     if must_exist and not target.exists():
         raise FileNotFoundError(target)
@@ -224,7 +224,7 @@ class EngineeringAgent:
         try:
             staged = txn.stage_dir / "asset" / destination.name
             self._write_asset_file(staged, format_name, payload)
-            relative = str(destination.relative_to(project_root))
+            relative = destination.relative_to(project_root).as_posix()
             staged_files = {relative: str(staged)}
             if format_name.lower() == "dxf":
                 cad_document = CadDocument.open(staged)
@@ -426,7 +426,7 @@ class EngineeringAgent:
                 txn.checkpoint("after-step-tessellation", {"validation": validation, "mesh": {"vertex_count": staged_mesh.get("vertex_count"), "face_count": staged_mesh.get("face_count")}})
                 if not validation["valid"]:
                     raise ValueError("BREP_MESH_VALIDATION_FAILED:" + ",".join(validation["errors"]))
-                relative = str(output_path.relative_to(project_root))
+                relative = output_path.relative_to(project_root).as_posix()
                 persisted: dict[str, Any] = {}
 
                 def validate_persisted(committed_files: dict[str, str]):
@@ -469,7 +469,7 @@ class EngineeringAgent:
                 txn.checkpoint("after-brep-write", staged_validation)
                 if not staged_validation["valid"]:
                     raise ValueError("BREP_VALIDATION_FAILED:" + ",".join(staged_validation["errors"]))
-                relative = str(output_path.relative_to(project_root))
+                relative = output_path.relative_to(project_root).as_posix()
                 staged_files = {relative: str(staged)}
                 if name == "brep.build_feature_graph":
                     manifest = Path(str(staged) + ".brep.json")
