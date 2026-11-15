@@ -134,6 +134,11 @@ viewport、title block、hatch、线性/径向/角度/坐标 dimension、leader�
 原子 batch operation。当前注册表包含绘图、编辑、检查和持久历史等 `cad.*` operation；DXF 旁边会生成 `.cad.json` 元数据文件，保留
 选择集、约束等应用上下文。新建实体的稳定 ID 同时写入 DXF 的应用数据；已有实体继续使用原生 handle，外部重排不会按数组顺序重新分配 ID。
 
+为了兼容 AgentCAD 的调用习惯，MCP 和 Python operation gateway 也接受它的扁平名称，例如
+`add_line`、`move`、`fillet` 和 `add_linear_dim`。兼容层只做名称和参数映射，实际执行仍落到
+对应的 `cad.*` operation，因此继续使用 SimLoom 的文件上下文、事务、验证、diff 和回滚；详见
+[`docs/AGENTCAD_COMPAT.md`](docs/AGENTCAD_COMPAT.md)。
+
 DXF 读写使用 `ezdxf`，在原图纸上更新实体，保留未编辑对象的 handle、外部应用数据、扩展字典、样式、块属性和纸空间。原生标注含定义点和实际图形块；填充可以保留多个边界、孔洞与圆弧/样条边界。保存后会直接读取 DXF 做原生结构审计，并核对实体几何、标注测量值和视口。发现写入丢失或需要结构修复时，事务恢复原文件及历史。
 
 只读 `cad.query` 可以按实体类型、图层、选择集、块名、布局、属性、文字内容、闭合状态、约束引用、

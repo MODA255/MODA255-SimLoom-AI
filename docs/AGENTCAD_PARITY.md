@@ -176,6 +176,12 @@ STEP、CSV、JSON 指标文件。大网格和求解数据库可以在 Windows wo
 并继续通过独立验证、checkpoint、diff、history 和事务回滚。该闭环仍是离线 CAD 模型能力，
 不能替代 CATIA、Ansys、Adams 或 VI-grade 的实机验收。
 
+2026-11-15 后续：新增 AgentCAD 公开 2D operation 名称兼容层。`add_line`、`move`、
+`fillet`、`add_linear_dim` 等平面操作会解析到对应的 `cad.*` typed operation，并在 MCP
+发现中返回 `compatibility.alias_for` 和参数别名信息；所有调用仍进入 SimLoom 的事务和
+验证链。该层解决名称/参数互操作，不等于 AgentCAD 的无文件上下文语义，也不替代商业
+软件后端验收，见 `AGENTCAD_COMPAT.md`。
+
 2026-11-14 后续：Windows worker 增加 `simloom-ai/machine-evidence/v1` 验收记录。只有在
 Windows 交互式会话中完成并通过独立 vendor evidence 的任务，才能由操作员登记软件版本、
 许可证状态、smoke test 和输出哈希；`/capabilities` 的 `verified_actions` 会持续复核这些

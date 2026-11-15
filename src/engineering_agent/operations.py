@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 from typing import Any
 
+from .agentcad_compat import AGENTCAD_OPERATION_ALIASES, resolve_operation
 from .models import PlanStep, ToolName
 
 
@@ -327,9 +328,20 @@ class OperationRegistry:
         self.specs = {spec.name: spec for spec in specs}
 
     def list(self) -> list[dict[str, Any]]:
-        return [self.specs[name].schema() for name in sorted(self.specs)]
+        schemas = [self.specs[name].schema() for name in sorted(self.specs)]
+        for alias in sorted(AGENTCAD_OPERATION_ALIASES):
+            target = resolve_operation(alias)
+            if target not in self.specs:
+                continue
+            schema = self.specs[target].schema()
+            schema["name"] = alias
+            schema["description"] = f"AgentCAD-compatible alias for {target}: {schema['description']}"
+            schema["compatibility"] = {"alias_for": target, "parameter_aliases": True}
+            schemas.append(schema)
+        return schemas
 
     def get(self, name: str) -> OperationSpec:
+        name = resolve_operation(name)
         try:
             return self.specs[name]
         except KeyError as exc:
@@ -442,6 +454,7 @@ class OperationRegistry:
                 "vi-grade.run_vehicle_dynamics": "vi-grade.run_scenario",
             }
             operation = aliases.get(operation, operation)
+        operation = resolve_operation(operation)
         try:
             missing = self.validate(operation, step.parameters)
         except ValueError as exc:

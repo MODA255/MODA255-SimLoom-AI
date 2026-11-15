@@ -357,6 +357,35 @@ def test_repair_planner_covers_extended_errors_without_duplicate_mutations():
     assert len([item for item in plan if item.get("entity_id") == "spline"]) == 1
 
 
+def test_agentcad_operation_alias_uses_the_same_transaction_engine(tmp_path):
+    source = _source(tmp_path)
+    output = tmp_path / "agentcad-alias.dxf"
+    agent = EngineeringAgent({"tools": {}})
+    result = agent.execute_operation("add_line", {
+        "project_dir": str(tmp_path), "input_file": source, "output_file": output,
+        "p1": {"x": 20, "y": 0}, "p2": {"x": 30, "y": 5},
+    })
+    assert result["persisted_validation"]["valid"]
+    assert any(entity["type"] == "LINE" and entity["start"]["x"] == 20
+               for entity in CadDocument.open(output).entities)
+    alias_schema = next(item for item in agent.operations.list() if item["name"] == "add_line")
+    assert alias_schema["compatibility"]["alias_for"] == "cad.line_create"
+
+
+def test_agentcad_alias_parameter_precedence_is_deterministic(tmp_path):
+    source = _source(tmp_path)
+    output = tmp_path / "agentcad-precedence.dxf"
+    agent = EngineeringAgent({"tools": {}})
+    result = agent.execute_operation("add_line", {
+        "project_dir": str(tmp_path), "input_file": source, "output_file": output,
+        "p1": {"x": 20, "y": 0}, "p2": {"x": 30, "y": 5},
+        "start": {"x": 40, "y": 1}, "end": {"x": 50, "y": 2},
+    })
+    assert result["persisted_validation"]["valid"]
+    created = [entity for entity in CadDocument.open(output).entities if entity["type"] == "LINE"][-1]
+    assert created["start"]["x"] == 40 and created["end"]["x"] == 50
+
+
 def test_interactive_dxf_viewer_has_selection_layers_and_replay(tmp_path):
     source = _source(tmp_path)
     result = asset_view(tmp_path, source.name)

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from .adapters import AdapterContext, ToolAdapter, build_adapters
+from .agentcad_compat import normalize_operation
 from .cad_model import CadDocument, validate_cad_document
 from .cad_operations import CadOperationEngine
 from .cad_history import CadHistory
@@ -302,7 +303,7 @@ class EngineeringAgent:
         return VersionStore(project_dir).diff(left, right)
 
     def execute_operation(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
-        arguments = arguments or {}
+        name, arguments, _was_compat_alias = normalize_operation(name, arguments)
         spec = self.operations.get(name)
         schema_errors = self.operations.validate_arguments(name, arguments)
         if schema_errors:
