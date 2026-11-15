@@ -51,7 +51,7 @@ def main() -> int:
     report.parent.mkdir(parents=True, exist_ok=True)
     print(f"::notice title=portability report::JUnit report path: {_command_escape(report)}", flush=True)
     try:
-        exit_code = int(pytest.main([*TESTS, "-q", f"--junitxml={report}"], plugins=[GithubFailureReporter()]))
+        exit_code = int(pytest.main([*TESTS, "-q", "-s", f"--junitxml={report}"], plugins=[GithubFailureReporter()]))
         if exit_code and report.is_file():
             try:
                 report_text = report.read_text(encoding="utf-8", errors="replace")
