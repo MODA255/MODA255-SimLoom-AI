@@ -370,6 +370,7 @@ def test_agentcad_operation_alias_uses_the_same_transaction_engine(tmp_path):
                for entity in CadDocument.open(output).entities)
     alias_schema = next(item for item in agent.operations.list() if item["name"] == "add_line")
     assert alias_schema["compatibility"]["alias_for"] == "cad.line_create"
+    assert alias_schema["compatibility"]["parameter_aliases"] == {"p1": "start", "p2": "end"}
 
 
 def test_agentcad_alias_parameter_precedence_is_deterministic(tmp_path):

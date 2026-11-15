@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 from typing import Any
 
-from .agentcad_compat import AGENTCAD_OPERATION_ALIASES, resolve_operation
+from .agentcad_compat import AGENTCAD_OPERATION_ALIASES, PARAMETER_ALIASES, resolve_operation
 from .models import PlanStep, ToolName
 
 
@@ -336,7 +336,11 @@ class OperationRegistry:
             schema = self.specs[target].schema()
             schema["name"] = alias
             schema["description"] = f"AgentCAD-compatible alias for {target}: {schema['description']}"
-            schema["compatibility"] = {"alias_for": target, "parameter_aliases": True}
+            schema["compatibility"] = {
+                "alias_for": target,
+                "parameter_aliases": dict(PARAMETER_ALIASES.get(alias, {})),
+                "file_context": "SimLoom requires project_dir/input_file/output_file for file-backed CAD calls",
+            }
             schemas.append(schema)
         return schemas
 
