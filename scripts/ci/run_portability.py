@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -26,6 +27,15 @@ TESTS = [
 ]
 
 
+def _configure_utf8_stdio() -> None:
+    """Keep GitHub annotations usable on Windows' legacy console encodings."""
+
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 def _command_escape(value: str) -> str:
     compact = " ".join(str(value).split())
     if len(compact) > 1400:
@@ -47,6 +57,7 @@ class GithubFailureReporter:
 
 
 def main() -> int:
+    _configure_utf8_stdio()
     report = Path(os.environ.get("RUNNER_TEMP", ".")) / "cad-portability.xml"
     report.parent.mkdir(parents=True, exist_ok=True)
     print(f"::notice title=portability report::JUnit report path: {_command_escape(report)}", flush=True)

@@ -29,6 +29,10 @@ def _annotation_text(testcase: ET.Element, failure: ET.Element) -> str:
 
 
 def main() -> int:
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
     if len(sys.argv) != 2:
         print("usage: report_pytest_failures.py JUNIT_XML", file=sys.stderr)
         return 2
