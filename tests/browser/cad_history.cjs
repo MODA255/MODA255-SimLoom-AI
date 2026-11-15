@@ -164,4 +164,12 @@ async function main(){
   }catch(error){if(page)await page.screenshot({path:path.join(temp,'cad-history-failure.png'),fullPage:true});console.error(temp);throw error;}
   finally{if(browser)await browser.close();if(server.exitCode===null){server.kill('SIGTERM');await once(server,'exit');}}
 }
-main().catch(error=>{console.error(error);process.exitCode=1;});
+main().catch(error=>{
+  // GitHub hides browser step logs from unauthenticated API clients. Publish the
+  // assertion and a short stack as an annotation so a failed run is diagnosable
+  // from the public check result as well.
+  const detail=String(error?.stack||error).replace(/%/g,'%25').replace(/\r/g,'%0D').replace(/\n/g,'%0A');
+  process.stdout.write(`::error file=tests/browser/cad_history.cjs,line=1,title=cad_history failure::${detail}\n`);
+  console.error(error);
+  process.exitCode=1;
+});
