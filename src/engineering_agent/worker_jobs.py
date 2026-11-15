@@ -87,13 +87,24 @@ class ProcessGuard:
 
 
 class JobStore:
+    _SCHEMA_TABLES = frozenset({'jobs', 'leases', 'events'})
+
     def __init__(self, root):
         self.root = Path(root).resolve()
         self.control = safe_file(self.root, "control")
         self.control.mkdir(parents=True, exist_ok=True)
         self.database = safe_file(self.root, "control/jobs.sqlite3")
         self.transfers = ArtifactTransferStore(self.root)
+        # A bridge process is allowed to restart while another supervisor is
+        # running. Replaying CREATE TABLE statements on every process startup
+        # takes SQLite's schema write lock and can block behind a busy worker
+        # long enough to make the HTTP service appear unavailable. Read the
+        # schema first and perform DDL only for a new or incomplete database.
         with self.db() as db:
+            tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if self._SCHEMA_TABLES.issubset(tables):
+            return
+        with self.db(write=True) as db:
             db.executescript('''
                 CREATE TABLE IF NOT EXISTS jobs (
                     seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL,
