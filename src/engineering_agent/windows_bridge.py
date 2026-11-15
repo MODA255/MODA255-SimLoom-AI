@@ -38,7 +38,16 @@ class WindowsBridge:
         self.com = WindowsAutomation()
         self.jobs = JobManager(self.root, self.config.commands, self.config.timeout_seconds)
         self.transfers = ArtifactTransferStore(self.root)
-        self.evidence = MachineEvidenceStore(self.root, self.jobs.store)
+        # Do not open the worker database while the HTTP listener is starting.
+        # A bridge restart can happen while a supervisor is writing a job; the
+        # first health/port response must remain available during that write.
+        self._evidence = None
+
+    @property
+    def evidence(self) -> MachineEvidenceStore:
+        if self._evidence is None:
+            self._evidence = MachineEvidenceStore(self.root, self.jobs.store)
+        return self._evidence
 
     def health(self) -> dict[str, Any]:
         checks = {}
