@@ -414,8 +414,10 @@ server.serve_forever()
         deadline=time.monotonic()+30
         while not ready.exists() and time.monotonic()<deadline and process.poll() is None: time.sleep(.05)
         if not ready.exists():
-            process.terminate();process.wait(5)
-            raise AssertionError(process.stderr.read().decode())
+            if process.poll() is None:
+                process.terminate();process.wait(5)
+            stderr = process.stderr.read().decode(errors='replace')
+            raise AssertionError(f'bridge process failed to become ready (returncode={process.returncode}, stderr={stderr!r})')
         return process,f'http://127.0.0.1:{ready.read_text()}'
     process,url=start(1)
     headers={'X-Bridge-Token':'process-test'}
