@@ -398,8 +398,9 @@ def test_http_service_process_crash_does_not_stop_accepted_job(job_setup,tmp_pat
     gate=tmp_path/'gate';marker=tmp_path/'marker';payload=request(gate=str(gate),marker=str(marker))
     config={'root_dir':str(manager.root),'commands':manager.commands,'port':0,'token':'process-test'}
     config_path=tmp_path/'config.json';config_path.write_text(json.dumps(config))
-    code='''import json,sys
+    code='''import faulthandler,json,sys
 from pathlib import Path
+faulthandler.dump_traceback_later(5, repeat=True, file=sys.stderr)
 from engineering_agent.windows_bridge import create_bridge_server
 server=create_bridge_server(json.loads(Path(sys.argv[1]).read_text()))
 Path(sys.argv[2]).write_text(str(server.server_address[1]))
