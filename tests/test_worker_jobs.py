@@ -408,7 +408,10 @@ server.serve_forever()
     def start(index):
         ready=tmp_path/f'ready-{index}'
         process=subprocess.Popen([sys.executable,'-c',code,str(config_path),str(ready)],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
-        deadline=time.monotonic()+10
+        # The bridge imports the full worker stack in a fresh interpreter. The
+        # hosted macOS arm64 runners can take longer than ten seconds while
+        # starting that process under concurrent CI load.
+        deadline=time.monotonic()+30
         while not ready.exists() and time.monotonic()<deadline and process.poll() is None: time.sleep(.05)
         if not ready.exists():
             process.terminate();process.wait(5)

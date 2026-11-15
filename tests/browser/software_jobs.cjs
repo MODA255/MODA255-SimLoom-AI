@@ -21,7 +21,7 @@ async function main(){
     await page.goto(info.url);
     await page.locator('[data-panel="projects"]').click();
     await page.locator(`[data-project="${info.project}"]`).click();
-    await page.locator('[data-panel="settings"]').click();
+    await page.locator('.sidebar [data-panel="settings"]').click();
     await page.locator('#refreshWorkflows').click();
     const resume=page.locator(`[data-resume-workflow="${info.workflow_id}"]`);
     await resume.waitFor();
