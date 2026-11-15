@@ -6,7 +6,7 @@ import hashlib
 import json
 import time
 import uuid
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from .adapters.base import AdapterContext
 from .execution import Progress, commit_outputs
@@ -160,7 +160,7 @@ class DurableWorkflow:
                 produced[name] = step.id
             state['steps'][step.id] = {'status': 'not_started', 'binding_digest': self.binding_fingerprint(step)}
         for path in path_cases:
-            if any(str(parent) in path_cases for parent in Path(path.replace("\\", "/")).parents if str(parent) != "."):
+            if any(str(parent) in path_cases for parent in PurePosixPath(path).parents if str(parent) != "."):
                 raise WorkerError("WORKFLOW_PATH_COLLISION", path)
         external = set()
         for step in ordered_steps(plan):
