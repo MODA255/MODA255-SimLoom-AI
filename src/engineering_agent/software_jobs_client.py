@@ -79,7 +79,22 @@ def execute_remote(adapter, payload, context, *, reconnect=False):
     receipt = receipts.create(payload, adapter.bridge_url)
     identifier = payload["request_id"]
     interval = max(.05, min(5, float(adapter.config.get("poll_interval_seconds", 1))))
-    deadline = time.monotonic() + context.timeout_seconds
+    observation_timeout = float(context.timeout_seconds)
+    if reconnect:
+        # A resumed workflow often reaches the worker immediately after the
+        # operator releases a gate.  On Windows the supervisor and runner can
+        # need several seconds to publish the terminal state even though the
+        # job itself is healthy.  Keep the original execution timeout for a
+        # fresh submission, but give reconnect observation a bounded grace
+        # period so a transient status read does not create another waiting
+        # workflow state.
+        try:
+            configured = float(adapter.config.get("reconnect_timeout_seconds", 30))
+        except (TypeError, ValueError):
+            configured = 30.0
+        if configured > 0:
+            observation_timeout = max(observation_timeout, min(configured, 300.0))
+    deadline = time.monotonic() + observation_timeout
     request = ({"schema_version": SCHEMA, "operation": "job.status", "request_id": identifier}
                if reconnect else dict(payload, operation="job.submit"))
     state, last_error, previous_state = None, "", None
