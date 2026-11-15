@@ -46,7 +46,7 @@ jobs:
         run: python scripts/ci/report_pytest_failures.py "${{ runner.temp }}/cad-portability.xml"
       - name: Upload portability test report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: cad-portability-${{ matrix.os }}
           path: ${{ runner.temp }}/cad-portability.xml
