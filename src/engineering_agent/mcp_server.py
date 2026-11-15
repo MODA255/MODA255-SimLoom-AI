@@ -116,6 +116,9 @@ class MCPServer:
         self.schema_version = "engineering-agent/mcp/v1"
         self._subscriptions: set[str] = set()
         self._pending_notifications: list[dict[str, Any]] = []
+        # Scope the active CAD document to this MCP session.  It is never
+        # persisted as project state and disappears when the stdio server exits.
+        self._cad_context: dict[str, str] | None = None
 
     def drain_notifications(self) -> list[dict[str, Any]]:
         """Return queued MCP notifications for a stdio host or test client."""
@@ -358,6 +361,10 @@ class MCPServer:
                           "software_version": {"type": "string"}, "license_status": {"type": "string", "enum": ["available", "borrowed"]},
                           "smoke_test_id": {"type": "string"}, "notes": {"type": "string"},
                           "limit": {"type": "integer"}}}})
+        tools.append({"name": "engineering_cad_context",
+                      "description": "Inspect or clear the active CAD document context for this MCP session",
+                      "inputSchema": {"type": "object", "required": ["action"], "properties": {
+                          "action": {"type": "string", "enum": ["inspect", "clear"]}}}})
         for operation in self.operations.list():
             if include_profile and self.profile == "safe" and operation["safety"] in {"write", "execute"}:
                 continue
@@ -415,6 +422,7 @@ class MCPServer:
             "engineering_workflow": {"type": "object"},
             "engineering_software_job": {"type": "object"},
             "engineering_worker_evidence": {"type": "object"},
+            "engineering_cad_context": {"type": "object", "properties": {"context": {"type": ["object", "null"]}}},
         }
         for tool in tools:
             tool.setdefault("outputSchema", builtin_outputs.get(tool["name"], {"type": "object"}))
@@ -582,21 +590,43 @@ class MCPServer:
         if requested_schema and requested_schema not in {self.schema_version, "1.0"}:
             raise ProtocolError(ErrorCode.SCHEMA_VERSION_UNSUPPORTED, f"unsupported schema version: {requested_schema}")
         operation_arguments = arguments
+        operation_spec = None
+        operation_name = None
         if name.startswith("operation."):
             operation_name = name[len("operation."):]
-            spec = self.operations.get(operation_name)
+            operation_spec = self.operations.get(operation_name)
             requested_operation_schema = arguments.get("operation_schema_version") or arguments.get("operationSchemaVersion")
-            supported = {spec.version, *spec.compatible_versions}
+            supported = {operation_spec.version, *operation_spec.compatible_versions}
             if requested_operation_schema and requested_operation_schema not in supported:
                 raise ProtocolError(ErrorCode.SCHEMA_VERSION_UNSUPPORTED,
                                     f"unsupported operation schema version: {requested_operation_schema}",
                                     details={"operation": operation_name,
                                              "requested": requested_operation_schema,
                                              "supported": sorted(supported)})
-            if "operation_schema_version" in arguments or "operationSchemaVersion" in arguments:
+            if ("operation_schema_version" in arguments or "operationSchemaVersion" in arguments
+                    or "document" in arguments or self._cad_context):
                 operation_arguments = dict(arguments)
                 operation_arguments.pop("operation_schema_version", None)
                 operation_arguments.pop("operationSchemaVersion", None)
+            # AgentCAD clients call the source file ``document``.  Preserve
+            # the explicit value, then fill omitted file arguments from the
+            # session context established by cad.document_open.
+            if "document" in operation_arguments and "input_file" not in operation_arguments:
+                operation_arguments["input_file"] = operation_arguments["document"]
+            if operation_spec.name != "cad.document_open" and self._cad_context:
+                operation_arguments.setdefault("project_dir", self._cad_context["project_dir"])
+                operation_arguments.setdefault("input_file", self._cad_context["input_file"])
+                if operation_spec.safety in {"write", "execute"}:
+                    operation_arguments.setdefault(
+                        "output_file",
+                        operation_arguments.get("input_file", self._cad_context["output_file"]),
+                    )
+            if (operation_spec.safety in {"write", "execute"}
+                    and "output_file" not in operation_arguments
+                    and operation_arguments.get("input_file")):
+                # In-place edits are the natural AgentCAD default.  The
+                # canonical engine still validates and journals the write.
+                operation_arguments["output_file"] = operation_arguments["input_file"]
         if name == "engineering_workflow":
             action = arguments.get("action", "list")
             if self.profile == "safe" and action not in {"list", "status"}:
@@ -619,6 +649,17 @@ class MCPServer:
             return self.agent.worker_evidence(arguments.get("tool", ""), action,
                                               request_id=arguments.get("request_id"),
                                               project_dir=arguments.get("project_dir", "."), **metadata)
+        if name == "engineering_cad_context":
+            action = str(arguments.get("action", "inspect"))
+            if action == "inspect":
+                return {"context": dict(self._cad_context) if self._cad_context else None,
+                        "active": self._cad_context is not None,
+                        "schemaVersion": self.schema_version}
+            if action == "clear":
+                previous = dict(self._cad_context) if self._cad_context else None
+                self._cad_context = None
+                return {"context": None, "previous": previous, "schemaVersion": self.schema_version}
+            raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "CAD context action must be inspect or clear")
         if name == "engineering_plan":
             plan = self.agent.plan(arguments.get("prompt", ""), project_dir=arguments.get("project_dir", "."), parameters=arguments.get("parameters"))
             return {"plan": plan.to_dict(), "validation": validate_plan(plan)}
@@ -686,7 +727,26 @@ class MCPServer:
         if name == "engineering_diff":
             return self.agent.diff_versions(arguments["project_dir"], arguments["left"], arguments["right"])
         if name.startswith("operation."):
-            return self.agent.execute_operation(name[len("operation."):], operation_arguments)
+            result = self.agent.execute_operation(name[len("operation."):], operation_arguments)
+            if operation_spec and operation_spec.name == "cad.document_open":
+                input_file = operation_arguments.get("input_file")
+                if input_file:
+                    project_dir = Path(str(operation_arguments.get("project_dir") or ".")).expanduser().resolve()
+                    output_file = str(operation_arguments.get("output_file") or input_file)
+                    self._cad_context = {
+                        "project_dir": str(project_dir),
+                        "input_file": str(input_file),
+                        "output_file": output_file,
+                        "document_id": str((result.get("document") or {}).get("document_id", "")),
+                    }
+                    if isinstance(result, dict):
+                        result = dict(result)
+                        result["cad_context"] = dict(self._cad_context)
+            elif self._cad_context and isinstance(result, dict):
+                document = result.get("document")
+                if isinstance(document, dict) and document.get("document_id"):
+                    self._cad_context["document_id"] = str(document["document_id"])
+            return result
         raise ValueError(f"UNKNOWN_TOOL:{name}")
 
 

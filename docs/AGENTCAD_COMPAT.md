@@ -9,10 +9,15 @@ The alias is resolved before schema validation. AgentCAD-style spellings such
 as `p1`/`p2`, `points`, `point`, `text_height`, `translation`, `factor`, and
 `properties` are copied to the canonical SimLoom fields when the canonical
 field was not supplied. If both spellings are present, the canonical SimLoom
-field wins. The caller still supplies SimLoom's file-based document context
-(`project_dir`, `input_file`, and `output_file` for writes); the operation then
-uses the normal transaction, checkpoint, validator, diff, history and rollback
-path.
+field wins. MCP clients can either supply SimLoom's file-based document
+context (`project_dir`, `input_file`, and `output_file` for writes) on every
+call, or open a document once with `operation.cad.document_open`. The MCP
+session then keeps an inspectable active context; later AgentCAD-compatible
+operations can omit those file arguments and use an in-place output
+automatically. Calling `engineering_cad_context` with `action=clear` removes
+that session-only default. The operation still uses the normal transaction,
+checkpoint, validator, diff, history and rollback path, and the context is
+never persisted as project state.
 
 The compatibility names are included in MCP discovery with
 `compatibility.alias_for`, so an agent can discover the mapping instead of
