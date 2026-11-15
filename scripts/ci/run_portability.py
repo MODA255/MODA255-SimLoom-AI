@@ -41,11 +41,20 @@ class GithubFailureReporter:
         if report.failed:
             print(f"::error title=pytest {report.when}::{_command_escape(report.longrepr)}", flush=True)
 
+    def pytest_collectreport(self, report):
+        if report.failed:
+            print(f"::error title=pytest collection::{_command_escape(report.longrepr)}", flush=True)
+
 
 def main() -> int:
     report = Path(os.environ.get("RUNNER_TEMP", ".")) / "cad-portability.xml"
     report.parent.mkdir(parents=True, exist_ok=True)
-    return int(pytest.main([*TESTS, "-q", f"--junitxml={report}"], plugins=[GithubFailureReporter()]))
+    print(f"::notice title=portability report::JUnit report path: {_command_escape(report)}", flush=True)
+    try:
+        return int(pytest.main([*TESTS, "-q", f"--junitxml={report}"], plugins=[GithubFailureReporter()]))
+    except BaseException as exc:
+        print(f"::error title=portability runner::{_command_escape(repr(exc))}", flush=True)
+        raise
 
 
 if __name__ == "__main__":
