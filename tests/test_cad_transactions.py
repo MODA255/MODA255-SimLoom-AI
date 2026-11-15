@@ -42,6 +42,15 @@ def cli(root, operation, path):
     return json.loads(result.stdout)
 
 
+def test_cli_json_output_survives_legacy_console_encoding(tmp_path):
+    path = source(tmp_path)
+    result = subprocess.run([sys.executable, "-m", "engineering_agent.cli", "--project-dir", str(tmp_path),
+                             "cad-history", path.name], capture_output=True, text=True, timeout=25, cwd=tmp_path,
+                            env={**os.environ, "PYTHONIOENCODING": "ascii"})
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["history"]["path"] == path.name
+
+
 def test_cross_process_undo_redo_restores_exact_dxf_and_metadata(tmp_path):
     path = source(tmp_path)
     original = pair(path)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from .agent import EngineeringAgent
@@ -14,6 +15,14 @@ from .validation import validate_plan
 from .windows_bridge import serve_bridge
 from .brep import brep_doctor
 from .mcp_config import render_config, write_config
+
+
+def _configure_stdio() -> None:
+    """Keep JSON output usable on Windows consoles with a legacy code page."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="backslashreplace")
 
 
 def _default_config() -> Path:
@@ -176,6 +185,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _configure_stdio()
     args = _parser().parse_args(argv)
     agent = EngineeringAgent(EngineeringAgent.load_config(args.config))
     if args.command == "workflow":
