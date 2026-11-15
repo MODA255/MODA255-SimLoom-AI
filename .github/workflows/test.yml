@@ -40,7 +40,7 @@ jobs:
         run: python scripts/ci/run_portability.py
       - name: Publish portability failure details
         if: failure()
-        run: python scripts/ci/report_pytest_failures.py "$RUNNER_TEMP/cad-portability.xml"
+        run: python scripts/ci/report_pytest_failures.py "${{ runner.temp }}/cad-portability.xml"
       - name: Upload portability test report
         if: always()
         uses: actions/upload-artifact@v4
