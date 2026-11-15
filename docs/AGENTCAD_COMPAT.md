@@ -18,8 +18,8 @@ The compatibility names are included in MCP discovery with
 `compatibility.alias_for`, so an agent can discover the mapping instead of
 guessing it. The alias does not claim a vendor-specific semantic that the
 canonical operation cannot provide. For example, both AgentCAD radial and
-diameter dimension names currently map to the vendor-neutral radial dimension
-operation; CATIA/Ansys/Adams/VI-grade behavior still requires Windows software
+diameter dimension names resolve to distinct vendor-neutral radial and diameter
+operations; CATIA/Ansys/Adams/VI-grade behavior still requires Windows software
 validation.
 
 The mapping lives in `src/engineering_agent/agentcad_compat.py`. The registry

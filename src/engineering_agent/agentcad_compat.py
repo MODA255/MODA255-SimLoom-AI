@@ -16,7 +16,7 @@ from typing import Any
 AGENTCAD_OPERATION_ALIASES: dict[str, str] = {
     "add_angular_dim": "cad.dimension_angular_create",
     "add_center_mark": "cad.center_mark_create",
-    "add_diameter_dim": "cad.dimension_radial_create",
+    "add_diameter_dim": "cad.dimension_diameter_create",
     "add_leader": "cad.leader_create",
     "add_linear_dim": "cad.dimension_linear_create",
     "add_mtext": "cad.mtext_create",

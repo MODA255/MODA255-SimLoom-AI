@@ -1678,7 +1678,8 @@ def _dimension_remeasure(entity: dict[str, Any]) -> None:
         entity["measurement"] = math.dist((start["x"], start["y"], start["z"]), (end["x"], end["y"], end["z"]))
     elif kind in {"radial", "diameter"} and entity.get("center") is not None:
         center = _point(entity.get("center")); point = _point(entity.get("end") or entity.get("start"))
-        entity["measurement"] = math.dist((center["x"], center["y"], center["z"]), (point["x"], point["y"], point["z"]))
+        radius = math.dist((center["x"], center["y"], center["z"]), (point["x"], point["y"], point["z"]))
+        entity["measurement"] = radius * 2 if kind == "diameter" else radius
     elif kind == "ordinate" and entity.get("start") is not None:
         point = _point(entity.get("start"))
         entity["measurement"] = point["x"] if str(entity.get("axis", "x")).lower() == "x" else point["y"]
@@ -3705,18 +3706,19 @@ class CadOperationEngine:
             entity = {"id": document.next_id(), "type": "DIMENSION", "dimension_type": "ordinate", "axis": axis, "layer": layer, "definition": _point(arguments.get("definition", point)), "start": point, "text": str(arguments.get("text", "")), "measurement": measurement, "block_name": arguments.get("block_name")}
             document.entities.append(entity)
             return {"entity": entity}
-        if name in {"dimension_linear_create", "dimension_radial_create", "dimension_angular_create"}:
+        if name in {"dimension_linear_create", "dimension_radial_create", "dimension_diameter_create", "dimension_angular_create"}:
             layer = str(arguments.get("layer", "ANNOTATION"))
             document.ensure_layer(layer)
             if name == "dimension_linear_create":
                 start, end = _point(arguments.get("start")), _point(arguments.get("end"))
                 measurement = float(arguments.get("measurement", math.dist((start["x"], start["y"], start["z"]), (end["x"], end["y"], end["z"]))))
                 dimension_type = "linear"
-            elif name == "dimension_radial_create":
+            elif name in {"dimension_radial_create", "dimension_diameter_create"}:
                 center = _point(arguments.get("center")); point = _point(arguments.get("point"))
                 start, end = center, point
-                measurement = float(arguments.get("measurement", math.dist((center["x"], center["y"], center["z"]), (point["x"], point["y"], point["z"]))))
-                dimension_type = "radial"
+                radius = math.dist((center["x"], center["y"], center["z"]), (point["x"], point["y"], point["z"]))
+                measurement = float(arguments.get("measurement", radius * (2 if name == "dimension_diameter_create" else 1)))
+                dimension_type = "diameter" if name == "dimension_diameter_create" else "radial"
             else:
                 center = _point(arguments.get("center")); start, end = _point(arguments.get("start")), _point(arguments.get("end"))
                 measurement = float(arguments.get("measurement", math.degrees(math.atan2(end["y"] - center["y"], end["x"] - center["x"]) - math.atan2(start["y"] - center["y"], start["x"] - center["x"]))))

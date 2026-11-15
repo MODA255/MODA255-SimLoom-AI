@@ -84,3 +84,22 @@ def test_verify_dimensions_is_read_only_and_discoverable(tmp_path):
     from engineering_agent.operations import OperationRegistry
     assert "dimension_verification" in OperationRegistry().get("cad.verify_dimensions").output_kinds
 
+
+def test_diameter_dimension_has_distinct_physical_measurement_and_alias(tmp_path):
+    source = tmp_path / "diameter-source.dxf"
+    output = tmp_path / "diameter.dxf"
+    write_dxf(source, entities=[])
+    result = EngineeringAgent({"tools": {}}).execute_operation("add_diameter_dim", {
+        "project_dir": str(tmp_path), "input_file": source, "output_file": output,
+        "center": {"x": 0, "y": 0}, "p": {"x": 4, "y": 0},
+    })
+    assert result["persisted_validation"]["valid"]
+    entity = CadDocument.open(output).entities[0]
+    assert entity["dimension_type"] == "diameter"
+    assert entity["measurement"] == pytest.approx(8)
+    verified = EngineeringAgent({"tools": {}}).execute_operation("cad.verify_dimensions", {
+        "project_dir": str(tmp_path), "input_file": output,
+        "checks": [{"entity_id": entity["id"], "value": 8}],
+    })
+    assert verified["valid"] is True and verified["checks"][0]["actual"] == pytest.approx(8)
+
