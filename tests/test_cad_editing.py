@@ -5,6 +5,7 @@ import pytest
 
 from engineering_agent import EngineeringAgent
 from engineering_agent.cad_model import CadDocument, Constraint, EntityRef, SelectionSet, validate_cad_document
+from engineering_agent.cad_operations import suggest_repairs
 from engineering_agent.formats import write_dxf
 from engineering_agent.dxf import read_dxf
 from engineering_agent.viewer import asset_view
@@ -314,6 +315,46 @@ def test_cad_repair_replans_invalid_geometry(tmp_path):
     assert result["validation"]["valid"]
     assert result["repair_plan"][0]["operation"] == "cad.entity_delete"
     assert result["results"][0]["replanned"] is True
+    assert result["repair_plan"][0]["source_error"] == "ZERO_LENGTH_LINE"
+    assert result["repair_plan"][0]["target"] == {"entity_id": "e00001"}
+    assert result["results"][0]["repair"]["reason"]
+    checkpoint = tmp_path / result["step_snapshots"][0]["snapshots"]["before"]["path"]
+    assert json.loads((checkpoint).read_text(encoding="utf-8"))["repair"]["source_error"] == "ZERO_LENGTH_LINE"
+
+
+def test_repair_planner_covers_extended_errors_without_duplicate_mutations():
+    document = CadDocument.from_dxf({
+        "entities": [
+            {"id": "text", "type": "TEXT", "layer": "0", "insert": {"x": 0, "y": 0}, "text": "A", "height": 0},
+            {"id": "spline", "type": "SPLINE", "layer": "0", "fit_points": [{"x": 0, "y": 0}], "degree": 99},
+            {"id": "line-a", "type": "LINE", "layer": "0", "start": {"x": 0, "y": 0}, "end": {"x": 4, "y": 0}},
+            {"id": "line-b", "type": "LINE", "layer": "0", "start": {"x": 0, "y": 0}, "end": {"x": 4, "y": 0}},
+            {"id": "bow", "type": "LWPOLYLINE", "layer": "0", "closed": False,
+             "vertices": [{"x": 0, "y": 0}, {"x": 4, "y": 4}, {"x": 0, "y": 4}, {"x": 4, "y": 0}]},
+            {"id": "hatch", "type": "HATCH", "layer": "0", "associative": True,
+             "boundary_paths": [{"kind": "polyline", "source_handles": ["missing-handle"],
+                                  "vertices": [{"x": 0, "y": 0}, {"x": 4, "y": 0}, {"x": 4, "y": 4}]}]},
+            {"id": "dimension", "type": "DIMENSION", "layer": "0", "definition": {"x": 2, "y": 2},
+             "start": {"x": 0, "y": 0}, "end": {"x": 4, "y": 0}, "measurement": 4, "refs": ["missing-entity"]},
+        ]
+    })
+    validation = validate_cad_document(document, {
+        "min_text_height": 2,
+        "reject_duplicate_geometry": True,
+        "reject_self_intersections": True,
+    })
+    assert not validation["valid"]
+    plan = suggest_repairs(document, validation)
+    by_entity = {item.get("entity_id"): item for item in plan if item.get("entity_id")}
+    assert by_entity["text"]["operation"] == "cad.entity_update"
+    assert by_entity["text"]["patch"]["height"] == 2
+    assert set(by_entity["text"]["source_errors"]) == {"INVALID_TEXT_HEIGHT", "TEXT_TOO_SMALL"}
+    assert by_entity["spline"]["operation"] == "cad.entity_delete"
+    assert by_entity["line-b"]["source_error"] == "DUPLICATE_GEOMETRY"
+    assert by_entity["bow"]["source_error"] == "CURVE_SELF_CROSSING"
+    assert by_entity["hatch"]["patch"]["associative"] is False
+    assert by_entity["dimension"]["patch"]["refs"] == []
+    assert len([item for item in plan if item.get("entity_id") == "spline"]) == 1
 
 
 def test_interactive_dxf_viewer_has_selection_layers_and_replay(tmp_path):

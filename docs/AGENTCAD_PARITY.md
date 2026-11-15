@@ -170,6 +170,12 @@ CATIA 原生特征或标准件数据库已经验收。
 STEP、CSV、JSON 指标文件。大网格和求解数据库可以在 Windows worker 上完成完整性校验后
 按块回收，仍不把文件完整性误报为商业软件实机验收。
 
+2026-11-15 后续：`cad.validate_and_repair` 扩展了 spline、文本、非有限坐标、重复几何、
+曲线/填充边界拓扑、HATCH 关联句柄、DIMENSION 引用和约束引用的有界修复。每项计划包含
+来源错误码、原因和目标；同一实体的字段修复会合并，无法推断设计意图的错误会保守删除，
+并继续通过独立验证、checkpoint、diff、history 和事务回滚。该闭环仍是离线 CAD 模型能力，
+不能替代 CATIA、Ansys、Adams 或 VI-grade 的实机验收。
+
 2026-11-14 后续：Windows worker 增加 `simloom-ai/machine-evidence/v1` 验收记录。只有在
 Windows 交互式会话中完成并通过独立 vendor evidence 的任务，才能由操作员登记软件版本、
 许可证状态、smoke test 和输出哈希；`/capabilities` 的 `verified_actions` 会持续复核这些

@@ -1778,29 +1778,167 @@ def _verify_dimensions(document: CadDocument, arguments: dict[str, Any]) -> dict
 
 
 def suggest_repairs(document: CadDocument, validation: dict[str, Any]) -> list[dict[str, Any]]:
-    """Turn deterministic validator errors into a small, reviewable repair plan."""
-    repairs: list[dict[str, Any]] = []
+    """Turn deterministic validator errors into a reviewable repair plan.
+
+    A repair is deliberately explicit about the error that caused it and the
+    target it may change.  The plan is generated from one validation snapshot,
+    so duplicate findings for an entity are collapsed before execution.  A
+    destructive repair is used when the validator cannot infer the intended
+    geometry without inventing design data; the transaction still preserves
+    the complete before/after evidence and can be undone.
+    """
+    repairs: list[dict[str, Any] | None] = []
+    seen: set[tuple[Any, ...]] = set()
+    scheduled_entities: dict[str, int] = {}
+    scheduled_layers: set[str] = set()
+    entity_by_id = {str(entity.get("id")): entity for entity in document.entities}
+    entity_ids = set(entity_by_id)
+    handles = {str(entity.get("handle")) for entity in document.entities if entity.get("handle")}
+
+    def add(operation: str, code: str, reason: str, *, entity_id: str | None = None,
+            target: Any = None, key: tuple[Any, ...] | None = None, **payload: Any) -> None:
+        identifier = str(entity_id) if entity_id else None
+        if key is None:
+            key = (operation, code, identifier, json.dumps(payload, sort_keys=True, default=str))
+        if key in seen:
+            return
+        if identifier and identifier in scheduled_entities:
+            previous_index = scheduled_entities[identifier]
+            previous = repairs[previous_index]
+            if previous is None:
+                return
+            # Deletion is the conservative fallback when a later finding
+            # proves that an earlier field patch cannot produce valid geometry.
+            if operation == "cad.entity_delete" and previous.get("operation") != "cad.entity_delete":
+                repairs[previous_index] = None
+                del scheduled_entities[identifier]
+            elif previous.get("operation") == "cad.entity_delete":
+                return
+            elif operation == "cad.entity_update" and previous.get("operation") == "cad.entity_update":
+                previous_patch = previous.setdefault("patch", {})
+                previous_patch.update(copy.deepcopy(payload.get("patch", {})))
+                source_errors = previous.setdefault("source_errors", [previous.get("source_error")])
+                if code not in source_errors:
+                    source_errors.append(code)
+                previous["reason"] = str(previous.get("reason", "")) + " " + reason
+                return
+            else:
+                return
+        seen.add(key)
+        item: dict[str, Any] = {"operation": operation, "source_error": code, "reason": reason}
+        if identifier:
+            item["entity_id"] = identifier
+            item["target"] = {"entity_id": identifier}
+        elif target is not None:
+            item["target"] = copy.deepcopy(target)
+        item.update(payload)
+        if identifier:
+            scheduled_entities[identifier] = len(repairs)
+        repairs.append(item)
+
     for error in validation.get("errors", []):
-        code, entity_id = error.get("code"), error.get("entity_id")
+        if not isinstance(error, dict):
+            continue
+        code, raw_entity_id = error.get("code"), error.get("entity_id")
+        entity_id = str(raw_entity_id) if raw_entity_id is not None else None
         if code == "ZERO_LENGTH_LINE" and entity_id:
-            repairs.append({"operation": "cad.entity_delete", "entity_id": entity_id})
+            add("cad.entity_delete", code, "A zero-length line has no recoverable geometry.", entity_id=entity_id)
         elif code == "INVALID_RADIUS" and entity_id:
-            repairs.append({"operation": "cad.entity_update", "entity_id": entity_id, "patch": {"radius": 1e-6}})
+            add("cad.entity_update", code, "Replace a non-positive radius with the smallest valid radius.",
+                entity_id=entity_id, patch={"radius": 1e-6})
         elif code == "POLYLINE_TOO_SHORT" and entity_id:
-            repairs.append({"operation": "cad.entity_delete", "entity_id": entity_id})
+            add("cad.entity_delete", code, "A polyline with fewer than two vertices cannot represent a curve.", entity_id=entity_id)
         elif code == "CLOSED_POLYLINE_TOO_SHORT" and entity_id:
-            repairs.append({"operation": "cad.entity_update", "entity_id": entity_id, "patch": {"closed": False}})
+            add("cad.entity_update", code, "Open a two-vertex polyline so it no longer claims a degenerate closed loop.",
+                entity_id=entity_id, patch={"closed": False})
+        elif code == "CLOSED_POLYLINE_DEGENERATE" and entity_id:
+            add("cad.entity_update", code, "Open a zero-area closed polyline while preserving its source vertices.",
+                entity_id=entity_id, patch={"closed": False})
         elif code == "HATCH_BOUNDARY_TOO_SHORT" and entity_id:
-            repairs.append({"operation": "cad.entity_delete", "entity_id": entity_id})
+            add("cad.entity_delete", code, "A hatch without at least three boundary vertices has no valid fill region.", entity_id=entity_id)
         elif code == "MISSING_LAYER" and error.get("layer"):
-            repairs.append({"operation": "cad.layer_create", "name": error["layer"]})
+            layer_name = str(error["layer"])
+            if layer_name not in scheduled_layers and layer_name not in document.layers:
+                scheduled_layers.add(layer_name)
+                add("cad.layer_create", code, "Create the missing layer referenced by the entity.",
+                    target={"layer": layer_name}, key=("cad.layer_create", code, layer_name), name=layer_name)
+        elif code == "REQUIRED_LAYER_MISSING" and error.get("layer"):
+            layer_name = str(error["layer"])
+            if layer_name not in scheduled_layers and layer_name not in document.layers:
+                scheduled_layers.add(layer_name)
+                add("cad.layer_create", code, "Create a layer explicitly required by the validation contract.",
+                    target={"layer": layer_name}, key=("cad.layer_create", code, layer_name), name=layer_name)
         elif code == "INSERT_WITHOUT_BLOCK" and entity_id:
-            repairs.append({"operation": "cad.entity_delete", "entity_id": entity_id})
+            add("cad.entity_delete", code, "An insert pointing at a missing block cannot be resolved without source block data.", entity_id=entity_id)
         elif code == "LEADER_TOO_SHORT" and entity_id:
-            repairs.append({"operation": "cad.entity_delete", "entity_id": entity_id})
+            add("cad.entity_delete", code, "A leader with fewer than two vertices has no drawable segment.", entity_id=entity_id)
         elif code == "INVALID_ELLIPSE_RATIO" and entity_id:
-            repairs.append({"operation": "cad.entity_update", "entity_id": entity_id, "patch": {"ratio": 0.5}})
-    return repairs
+            add("cad.entity_update", code, "Clamp the ellipse ratio to a finite positive value in the supported range.",
+                entity_id=entity_id, patch={"ratio": 0.5})
+        elif code == "SPLINE_TOO_SHORT" and entity_id:
+            add("cad.entity_delete", code, "A spline with fewer than two fit or control points cannot define a curve.", entity_id=entity_id)
+        elif code == "INVALID_SPLINE_DEGREE" and entity_id:
+            entity = entity_by_id.get(entity_id, {})
+            point_count = len(entity.get("fit_points") or entity.get("control_points") or [])
+            degree = max(1, min(3, point_count - 1 if point_count > 1 else 1))
+            add("cad.entity_update", code, "Clamp the spline degree to a supported degree for its available points.",
+                entity_id=entity_id, patch={"degree": degree})
+        elif code == "INVALID_TEXT_HEIGHT" and entity_id:
+            add("cad.entity_update", code, "Use a positive default text height because the source height is invalid.",
+                entity_id=entity_id, patch={"height": 1.0})
+        elif code == "TEXT_TOO_SMALL" and entity_id:
+            try:
+                minimum = float(error.get("minimum", 1.0))
+            except (TypeError, ValueError):
+                minimum = 1.0
+            minimum = max(minimum, 1e-6)
+            add("cad.entity_update", code, "Raise text height to the minimum required by the validation contract.",
+                entity_id=entity_id, patch={"height": minimum})
+        elif code == "NON_FINITE_COORDINATE" and entity_id:
+            add("cad.entity_delete", code, "A non-finite coordinate has no deterministic geometric replacement.", entity_id=entity_id)
+        elif code == "DUPLICATE_GEOMETRY":
+            duplicate_ids = [str(value) for value in error.get("entity_ids", []) if str(value) in entity_by_id]
+            for duplicate_id in duplicate_ids[1:]:
+                add("cad.entity_delete", code, "Remove the later copy while retaining the first identical geometry.",
+                    entity_id=duplicate_id, target={"entity_ids": duplicate_ids},
+                    key=("cad.entity_delete", code, duplicate_id, tuple(duplicate_ids)))
+        elif isinstance(code, str) and (code.startswith("CURVE_SELF_") or code.startswith("HATCH_BOUNDARY_SELF_")) and entity_id:
+            add("cad.entity_delete", code, "Self-intersecting topology cannot be repaired losslessly without design intent.", entity_id=entity_id)
+        elif code == "HATCH_ASSOCIATIVE_REF_NOT_FOUND" and entity_id:
+            entity = entity_by_id.get(entity_id)
+            if entity is None:
+                continue
+            paths = []
+            for path in entity.get("boundary_paths") or []:
+                if not isinstance(path, dict):
+                    paths.append(copy.deepcopy(path))
+                    continue
+                updated = copy.deepcopy(path)
+                updated["source_handles"] = [str(handle) for handle in path.get("source_handles", []) if str(handle) in handles]
+                paths.append(updated)
+            add("cad.entity_update", code, "Drop missing associative handles and retain the hatch boundary as non-associative geometry.",
+                entity_id=entity_id, patch={"associative": False, "boundary_paths": paths})
+        elif code == "DIMENSION_REF_NOT_FOUND" and entity_id:
+            entity = entity_by_id.get(entity_id)
+            if entity is None:
+                continue
+            patch: dict[str, Any] = {}
+            for field in ("refs", "entity_ids", "associative_refs"):
+                if field in entity:
+                    values = entity.get(field) or []
+                    patch[field] = [str(value) for value in values if str(value) in entity_ids]
+            if not patch:
+                patch["refs"] = []
+            add("cad.entity_update", code, "Remove references to entities that are no longer present while preserving valid references.",
+                entity_id=entity_id, patch=patch)
+        elif code == "CONSTRAINT_REF_NOT_FOUND":
+            missing = {str(value) for value in error.get("refs", [])}
+            for index, constraint in enumerate(document.constraints):
+                if str(constraint.kind) == str(error.get("kind")) and missing.intersection(str(value) for value in constraint.refs):
+                    add("cad.constraint_delete", code, "Remove a constraint whose referenced entities no longer exist.",
+                        target={"constraint_index": index}, key=("cad.constraint_delete", code, index), index=index)
+                    break
+    return [item for item in repairs if item is not None]
 
 
 class CadOperationEngine:
@@ -3906,12 +4044,14 @@ class CadOperationEngine:
             def checkpoint_step(index: int, stage: str, operation_name: str, snapshot: CadDocument,
                                 *, diff: dict[str, Any] | None = None,
                                 validation: dict[str, Any] | None = None,
-                                replanned: bool = False) -> dict[str, Any]:
+                                replanned: bool = False,
+                                repair: dict[str, Any] | None = None) -> dict[str, Any]:
                 label = f"step-{index:03d}-{stage}"
                 path = Path(transaction.checkpoint(label, {
                     "schema_version": 1, "kind": "cad-batch-step", "run_id": transaction.run_id,
                     "step": index, "stage": stage, "operation": operation_name,
-                    "replanned": replanned, "document": snapshot.to_dict(), "diff": diff,
+                    "replanned": replanned, "repair": copy.deepcopy(repair),
+                    "document": snapshot.to_dict(), "diff": diff,
                     "validation": validation,
                 })) / "state.json"
                 return {"path": str(path.relative_to(project_root)),
@@ -3956,21 +4096,28 @@ class CadOperationEngine:
                 for repair in repair_plan:
                     repair_payload = dict(repair)
                     repair_name = repair_payload.pop("operation")
+                    repair_metadata = {
+                        key: copy.deepcopy(repair_payload.pop(key))
+                        for key in ("source_error", "reason", "target")
+                        if key in repair_payload
+                    }
                     index = len(replay_steps)
                     step_before = document.clone()
                     before_validation = validate_cad_document(step_before, requirements)
                     before_snapshot = checkpoint_step(index, "before", repair_name, step_before,
-                                                      validation=before_validation, replanned=True)
+                                                      validation=before_validation, replanned=True,
+                                                      repair=repair_metadata)
                     applied = self._apply_one(document, repair_name, repair_payload)
                     step_diff = step_before.diff(document)
                     step_validation = validate_cad_document(document, requirements)
                     after_snapshot = checkpoint_step(index, "after", repair_name, document,
-                                                     diff=step_diff, validation=step_validation, replanned=True)
+                                                    diff=step_diff, validation=step_validation, replanned=True,
+                                                    repair=repair_metadata)
                     step_record = {"index": index, "operation": repair_name, "replanned": True,
                                    **_entity_change_ids(step_before, document), "diff": step_diff,
-                                   "validation": step_validation,
+                                   "validation": step_validation, "repair": repair_metadata,
                                    "snapshots": {"before": before_snapshot, "after": after_snapshot}}
-                    results.append({"operation": repair_name, "replanned": True, **applied,
+                    results.append({"operation": repair_name, "replanned": True, "repair": repair_metadata, **applied,
                                    "step_index": index, "step_diff": step_diff, "step_validation": step_validation,
                                    "step_snapshots": {"before": before_snapshot, "after": after_snapshot}})
                     replay_steps.append(step_record)
