@@ -34,9 +34,13 @@ def main() -> int:
         return 2
     report = Path(sys.argv[1])
     if not report.is_file():
-        print(f"JUnit report not found: {report}", file=sys.stderr)
-        return 1
-    root = ET.parse(report).getroot()
+        print(f"::warning title=pytest report unavailable::JUnit report not found: {report}")
+        return 0
+    try:
+        root = ET.parse(report).getroot()
+    except ET.ParseError as exc:
+        print(f"::warning title=pytest report unreadable::无法解析 JUnit 报告: {exc}")
+        return 0
     failures = [
         (testcase, child)
         for testcase in root.iter("testcase")

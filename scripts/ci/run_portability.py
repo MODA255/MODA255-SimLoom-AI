@@ -26,10 +26,26 @@ TESTS = [
 ]
 
 
+def _command_escape(value: str) -> str:
+    compact = " ".join(str(value).split())
+    if len(compact) > 1400:
+        compact = compact[:500] + " … " + compact[-850:]
+    return (compact.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+            .replace(":", "%3A").replace(",", "%2C"))
+
+
+class GithubFailureReporter:
+    """Keep the first useful traceback visible when job logs are unavailable."""
+
+    def pytest_runtest_logreport(self, report):
+        if report.failed:
+            print(f"::error title=pytest {report.when}::{_command_escape(report.longrepr)}", flush=True)
+
+
 def main() -> int:
     report = Path(os.environ.get("RUNNER_TEMP", ".")) / "cad-portability.xml"
     report.parent.mkdir(parents=True, exist_ok=True)
-    return int(pytest.main([*TESTS, "-q", f"--junitxml={report}"]))
+    return int(pytest.main([*TESTS, "-q", f"--junitxml={report}"], plugins=[GithubFailureReporter()]))
 
 
 if __name__ == "__main__":
