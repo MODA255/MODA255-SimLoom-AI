@@ -61,10 +61,16 @@ def safe_file(root: Path, name: str) -> Path:
     for part in (target, *target.parents):
         if part == root:
             break
-        if part.is_symlink():
+        # Windows junctions are reparse points too; checking them here keeps
+        # lexical containment safe without relying on resolve() for a path
+        # that may be created concurrently by another worker thread.
+        is_junction = getattr(part, "is_junction", lambda: False)()
+        if part.is_symlink() or is_junction:
             raise WorkerError("SYMLINK_ARTIFACT", name)
-    if not target.resolve().is_relative_to(root):
-        raise WorkerError("ARTIFACT_OUTSIDE_ROOT", name)
+    # ``name`` has already rejected absolute paths and ``..`` components, so
+    # ``target`` is lexically below the resolved root. Resolving a missing
+    # Windows path can produce a different drive-prefix representation while
+    # another thread creates it, which made valid paths look like escapes.
     return target
 
 

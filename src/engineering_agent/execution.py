@@ -61,10 +61,16 @@ def commit_outputs(transaction, files, output_files=None, metadata_files=None, *
         published.update({name: path, historical: path})
         manifest.append({"name": name, "path": historical, "bytes": Path(path).stat().st_size,
                          "sha256": hash_file(path)})
-    for name, path in (metadata_files or {}).items():
-        allowed = re.fullmatch(r"\.engineering-agent/(?:software-jobs/[0-9a-f]{32}\.json|workflows/[0-9a-f]{32}/state\.json)", name)
+    for raw_name, path in (metadata_files or {}).items():
+        # ``Path.relative_to`` uses ``\\`` on Windows, while published
+        # artifact paths are a cross-platform manifest format with ``/``.
+        name = raw_name.replace("\\", "/") if isinstance(raw_name, str) else raw_name
+        allowed = isinstance(name, str) and re.fullmatch(
+            r"\.engineering-agent/(?:software-jobs/[0-9a-f]{32}\.json|workflows/[0-9a-f]{32}/state\.json)",
+            name,
+        )
         if not allowed or name in published:
-            raise ValueError("INVALID_JOB_RECEIPT_PATH:" + name)
+            raise ValueError("INVALID_JOB_RECEIPT_PATH:" + str(raw_name))
         published[name] = path
     committed = transaction.commit(published, destination_root=transaction.project_dir, expected_before=expected_before)
     return {**{name: committed["artifacts/generated/" + name] for name in files},
