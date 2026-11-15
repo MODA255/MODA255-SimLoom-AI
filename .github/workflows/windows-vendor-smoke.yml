@@ -43,8 +43,8 @@ jobs:
     runs-on: [self-hosted, Windows, "${{ matrix.runner_label }}"]
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install SimLoom
@@ -64,7 +64,7 @@ jobs:
           -ParametersPath $env:SIMLOOM_PARAMETERS
       - name: Upload smoke evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: simloom-${{ matrix.software }}-smoke
           path: ${{ inputs.project_dir }}\${{ matrix.software }}
