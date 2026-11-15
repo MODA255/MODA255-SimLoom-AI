@@ -51,7 +51,14 @@ def main() -> int:
     report.parent.mkdir(parents=True, exist_ok=True)
     print(f"::notice title=portability report::JUnit report path: {_command_escape(report)}", flush=True)
     try:
-        return int(pytest.main([*TESTS, "-q", f"--junitxml={report}"], plugins=[GithubFailureReporter()]))
+        exit_code = int(pytest.main([*TESTS, "-q", f"--junitxml={report}"], plugins=[GithubFailureReporter()]))
+        if exit_code and report.is_file():
+            try:
+                report_text = report.read_text(encoding="utf-8", errors="replace")
+            except OSError as exc:
+                report_text = repr(exc)
+            print(f"::error title=pytest report::{_command_escape(report_text)}", flush=True)
+        return exit_code
     except BaseException as exc:
         print(f"::error title=portability runner::{_command_escape(repr(exc))}", flush=True)
         raise
