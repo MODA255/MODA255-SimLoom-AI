@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import platform
 import shutil
+import socketserver
 import time
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -14,6 +15,18 @@ from .artifact_transfer import ArtifactTransferStore
 from .machine_evidence import MachineEvidenceStore, SCHEMA as EVIDENCE_SCHEMA
 from .windows_control import WindowsAutomation
 from .worker_protocol import SCHEMA, MAX_HTTP_BYTES, WorkerError, failure
+
+
+class _LocalThreadingHTTPServer(ThreadingHTTPServer):
+    """Threaded HTTP server that never performs a reverse-DNS lookup on bind."""
+
+    def server_bind(self):
+        # http.server.HTTPServer.server_bind calls socket.getfqdn(). On some
+        # hosted macOS runners that lookup can block for tens of seconds even
+        # for 127.0.0.1, preventing a restarted worker from becoming ready.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name = self.server_address[0]
+        self.server_port = self.server_address[1]
 
 
 @dataclass
@@ -194,7 +207,7 @@ def create_bridge_server(config: BridgeConfig | dict[str, Any]) -> ThreadingHTTP
         def log_message(self, *_args):
             return
 
-    return ThreadingHTTPServer((cfg.host, cfg.port), Handler)
+    return _LocalThreadingHTTPServer((cfg.host, cfg.port), Handler)
 
 
 def serve_bridge(config: BridgeConfig | dict[str, Any]):

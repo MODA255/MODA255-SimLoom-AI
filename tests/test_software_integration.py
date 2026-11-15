@@ -1,6 +1,7 @@
 """Runner and HTTP contract tests. These do not exercise licensed vendor software."""
 import hashlib
 import json
+import socket
 import sys
 import threading
 import uuid
@@ -87,6 +88,15 @@ def test_local_script_binding_collects_outputs_and_receipts(project, tmp_path):
     assert result.details["output_manifest"][0]["sha256"] == hashlib.sha256(output.read_bytes()).hexdigest()
     assert result.details["vendor_validation"] == "not_run"
     assert not (project / "artifacts/model.step").exists()  # Publication is owned by the transaction.
+
+
+def test_bridge_bind_does_not_depend_on_reverse_dns(tmp_path, monkeypatch):
+    monkeypatch.setattr(socket, "getfqdn", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("reverse DNS must not run")))
+    server = create_bridge_server({"root_dir": str(tmp_path / "worker"), "port": 0})
+    try:
+        assert server.server_port > 0
+    finally:
+        server.server_close()
 
 
 @pytest.mark.parametrize(("mode", "code"), [("missing", "ARTIFACT_MISSING"), ("empty", "OUTPUT_EMPTY"),
