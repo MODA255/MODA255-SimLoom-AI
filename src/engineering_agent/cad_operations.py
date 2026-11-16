@@ -868,7 +868,11 @@ def _draw_pid(document: CadDocument, arguments: dict[str, Any]) -> dict[str, Any
 
 def _query_entities(document: CadDocument, arguments: dict[str, Any]) -> dict[str, Any]:
     """Run a deterministic, read-only semantic query over canonical entities."""
-    raw_types = arguments.get("entity_types") or []
+    selector_filter = arguments.get("filter")
+    if selector_filter is not None and not isinstance(selector_filter, dict):
+        raise ValueError("CAD_QUERY_FILTER_INVALID")
+    selector_filter = selector_filter or {}
+    raw_types = arguments.get("entity_types") or selector_filter.get("type") or []
     if isinstance(raw_types, str):
         raw_types = [raw_types]
     if not isinstance(raw_types, list):
@@ -876,7 +880,7 @@ def _query_entities(document: CadDocument, arguments: dict[str, Any]) -> dict[st
     types = {str(value).upper() for value in raw_types if str(value).strip()}
     if arguments.get("entity_type"):
         types.add(str(arguments["entity_type"]).upper())
-    raw_layers = arguments.get("layers") or []
+    raw_layers = arguments.get("layers") or selector_filter.get("layer") or []
     if isinstance(raw_layers, str):
         raw_layers = [raw_layers]
     if not isinstance(raw_layers, list):
@@ -884,13 +888,13 @@ def _query_entities(document: CadDocument, arguments: dict[str, Any]) -> dict[st
     layers = {str(value) for value in raw_layers if str(value).strip()}
     if arguments.get("layer"):
         layers.add(str(arguments["layer"]))
-    tag = arguments.get("tag")
+    tag = arguments.get("tag", selector_filter.get("tag"))
     if tag is not None and not isinstance(tag, str):
         raise ValueError("CAD_QUERY_TAG_INVALID")
-    tag_prefix = arguments.get("tag_prefix")
+    tag_prefix = arguments.get("tag_prefix", selector_filter.get("tag_prefix"))
     if tag_prefix is not None and not isinstance(tag_prefix, str):
         raise ValueError("CAD_QUERY_TAG_PREFIX_INVALID")
-    raw_ids = arguments.get("entity_ids") or []
+    raw_ids = arguments.get("entity_ids") or arguments.get("ids") or []
     if isinstance(raw_ids, (str, dict)):
         raw_ids = [raw_ids]
     if not isinstance(raw_ids, list):
@@ -955,7 +959,7 @@ def _query_entities(document: CadDocument, arguments: dict[str, Any]) -> dict[st
         block_name = entity.get("block_name", entity.get("name", entity.get("block", "")))
         if arguments.get("block_name") and str(block_name) != str(arguments["block_name"]):
             continue
-        requested_layout = arguments.get("layout")
+        requested_layout = arguments.get("layout", selector_filter.get("layout"))
         if requested_layout and str(requested_layout) != "*" and _selector_layout(entity) != str(requested_layout):
             continue
         entity_tag = _entity_tag(entity)

@@ -61,3 +61,19 @@ def test_cad_query_accepts_entity_refs_and_numeric_closed_filters(tmp_path):
         "closed": False,
     })
     assert result["matched_ids"] == [first["matched_ids"][0]]
+
+
+def test_cad_query_accepts_agentcad_filter_object_and_tag_prefix(tmp_path):
+    source = _drawing(tmp_path)
+    agent = EngineeringAgent({"tools": {}})
+    tagged = agent.execute_operation("cad.entity_update", {
+        "project_dir": str(tmp_path), "input_file": source, "output_file": source,
+        "entity_id": "e00002", "patch": {"tag": "hole.1"},
+    })
+    assert tagged["persisted_validation"]["valid"]
+    result = agent.execute_operation("cad.query", {
+        "project_dir": str(tmp_path), "input_file": source,
+        "filter": {"type": "CIRCLE", "layer": "HOLES", "tag_prefix": "hole."},
+    })
+    assert result["total_count"] == 1
+    assert result["entities"][0]["tag"] == "hole.1"
