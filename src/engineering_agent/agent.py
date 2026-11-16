@@ -8,6 +8,7 @@ from .adapters import AdapterContext, ToolAdapter, build_adapters
 from .agentcad_compat import normalize_operation
 from .cad_model import CadDocument, validate_cad_document
 from .cad_operations import CadOperationEngine
+from .cad_units import normalize_cad_arguments
 from .cad_history import CadHistory
 from .ingest import ArtifactReader
 from .image_inspection import inspect_image as inspect_raster_image, measure_image as measure_raster_image
@@ -305,6 +306,8 @@ class EngineeringAgent:
     def execute_operation(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
         name, arguments, _was_compat_alias = normalize_operation(name, arguments)
         spec = self.operations.get(name)
+        if name.startswith(("cad.", "brep.")):
+            arguments = normalize_cad_arguments(arguments, schema=spec.parameters_schema)
         schema_errors = self.operations.validate_arguments(name, arguments)
         if schema_errors:
             # Preserve the CAD operation's stable domain error codes for

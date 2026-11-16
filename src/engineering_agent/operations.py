@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 from .agentcad_compat import AGENTCAD_OPERATION_ALIASES, PARAMETER_ALIASES, resolve_operation
+from .cad_units import normalize_cad_arguments, quantity_schema
 from .models import PlanStep, ToolName
 
 
@@ -27,6 +28,8 @@ class OperationSpec:
 
     def schema(self) -> dict[str, Any]:
         parameters = dict(self.parameters_schema)
+        if self.name.startswith(("cad.", "brep.")):
+            parameters = quantity_schema(parameters)
         outputs = self.output_schema
         if self.name.startswith(("catia.", "ansys.", "adams.", "vi-grade.")):
             parameters.update({
@@ -442,6 +445,11 @@ class OperationRegistry:
         """
         spec = self.get(name)
         parameters = parameters or {}
+        if str(resolve_operation(name)).startswith(("cad.", "brep.")):
+            try:
+                parameters = normalize_cad_arguments(parameters, schema=spec.parameters_schema)
+            except ValueError as exc:
+                return [str(exc)]
         errors = [f"MISSING_PARAMETER:{key}" for key in self.validate(name, parameters)]
         for key, schema in spec.parameters_schema.items():
             if key in parameters and parameters[key] is not None:

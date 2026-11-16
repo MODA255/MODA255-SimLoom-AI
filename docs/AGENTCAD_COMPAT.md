@@ -30,3 +30,16 @@ validation.
 The mapping lives in `src/engineering_agent/agentcad_compat.py`. The registry
 and Python operation gateway share the same resolver, which keeps direct,
 HTTP, MCP and Web calls consistent.
+
+## 工程数值和单位
+
+CAD 数值字段同时接受 JSON number 和带单位字符串，例如 `25mm`、`1in`、
+`3deg`、`0.5rad`；也接受 `{ "value": 25, "unit": "mm" }`。SimLoom 在进入
+几何引擎前把长度归一为毫米、角度归一为度，并继续以有限浮点数保存统一对象。
+百分比和无量纲比例也可写成 `25%`、`2.0`。未知单位、角度用于长度字段、长度用于角度
+字段都会返回结构化参数错误，不会猜测调用者意图。
+
+可用单位包括：长度 `mm`、`um`、`µm`、`cm`、`m`、`in`、`ft`、`mil`；角度 `deg`、`°`、
+`rad`；无量纲 `1`、`%`。MCP 的 `tools/list` 会在数量字段上公开
+`x-quantity-dimension` 和 `x-quantity-format`，因此客户端可以在生成参数时发现这项兼容能力。
+普通文本、文件名、实体 ID、参数引用和标准件型号不会被转换。
