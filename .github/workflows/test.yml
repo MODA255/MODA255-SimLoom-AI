@@ -65,27 +65,27 @@ jobs:
       - run: python -m pip install -e ".[dev]"
       - run: npm install --prefix "$RUNNER_TEMP/cad-browser-tools" playwright@1.65.0
       - run: "$RUNNER_TEMP/cad-browser-tools/node_modules/.bin/playwright install --with-deps chromium"
-      - run: node tests/browser/cad_editor.cjs
+      - run: scripts/ci/run_browser_test.sh tests/browser/cad_editor.cjs
         env:
           NODE_PATH: ${{ runner.temp }}/cad-browser-tools/node_modules
           SIMLOOM_BROWSER_ARTIFACTS: ${{ runner.temp }}/cad-browser-evidence
-      - run: node tests/browser/cad_plotting.cjs
+      - run: scripts/ci/run_browser_test.sh tests/browser/cad_plotting.cjs
         env:
           NODE_PATH: ${{ runner.temp }}/cad-browser-tools/node_modules
           SIMLOOM_BROWSER_ARTIFACTS: ${{ runner.temp }}/cad-browser-evidence
-      - run: node tests/browser/cad_viewer.cjs
+      - run: scripts/ci/run_browser_test.sh tests/browser/cad_viewer.cjs
         env:
           NODE_PATH: ${{ runner.temp }}/cad-browser-tools/node_modules
           SIMLOOM_BROWSER_ARTIFACTS: ${{ runner.temp }}/cad-browser-evidence
-      - run: node tests/browser/cad_history.cjs
+      - run: scripts/ci/run_browser_test.sh tests/browser/cad_history.cjs
         env:
           NODE_PATH: ${{ runner.temp }}/cad-browser-tools/node_modules
           SIMLOOM_BROWSER_ARTIFACTS: ${{ runner.temp }}/cad-browser-evidence
-      - run: node tests/browser/project_versions.cjs
+      - run: scripts/ci/run_browser_test.sh tests/browser/project_versions.cjs
         env:
           NODE_PATH: ${{ runner.temp }}/cad-browser-tools/node_modules
           SIMLOOM_BROWSER_ARTIFACTS: ${{ runner.temp }}/cad-browser-evidence
-      - run: node tests/browser/software_jobs.cjs
+      - run: scripts/ci/run_browser_test.sh tests/browser/software_jobs.cjs
         env:
           NODE_PATH: ${{ runner.temp }}/cad-browser-tools/node_modules
           SIMLOOM_BROWSER_ARTIFACTS: ${{ runner.temp }}/cad-browser-evidence

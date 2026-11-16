@@ -98,4 +98,9 @@ async function main() {
     if(server.exitCode===null){server.kill('SIGTERM');await once(server,'exit');}
   }
 }
-main().catch(error=>{console.error(error);process.exitCode=1;});
+main().catch(error=>{
+  const detail=String(error?.stack||error).replace(/%/g,'%25').replace(/\r/g,'%0D').replace(/\n/g,'%0A');
+  process.stdout.write(`::error file=tests/browser/cad_plotting.cjs,line=1,title=cad_plotting failure::${detail}\n`);
+  console.error(error);
+  process.exitCode=1;
+});
