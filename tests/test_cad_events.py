@@ -66,3 +66,26 @@ def test_cad_events_is_available_through_mcp_and_rejects_bad_cursor(tmp_path):
         EngineeringAgent().execute_operation("cad.events", {
             "project_dir": str(tmp_path), "run_id": result["run_id"], "after": -1})
 
+
+def test_cad_events_resource_supports_read_subscribe_and_update_notification(tmp_path):
+    path = source(tmp_path)
+    agent = EngineeringAgent()
+    first = agent.execute_operation("cad.entity_move", {
+        "project_dir": str(tmp_path), "input_file": str(path), "output_file": str(path),
+        "entity_ids": ["e00001"], "delta": [1, 0, 0], "auto_repair": False})
+    server = MCPServer(agent, profile="full")
+    uri = f"engineering://cad-events?root={tmp_path}&run_id={first['run_id']}&after=0"
+    subscribed = server.handle({"jsonrpc": "2.0", "id": 1, "method": "resources/subscribe", "params": {"uri": uri}})
+    assert subscribed["result"]["subscribed"] is True
+    resource = server.handle({"jsonrpc": "2.0", "id": 2, "method": "resources/read", "params": {"uri": uri}})
+    value = json.loads(resource["result"]["contents"][0]["text"])
+    assert value["run_id"] == first["run_id"] and value["events"]
+    second_response = server.handle({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
+        "name": "operation.cad.entity_move", "arguments": {
+            "project_dir": str(tmp_path), "input_file": str(path), "output_file": str(path),
+            "entity_ids": ["e00001"], "delta": [1, 0, 0], "auto_repair": False}}})
+    assert second_response["result"]["structuredContent"]["run_id"] != first["run_id"]
+    notifications = server.drain_notifications()
+    assert any(item["method"] == "notifications/resources/updated" and item["params"]["uri"] == uri
+               for item in notifications)
+

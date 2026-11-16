@@ -511,6 +511,9 @@ class MCPServer:
         watch_id = params.get("watch_id")
         if isinstance(watch_id, str) and watch_id:
             resources.append({"uri": f"engineering://watch?root={root}&watch_id={watch_id}", "name": "External file watch status", "mimeType": "application/json"})
+        run_id = params.get("run_id")
+        if isinstance(run_id, str) and run_id:
+            resources.append({"uri": f"engineering://cad-events?root={root}&run_id={run_id}", "name": "CAD transaction events", "mimeType": "application/json"})
         return resources
 
     @staticmethod
@@ -520,6 +523,7 @@ class MCPServer:
             {"uriTemplate": "engineering://versions?root={root}", "name": "Project versions and timeline", "mimeType": "application/json"},
             {"uriTemplate": "engineering://dependencies?root={root}", "name": "Project dependency graph", "mimeType": "application/json"},
             {"uriTemplate": "engineering://cad?root={root}&path={path}", "name": "CAD document context", "mimeType": "application/json"},
+            {"uriTemplate": "engineering://cad-events?root={root}&run_id={run_id}&after={after}", "name": "CAD transaction events", "mimeType": "application/json"},
             {"uriTemplate": "engineering://asset?root={root}&path={path}", "name": "Project asset preview and image", "mimeType": "image/svg+xml"},
             {"uriTemplate": "engineering://watch?root={root}&watch_id={watch_id}", "name": "External file watch status", "mimeType": "application/json"},
         ]
@@ -545,6 +549,17 @@ class MCPServer:
             if not watch_id:
                 raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "watch_id is required")
             value = self.agent.execute_operation("project.watch_status", {"project_dir": root, "watch_id": watch_id})
+        elif parsed.netloc == "cad-events":
+            run_id = query.get("run_id", [""])[0]
+            if not run_id:
+                raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "run_id is required")
+            try:
+                after = int(query.get("after", ["0"])[0])
+                limit = int(query.get("limit", ["100"])[0])
+            except ValueError as exc:
+                raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "after and limit must be integers") from exc
+            value = self.agent.execute_operation("cad.events", {
+                "project_dir": root, "run_id": run_id, "after": after, "limit": limit})
         elif parsed.netloc == "cad":
             path = query.get("path", [""])[0]
             if not path:
