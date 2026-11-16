@@ -233,6 +233,50 @@ def _finalize_created_entity(document: CadDocument, entity: dict[str, Any], argu
     return entity
 
 
+def _is_tagged_creation(operation: str) -> bool:
+    name = operation.removeprefix("cad.")
+    return (name.endswith("_create") or name in {"entity_create", "donut_create"}) and name != "center_mark_create"
+
+
+def _apply_creation_defaults(document: CadDocument, arguments: dict[str, Any], identifiers: Iterable[str]) -> None:
+    """Apply common drawing fields to every entity created by an operation.
+
+    Keeping this at the batch boundary means specialized operations such as
+    dimensions, symbols, tables and P&ID helpers all accept the same
+    layer/color/linetype/lineweight/tag/layout contract without duplicating
+    style code in every operation implementation.
+    """
+    style_keys = {"layer", "color", "linetype", "lineweight", "layout"}
+    has_style = bool(style_keys.intersection(arguments))
+    tag = str(arguments.get("tag", "")).strip() if arguments.get("tag") not in (None, "") else ""
+    if not has_style and not tag:
+        return
+    for identifier in identifiers:
+        try:
+            entity = document.entity(str(identifier))
+        except KeyError:
+            continue
+        if has_style:
+            _prepare_entity_style(document, arguments, entity=entity)
+        if tag:
+            entity["tag"] = tag
+
+
+def _refresh_result_entities(value: Any, document: CadDocument, identifiers: set[str]) -> Any:
+    """Refresh operation result entity records after common fields are applied."""
+    if isinstance(value, list):
+        return [_refresh_result_entities(item, document, identifiers) for item in value]
+    if isinstance(value, dict):
+        identifier = value.get("id")
+        if identifier is not None and str(identifier) in identifiers:
+            try:
+                return copy.deepcopy(document.entity(str(identifier)))
+            except KeyError:
+                pass
+        return {key: _refresh_result_entities(item, document, identifiers) for key, item in value.items()}
+    return value
+
+
 def _entity_bounds(entity: dict[str, Any]) -> tuple[float, float, float, float] | None:
     points = entity_points(entity)
     if not points:
@@ -4272,9 +4316,20 @@ class CadOperationEngine:
                 before_validation = validate_cad_document(step_before, requirements)
                 before_snapshot = checkpoint_step(index, "before", item_name, step_before,
                                                   validation=before_validation)
-                result = {"operation": item_name, **self._apply_one(document, item_name, item)}
+                skipped = False
+                if _is_tagged_creation(item_name) and item.get("tag") not in (None, ""):
+                    _, existing, skipped = _prepare_entity_tag(document, item)
+                    if skipped:
+                        result = {"operation": item_name, "entities": [str(entity.get("id")) for entity in existing],
+                                  "count": len(existing), "skipped": True}
+                if not skipped:
+                    result = {"operation": item_name, **self._apply_one(document, item_name, item)}
                 step_diff = step_before.diff(document)
-                batch_refs[index] = _entity_change_ids(step_before, document)["added_ids"]
+                step_changes = _entity_change_ids(step_before, document)
+                batch_refs[index] = step_changes["added_ids"]
+                _apply_creation_defaults(document, item, step_changes["added_ids"])
+                if step_changes["added_ids"]:
+                    result = _refresh_result_entities(result, document, set(step_changes["added_ids"]))
                 step_validation = validate_cad_document(document, requirements)
                 after_snapshot = checkpoint_step(index, "after", item_name, document,
                                                  diff=step_diff, validation=step_validation)

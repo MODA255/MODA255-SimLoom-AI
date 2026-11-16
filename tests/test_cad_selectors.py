@@ -75,6 +75,25 @@ def test_tag_is_persistent_and_idempotent_for_create_operations(tmp_path):
     assert len([entity for entity in CadDocument.open(output).entities if entity.get("tag") == "idempotent"]) == 1
 
 
+def test_common_drawing_attributes_apply_to_specialized_creators(tmp_path):
+    source = _drawing(tmp_path)
+    output = tmp_path / "specialized.dxf"
+    result = EngineeringAgent({"tools": {}}).execute_operation("cad.batch_apply", {
+        "project_dir": str(tmp_path), "input_file": source, "output_file": output,
+        "operations": [
+            {"operation": "cad.sheet_create", "name": "A3", "width": 420, "height": 297},
+            {"operation": "cad.mtext_create", "insert": {"x": 10, "y": 10}, "text": "note",
+             "layout": "A3", "layer": "NOTES", "color": 5, "linetype": "DASHED", "lineweight": 25,
+             "tag": "note.main"},
+        ],
+    })
+    assert result["persisted_validation"]["valid"]
+    note = next(entity for entity in CadDocument.open(output).entities if entity.get("tag") == "note.main")
+    assert note["sheet"] == "A3" and note["layout"] == "A3"
+    assert note["layer"] == "NOTES" and note["color_index"] == 5
+    assert note["linetype"] == "DASHED" and note["lineweight"] == 25
+
+
 def test_selector_schema_is_published_for_edit_operations():
     from engineering_agent.operations import OperationRegistry
 
