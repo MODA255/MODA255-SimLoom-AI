@@ -36,11 +36,25 @@ def entity_id(entity) -> str:
     return str(entity.dxf.handle)
 
 
-def stamp(entity, identifier: str):
+def entity_tag(entity) -> str | None:
+    if not entity.has_xdata(APPID):
+        return None
+    tags = entity.get_xdata(APPID)
+    for tag in tags[1:]:
+        if tag.code == 1000 and str(tag.value).startswith("tag:"):
+            value = str(tag.value)[4:]
+            return value or None
+    return None
+
+
+def stamp(entity, identifier: str, tag: str | None = None):
     if APPID not in entity.doc.appids:
         entity.doc.appids.new(APPID)
     # Only our own application data is changed; other applications keep theirs.
-    entity.set_xdata(APPID, [(1000, identifier)])
+    values = [(1000, identifier)]
+    if tag not in (None, ""):
+        values.append((1000, "tag:" + str(tag)))
+    entity.set_xdata(APPID, values)
 
 
 def _raw(entity):
@@ -55,6 +69,9 @@ def entity_model(entity) -> dict[str, Any]:
     dxf = entity.dxf
     item: dict[str, Any] = {"id": entity_id(entity), "type": kind, "handle": dxf.handle, "owner": dxf.owner,
                             "layer": dxf.get("layer", "0")}
+    tag = entity_tag(entity)
+    if tag:
+        item["tag"] = tag
     for attr, key in (("linetype", "linetype"), ("color", "color_index"), ("true_color", "true_color"),
                       ("lineweight", "lineweight"), ("thickness", "thickness")):
         if dxf.hasattr(attr):
@@ -785,8 +802,8 @@ def _sync_entities(drawing, models, layouts, default):
             kept.add(entity.dxf.handle)
         else:
             entity = _create(target, item)
-        if str(item["id"]) != entity.dxf.handle or entity.has_xdata(APPID):
-            stamp(entity, str(item["id"]))
+        if str(item["id"]) != entity.dxf.handle or entity.has_xdata(APPID) or item.get("tag"):
+            stamp(entity, str(item["id"]), item.get("tag"))
         if item.get("title_block_id") and entity.dxftype() == "INSERT":
             from .title_blocks import TITLE_APPID
             if TITLE_APPID not in drawing.appids:

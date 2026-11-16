@@ -30,6 +30,40 @@ class OperationSpec:
         parameters = dict(self.parameters_schema)
         if self.name.startswith(("cad.", "brep.")):
             parameters = quantity_schema(parameters)
+        if self.name.startswith("cad."):
+            # AgentCAD-compatible selector vocabulary.  The runtime accepts
+            # these aliases for operations that select existing entities; they
+            # are published here so MCP clients can discover the contract
+            # without special-casing individual operation names.
+            selector_keys = {"entity_ids", "entity_id", "selection_set", "refs", "boundary_entity_id",
+                             "boundary_entity_ids", "source_entity_ids", "edges"}
+            if selector_keys.intersection(parameters) or self.name in {
+                "cad.entity_move", "cad.entity_copy", "cad.entity_transform", "cad.entity_rotate",
+                "cad.entity_scale", "cad.entity_mirror", "cad.entity_delete", "cad.draw_order",
+                "cad.entity_join", "cad.entity_reverse", "cad.entity_break", "cad.entity_trim",
+                "cad.entity_explode", "cad.entity_update", "cad.entity_array_rectangular",
+                "cad.entity_array_polar", "cad.entity_remove_duplicates", "cad.selection_create",
+                "cad.block_from_entities", "cad.set_annotation_scale", "cad.center_mark_create",
+                "cad.entity_extend",
+            }:
+                parameters.setdefault("target", {
+                    "description": "AgentCAD selector: entity id/handle, 'tag:<name>', '$<batch index>', a list, or a filter object {type, layer, tag, tag_prefix, layout, all}"
+                })
+                parameters.setdefault("selector", {
+                    "description": "Alias for target; accepts the same selector forms"
+                })
+                parameters.setdefault("all", {
+                    "type": "boolean", "description": "Explicitly select all entities when true"
+                })
+            # Common drawing attributes are available to entity creation
+            # operations.  Existing, more specific schemas keep precedence.
+            if self.name.endswith("_create") or self.name in {"cad.entity_create", "cad.donut_create"}:
+                parameters.setdefault("color", {"type": "integer", "minimum": 0, "maximum": 257, "description": "ACI color"})
+                parameters.setdefault("linetype", {"type": "string", "description": "Native DXF linetype"})
+                parameters.setdefault("lineweight", {"type": "integer", "description": "Lineweight in 1/100 mm"})
+                parameters.setdefault("tag", {"type": "string", "description": "Semantic tag referenced as tag:<name>"})
+                parameters.setdefault("if_tag_exists", {"type": "string", "enum": ["error", "skip", "replace"], "default": "error"})
+                parameters.setdefault("layout", {"type": "string", "description": "Model or paper-space layout"})
         outputs = self.output_schema
         if self.name.startswith(("catia.", "ansys.", "adams.", "vi-grade.")):
             parameters.update({
@@ -358,10 +392,18 @@ class OperationRegistry:
     def validate(self, name: str, parameters: dict[str, Any] | None = None) -> list[str]:
         spec = self.get(name)
         parameters = parameters or {}
+        selector_present = any(
+            key in parameters and parameters[key] not in (None, "", [], {})
+            for key in ("target", "selector", "entity_ids", "entity_id", "refs", "selection", "selection_set", "all_entities", "all")
+        )
+        selector_aliases = {"entity_ids", "entity_id", "refs", "selection_set"}
         missing = [key for key in spec.required_parameters
-                   if key not in parameters or parameters[key] is None or parameters[key] == ""]
+                   if key not in parameters or parameters[key] is None or parameters[key] == ""
+                   if not (str(resolve_operation(name)).startswith("cad.") and key in selector_aliases and selector_present)]
         missing.extend("|".join(group) for group in spec.parameter_alternatives
-                       if not any(key in parameters and parameters[key] is not None and parameters[key] != "" for key in group))
+                       if not any(key in parameters and parameters[key] is not None and parameters[key] != "" for key in group)
+                       and not (str(resolve_operation(name)).startswith("cad.") and selector_present
+                                and any(key in selector_aliases for key in group)))
         return missing
 
     @staticmethod

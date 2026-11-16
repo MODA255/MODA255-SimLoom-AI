@@ -33,20 +33,204 @@ def _point(value: Any) -> dict[str, float]:
     return {"x": float(value.get("x", 0)), "y": float(value.get("y", 0)), "z": float(value.get("z", 0))}
 
 
+def _entity_tag(entity: dict[str, Any]) -> str | None:
+    """Return the stable semantic tag used by AgentCAD-compatible selectors.
+
+    Most SimLoom entities store the tag directly.  A few older operation
+    families keep it inside their semantic record, so selectors intentionally
+    understand those records as well while preserving the original shape.
+    """
+    value = entity.get("tag")
+    if value is not None and str(value) != "":
+        return str(value)
+    for key in ("center_mark", "pid_symbol", "standard_symbol", "hole", "fastener", "bom_balloon"):
+        nested = entity.get(key)
+        if isinstance(nested, dict) and nested.get("tag") not in (None, ""):
+            return str(nested["tag"])
+    return None
+
+
+def _selector_layout(entity: dict[str, Any]) -> str:
+    return str(entity.get("sheet", entity.get("layout", "Model")) or "Model")
+
+
+def _selector_matches(entity: dict[str, Any], selector: dict[str, Any]) -> bool:
+    """Match the small, portable filter language shared with AgentCAD."""
+    if selector.get("all") is True:
+        return True
+    raw_type = selector.get("type", selector.get("entity_type"))
+    if raw_type is not None:
+        types = raw_type if isinstance(raw_type, (list, tuple, set)) else [raw_type]
+        if str(entity.get("type", "")).upper() not in {str(value).upper() for value in types}:
+            return False
+    raw_layer = selector.get("layer", selector.get("layers"))
+    if raw_layer is not None:
+        layers = raw_layer if isinstance(raw_layer, (list, tuple, set)) else [raw_layer]
+        if str(entity.get("layer", "0")) not in {str(value) for value in layers}:
+            return False
+    if selector.get("tag") is not None and _entity_tag(entity) != str(selector["tag"]):
+        return False
+    if selector.get("tag_prefix") is not None:
+        tag = _entity_tag(entity)
+        if tag is None or not tag.startswith(str(selector["tag_prefix"])):
+            return False
+    requested_layout = selector.get("layout")
+    if requested_layout not in (None, "", "*") and _selector_layout(entity) != str(requested_layout):
+        return False
+    return True
+
+
+def _selector_values(value: Any, document: CadDocument, arguments: dict[str, Any]) -> list[str]:
+    """Resolve one AgentCAD-style selector value to canonical entity IDs."""
+    if isinstance(value, (list, tuple)):
+        resolved: list[str] = []
+        for item in value:
+            resolved.extend(_selector_values(item, document, arguments))
+        return resolved
+    if isinstance(value, dict):
+        # EntityRef and the common {id/entity_id/ref} wrappers are references,
+        # while dictionaries with selector keys are filters.
+        for key in ("entity_id", "id", "handle"):
+            if value.get(key) is not None and len(value) <= 3:
+                return _selector_values(value[key], document, arguments)
+        nested = value.get("ref")
+        if nested is not None and not any(key in value for key in ("type", "layer", "tag", "tag_prefix", "layout", "all")):
+            return _selector_values(nested, document, arguments)
+        if not value:
+            raise ValueError("EMPTY_SELECTOR")
+        return [str(item.get("id")) for item in document.entities if _selector_matches(item, value)]
+    if value is None:
+        return []
+    raw = str(value).strip()
+    if not raw:
+        return []
+    if raw.startswith("$"):
+        try:
+            index = int(raw[1:])
+        except ValueError as exc:
+            raise ValueError("BAD_SELECTOR_REFERENCE:" + raw) from exc
+        batch_refs = arguments.get("_batch_refs") or {}
+        refs = batch_refs.get(index, batch_refs.get(str(index), [])) if isinstance(batch_refs, dict) else []
+        if refs is None:
+            raise ValueError("BAD_SELECTOR_REFERENCE:" + raw)
+        return [str(ref) for ref in refs]
+    if raw.startswith("tag:"):
+        tag = raw[4:]
+        return [str(item.get("id")) for item in document.entities if _entity_tag(item) == tag]
+    if raw == "*":
+        return [str(item.get("id")) for item in document.entities]
+    # Handles and canonical IDs are both accepted by CadDocument.entity().
+    try:
+        return [str(document.entity(raw).get("id"))]
+    except KeyError:
+        # Keep the missing selector visible to the operation-specific error;
+        # callers that select an empty filter can still receive an empty list.
+        return []
+
+
 def _refs(arguments: dict[str, Any], document: CadDocument) -> list[str]:
-    values = arguments.get("entity_ids") or arguments.get("refs") or arguments.get("selection") or []
-    if isinstance(values, str):
-        values = [values]
-    if not values and arguments.get("entity_id"):
-        values = [arguments["entity_id"]]
-    if isinstance(values, dict):
-        values = [values.get("entity_id")]
-    if not values and arguments.get("selection_set"):
+    """Resolve IDs, selection sets, filters, tags and batch references.
+
+    ``target`` is the canonical AgentCAD selector field.  Existing aliases are
+    retained for backwards compatibility with the original SimLoom API.
+    """
+    values: Any = None
+    for key in ("target", "selector", "entity_ids", "refs", "selection", "entity_id"):
+        if arguments.get(key) is not None:
+            values = arguments[key]
+            break
+    if values is None and arguments.get("selection_set"):
         selection = document.selection_sets.get(str(arguments["selection_set"]))
-        values = selection.refs if selection else []
-    if not values and arguments.get("all_entities"):
-        values = [str(item.get("id")) for item in document.entities]
-    return [str(value.get("entity_id") if isinstance(value, dict) else value) for value in values if value]
+        if selection is None:
+            raise ValueError("SELECTION_NOT_FOUND:" + str(arguments["selection_set"]))
+        values = selection.refs
+    if values is None and (arguments.get("all_entities") or arguments.get("all") is True):
+        values = {"all": True, "layout": arguments.get("layout")}
+    if values is None:
+        return []
+    resolved: list[str] = []
+    for value in (values if isinstance(values, (list, tuple)) else [values]):
+        resolved.extend(_selector_values(value, document, arguments))
+    # Preserve selector order while de-duplicating overlapping filters/lists.
+    return list(dict.fromkeys(str(value) for value in resolved if value))
+
+
+def _remove_entities(document: CadDocument, identifiers: Iterable[str]) -> list[str]:
+    """Remove entities and clean references held by selections and constraints."""
+    ids = {str(value) for value in identifiers}
+    if not ids:
+        return []
+    removed = [str(item.get("id")) for item in document.entities if str(item.get("id")) in ids]
+    document.entities = [item for item in document.entities if str(item.get("id")) not in ids]
+    for selection in document.selection_sets.values():
+        selection.refs = [ref for ref in selection.refs if str(ref) not in ids]
+    document.constraints = [constraint for constraint in document.constraints
+                            if not ids.intersection(str(ref) for ref in constraint.refs)]
+    return removed
+
+
+def _prepare_entity_style(document: CadDocument, arguments: dict[str, Any], *, entity: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Apply common AgentCAD drawing attributes to a canonical entity."""
+    item = entity if entity is not None else {}
+    layer_name = str(arguments.get("layer", item.get("layer", "0")) or "0")
+    layer = document.ensure_layer(layer_name)
+    if layer.locked:
+        raise ValueError("CAD_LAYER_LOCKED:" + layer_name)
+    item["layer"] = layer_name
+    for key in ("linetype", "lineweight"):
+        if key in arguments and arguments[key] is not None:
+            item[key] = arguments[key]
+    if "color" in arguments and arguments["color"] is not None:
+        try:
+            color = int(arguments["color"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("CAD_COLOR_INVALID") from exc
+        if not 0 <= color <= 257:
+            raise ValueError("CAD_COLOR_INVALID")
+        item["color_index"] = color
+    if "layout" in arguments and arguments["layout"] not in (None, "", "Model"):
+        layout = str(arguments["layout"])
+        if layout == "*":
+            raise ValueError("CAD_LAYOUT_INVALID")
+        if layout not in document.sheets:
+            raise ValueError("CAD_LAYOUT_NOT_FOUND:" + layout)
+        item["sheet"] = layout
+        item["layout"] = layout
+    elif item.get("sheet") and item.get("layout") is None:
+        item["layout"] = item["sheet"]
+    return item
+
+
+def _tagged_entities(document: CadDocument, tag: str) -> list[dict[str, Any]]:
+    return [item for item in document.entities if _entity_tag(item) == tag]
+
+
+def _prepare_entity_tag(document: CadDocument, arguments: dict[str, Any]) -> tuple[str, list[dict[str, Any]], bool]:
+    """Handle idempotent tag creation and return ``(tag, existing, skip)``."""
+    raw_tag = arguments.get("tag")
+    if raw_tag in (None, ""):
+        return "", [], False
+    tag = str(raw_tag).strip()
+    if not tag:
+        return "", [], False
+    mode = str(arguments.get("if_tag_exists", "error")).lower()
+    if mode not in {"error", "skip", "replace"}:
+        raise ValueError("CAD_TAG_MODE_INVALID")
+    existing = _tagged_entities(document, tag)
+    if existing and mode == "error":
+        raise ValueError("CAD_TAG_EXISTS:" + tag)
+    if existing and mode == "skip":
+        return tag, existing, True
+    if existing and mode == "replace":
+        _remove_entities(document, [str(item.get("id")) for item in existing])
+    return tag, existing, False
+
+
+def _finalize_created_entity(document: CadDocument, entity: dict[str, Any], arguments: dict[str, Any], *, tag: str = "") -> dict[str, Any]:
+    _prepare_entity_style(document, arguments, entity=entity)
+    if tag:
+        entity["tag"] = tag
+    return entity
 
 
 def _entity_bounds(entity: dict[str, Any]) -> tuple[float, float, float, float] | None:
@@ -656,6 +840,12 @@ def _query_entities(document: CadDocument, arguments: dict[str, Any]) -> dict[st
     layers = {str(value) for value in raw_layers if str(value).strip()}
     if arguments.get("layer"):
         layers.add(str(arguments["layer"]))
+    tag = arguments.get("tag")
+    if tag is not None and not isinstance(tag, str):
+        raise ValueError("CAD_QUERY_TAG_INVALID")
+    tag_prefix = arguments.get("tag_prefix")
+    if tag_prefix is not None and not isinstance(tag_prefix, str):
+        raise ValueError("CAD_QUERY_TAG_PREFIX_INVALID")
     raw_ids = arguments.get("entity_ids") or []
     if isinstance(raw_ids, (str, dict)):
         raw_ids = [raw_ids]
@@ -721,7 +911,13 @@ def _query_entities(document: CadDocument, arguments: dict[str, Any]) -> dict[st
         block_name = entity.get("block_name", entity.get("name", entity.get("block", "")))
         if arguments.get("block_name") and str(block_name) != str(arguments["block_name"]):
             continue
-        if arguments.get("layout") and str(entity.get("sheet", entity.get("layout", "Model"))) != str(arguments["layout"]):
+        requested_layout = arguments.get("layout")
+        if requested_layout and str(requested_layout) != "*" and _selector_layout(entity) != str(requested_layout):
+            continue
+        entity_tag = _entity_tag(entity)
+        if tag is not None and entity_tag != tag:
+            continue
+        if tag_prefix is not None and (entity_tag is None or not entity_tag.startswith(tag_prefix)):
             continue
         if closed is not None and bool(entity.get("closed", False)) is not closed:
             continue
@@ -2084,11 +2280,16 @@ class CadOperationEngine:
             layer = document.ensure_layer(layer_name)
             if layer.locked:
                 raise ValueError("CAD_LAYER_LOCKED:" + layer_name)
+            tag, existing, skip = _prepare_entity_tag(document, arguments)
+            if skip:
+                return {"entities": [copy.deepcopy(item) for item in existing], "count": len(existing), "skipped": True}
             donut_id = document.next_id("donut")
             outer_entity = {"id": document.next_id("donut-outer"), "type": "CIRCLE", "layer": layer_name,
                             "center": center, "radius": outer, "donut_id": donut_id, "donut_role": "outer"}
             inner_entity = {"id": document.next_id("donut-inner"), "type": "CIRCLE", "layer": layer_name,
                             "center": center, "radius": inner, "donut_id": donut_id, "donut_role": "inner"}
+            _finalize_created_entity(document, outer_entity, arguments, tag=tag)
+            _finalize_created_entity(document, inner_entity, arguments, tag=tag)
             document.entities.extend((outer_entity, inner_entity))
             return {"entities": [outer_entity, inner_entity], "donut_id": donut_id,
                     "inner_radius": inner, "outer_radius": outer, "representation": "concentric_circles"}
@@ -2109,19 +2310,28 @@ class CadOperationEngine:
         if name in convenience:
             entity_type, values = convenience[name]()
             entity = values | {"id": document.next_id(), "type": entity_type, "layer": str(arguments.get("layer", "0"))}
-            document.ensure_layer(entity["layer"])
+            tag, existing, skip = _prepare_entity_tag(document, arguments)
+            if skip:
+                return {"entity": copy.deepcopy(existing[0]), "entities": [copy.deepcopy(item) for item in existing], "skipped": True}
+            _finalize_created_entity(document, entity, arguments, tag=tag)
             document.entities.append(entity)
             return {"entity": entity}
         if name == "entity_create":
             entity = copy.deepcopy(arguments.get("entity") or {})
             entity.setdefault("type", str(arguments.get("entity_type", "POINT")).upper())
             entity.setdefault("layer", str(arguments.get("layer", "0")))
+            tag, existing, skip = _prepare_entity_tag(document, arguments)
+            if skip:
+                return {"entity": copy.deepcopy(existing[0]), "entities": [copy.deepcopy(item) for item in existing], "skipped": True}
             entity["id"] = str(entity.get("id") or document.next_id())
-            document.ensure_layer(entity["layer"])
+            _finalize_created_entity(document, entity, arguments, tag=tag or str(entity.get("tag", "")))
             document.entities.append(entity)
             return {"entity": entity}
         if name == "entity_update":
-            entity = document.entity(str(arguments.get("entity_id")))
+            ids = _refs(arguments, document)
+            if len(ids) != 1:
+                raise ValueError("ENTITY_UPDATE_TARGET_REQUIRED")
+            entity = document.entity(ids[0])
             patch = arguments.get("patch") or {}
             updated = _merge(entity, patch)
             updated["id"] = entity["id"]
@@ -2397,7 +2607,10 @@ class CadOperationEngine:
                         created.append(copied["id"])
             return {"entities": created, "count": len(created)}
         if name == "entity_break":
-            entity = document.entity(str(arguments.get("entity_id")))
+            ids = _refs(arguments, document)
+            if len(ids) != 1:
+                raise ValueError("BREAK_ENTITY_REQUIRED")
+            entity = document.entity(ids[0])
             if str(entity.get("type", "")).upper() != "LINE":
                 raise ValueError("BREAK_ONLY_SUPPORTS_LINE")
             start, end = _line_point(entity, "start"), _line_point(entity, "end")
@@ -2543,7 +2756,10 @@ class CadOperationEngine:
                 changed.append(entity_id)
             return {"entities": changed}
         if name == "entity_explode":
-            entity = document.entity(str(arguments.get("entity_id")))
+            ids = _refs(arguments, document)
+            if len(ids) != 1:
+                raise ValueError("EXPLODE_ENTITY_REQUIRED")
+            entity = document.entity(ids[0])
             if str(entity.get("type", "")).upper() != "INSERT":
                 raise ValueError("EXPLODE_ONLY_SUPPORTS_INSERT")
             block = document.blocks.get(str(entity.get("block_name", "")))
@@ -3066,7 +3282,10 @@ class CadOperationEngine:
             document.entities.append(entity)
             return {"entity": entity}
         if name == "entity_trim":
-            entity = document.entity(str(arguments.get("entity_id")))
+            ids = _refs(arguments, document)
+            if len(ids) != 1:
+                raise ValueError("TRIM_ENTITY_REQUIRED")
+            entity = document.entity(ids[0])
             keep = str(arguments.get("keep", "end")).lower()
             boundary_id = arguments.get("boundary_entity_id") or arguments.get("cutting_entity_id")
             kind = str(entity.get("type", "")).upper()
@@ -3133,24 +3352,19 @@ class CadOperationEngine:
             return {"entity": updated}
         if name == "entity_extend":
             target_value = arguments.get("target") or arguments.get("target_entity_id") or arguments.get("entity_id")
-            if isinstance(target_value, dict):
-                target_value = target_value.get("entity_id") or target_value.get("id") or target_value.get("ref")
-            target_id = str(target_value or "")
-            if not target_id:
+            target_ids = _selector_values(target_value, document, arguments) if target_value is not None else []
+            if len(target_ids) != 1:
                 raise ValueError("EXTEND_TARGET_REQUIRED")
+            target_id = target_ids[0]
             edge_values = arguments.get("edges")
             if edge_values is None:
                 edge_values = arguments.get("boundary_entity_ids")
             if edge_values is None:
                 edge_values = arguments.get("boundary_entity_id") or arguments.get("cutting_entity_id")
-            if isinstance(edge_values, (str, dict)):
-                edge_values = [edge_values]
             edge_ids = []
-            for value in edge_values or []:
-                if isinstance(value, dict):
-                    value = value.get("entity_id") or value.get("id") or value.get("ref")
-                if value:
-                    edge_ids.append(str(value))
+            for value in (edge_values if isinstance(edge_values, (list, tuple)) else [edge_values]):
+                edge_ids.extend(_selector_values(value, document, arguments))
+            edge_ids = list(dict.fromkeys(edge_ids))
             if not edge_ids:
                 raise ValueError("EXTEND_BOUNDARIES_REQUIRED")
             target = document.entity(target_id)
@@ -3600,22 +3814,7 @@ class CadOperationEngine:
             changed_fields = sorted(key for key in set(target) | set(updated) if target.get(key) != updated.get(key))
             return {"entity": updated, "changed_fields": changed_fields, "associative": bool(updated.get("associative"))}
         if name == "center_mark_create":
-            target_values = arguments.get("target")
-            if target_values is None:
-                target_values = arguments.get("entity_ids")
-            if target_values is None and arguments.get("selection_set"):
-                selection = document.selection_sets.get(str(arguments["selection_set"]))
-                if selection is None:
-                    raise ValueError("SELECTION_NOT_FOUND:" + str(arguments["selection_set"]))
-                target_values = selection.refs
-            if isinstance(target_values, (str, dict)):
-                target_values = [target_values]
-            target_ids = []
-            for value in target_values or []:
-                if isinstance(value, dict):
-                    value = value.get("entity_id") or value.get("id") or value.get("ref")
-                if value:
-                    target_ids.append(str(value))
+            target_ids = _refs(arguments, document)
             if not target_ids:
                 raise ValueError("CENTER_MARK_TARGET_REQUIRED")
             layer_name = str(arguments.get("layer", "CENTER"))
@@ -4041,6 +4240,7 @@ class CadOperationEngine:
             results = []
             replay_steps = []
             step_snapshots = []
+            batch_refs: dict[int, list[str]] = {}
             requirements = copy.deepcopy(arguments.get("requirements") or {})
 
             def checkpoint_step(index: int, stage: str, operation_name: str, snapshot: CadDocument,
@@ -4063,12 +4263,18 @@ class CadOperationEngine:
             for index, item in enumerate(operations):
                 item = dict(item)
                 item_name = str(item.pop("operation", operation))
+                # AgentCAD-compatible ``$<index>`` selectors refer to entities
+                # created by an earlier operation in this same atomic batch.
+                # Keep the map request-local; it must never leak into the
+                # persisted document or the public operation result.
+                item["_batch_refs"] = batch_refs
                 step_before = document.clone()
                 before_validation = validate_cad_document(step_before, requirements)
                 before_snapshot = checkpoint_step(index, "before", item_name, step_before,
                                                   validation=before_validation)
                 result = {"operation": item_name, **self._apply_one(document, item_name, item)}
                 step_diff = step_before.diff(document)
+                batch_refs[index] = _entity_change_ids(step_before, document)["added_ids"]
                 step_validation = validate_cad_document(document, requirements)
                 after_snapshot = checkpoint_step(index, "after", item_name, document,
                                                  diff=step_diff, validation=step_validation)
