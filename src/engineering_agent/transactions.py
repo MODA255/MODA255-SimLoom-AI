@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable
+import re
 
 
 def _now() -> str:
@@ -151,6 +152,7 @@ class RunTransaction:
         self.changes: list[dict[str, Any]] = []
         self.state = "created"
         self.plan: dict[str, Any] = {}
+        self._event_sequence = 0
 
     def __enter__(self) -> "RunTransaction":
         return self
@@ -165,12 +167,17 @@ class RunTransaction:
     def begin(self, plan: dict[str, Any]):
         if self.state != "created":
             raise RuntimeError("TRANSACTION_ALREADY_STARTED")
+        # Publish a durable queued marker before lock acquisition.  A caller
+        # watching the run directory can therefore distinguish a run waiting
+        # for the project lock from a process that has disappeared.
+        self.plan = plan
+        self.record("queued", {"plan": plan})
         self._acquire_lock()
         try:
             self._recover_pending()
             self.stage_dir.mkdir(parents=True, exist_ok=True)
-            self.plan = plan
             self.record("begin", {"plan": plan})
+            self.record("running", {"plan": plan})
             self.state = "running"
             self._write_state()
         except BaseException:
@@ -179,8 +186,34 @@ class RunTransaction:
 
     def record(self, event: str, payload: dict[str, Any] | None = None):
         self.run_dir.mkdir(parents=True, exist_ok=True)
+        if self._event_sequence == 0 and self.journal_path.exists():
+            # Recovery can reopen a journal written by an older process.  Do
+            # not reset its cursor when appending the terminal event.
+            for item in self._read_events_file(self.journal_path, self.run_id):
+                self._event_sequence = max(self._event_sequence, int(item.get("sequence", 0)))
+        self._event_sequence += 1
+        name = str(event)
+        phase = (payload or {}).get("phase") if isinstance(payload, dict) else None
+        if phase is None:
+            if name == "queued":
+                phase = "queued"
+            elif name in {"begin", "running"} or name.endswith("_started"):
+                phase = "running"
+            elif name == "checkpoint":
+                phase = "checkpoint"
+            elif "validation" in name or name in {"cad_diff", "diff"}:
+                phase = "validation"
+            elif name in {"commit", "committed", "step_committed"}:
+                phase = "committed"
+            elif name in {"failed", "rolled_back", "recovery_failed"} or name.endswith("_failed"):
+                phase = "failed"
+            else:
+                phase = "info"
+        record = {"schema_version": 2, "sequence": self._event_sequence,
+                  "run_id": self.run_id, "at": _now(), "event": name,
+                  "phase": str(phase), "payload": payload or {}}
         with self.journal_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps({"at": _now(), "event": event, "payload": payload or {}}, ensure_ascii=False) + "\n")
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
             handle.flush()
             os.fsync(handle.fileno())
 
@@ -446,13 +479,70 @@ class RunTransaction:
         finally:
             transaction.release_lock()
 
-    def events(self) -> list[dict[str, Any]]:
-        if not self.journal_path.exists():
+    @staticmethod
+    def _read_events_file(path: Path, run_id: str) -> list[dict[str, Any]]:
+        """Read complete JSONL records while a writer may still be appending."""
+        if not path.exists():
             return []
-        events = []
-        for line in self.journal_path.read_text(encoding="utf-8").splitlines():
+        events: list[dict[str, Any]] = []
+        for index, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
             try:
-                events.append(json.loads(line))
-            except json.JSONDecodeError:
+                item = json.loads(line)
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                # A partially appended final line is intentionally ignored;
+                # the next poll will see the complete record.
                 continue
+            if not isinstance(item, dict):
+                continue
+            item.setdefault("schema_version", 1)
+            item.setdefault("run_id", run_id)
+            item.setdefault("sequence", index)
+            item.setdefault("phase", "info")
+            item.setdefault("payload", {})
+            events.append(item)
         return events
+
+    def events(self, *, after: int | None = None, limit: int | None = None):
+        """Return the journal, or a cursor page when ``after``/``limit`` is set.
+
+        The no-argument form remains a list for existing reports.  The paged
+        form is used by Web/MCP clients that poll a live CAD operation.
+        """
+        events = self._read_events_file(self.journal_path, self.run_id)
+        if after is None and limit is None:
+            return events
+        return self._page_events(events, after=after or 0, limit=limit or 100)
+
+    @staticmethod
+    def _page_events(events: list[dict[str, Any]], *, after: int = 0, limit: int = 100) -> dict[str, Any]:
+        if isinstance(after, bool) or not isinstance(after, int) or after < 0:
+            raise ValueError("CAD_EVENT_CURSOR_INVALID")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
+            raise ValueError("CAD_EVENT_LIMIT_INVALID")
+        latest = max((int(item.get("sequence", 0)) for item in events), default=0)
+        selected = [item for item in events if int(item.get("sequence", 0)) > after][:limit]
+        next_cursor = int(selected[-1]["sequence"]) if selected else after
+        has_more = any(int(item.get("sequence", 0)) > next_cursor for item in events)
+        return {"schema_version": 2, "events": selected, "after": after,
+                "next_cursor": next_cursor, "latest_cursor": latest,
+                "has_more": has_more}
+
+    @classmethod
+    def event_page(cls, project_dir: str | Path, run_id: str, *, after: int = 0, limit: int = 100) -> dict[str, Any]:
+        """Read a live or completed transaction journal without taking the writer lock."""
+        root = Path(project_dir).expanduser().resolve()
+        if not isinstance(run_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", run_id):
+            raise ValueError("CAD_EVENT_INVALID_RUN_ID")
+        run_dir = confined_path(root, f"artifacts/runs/{run_id}")
+        if not run_dir.is_dir():
+            raise FileNotFoundError("CAD_EVENT_RUN_NOT_FOUND")
+        page = cls._page_events(cls._read_events_file(run_dir / "journal.jsonl", run_id), after=after, limit=limit)
+        state_path = confined_path(run_dir, "state.json")
+        state = "unknown"
+        if state_path.is_file():
+            try:
+                raw = json.loads(state_path.read_text(encoding="utf-8"))
+                state = str(raw.get("state", "unknown"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                state = "invalid"
+        return {"run_id": run_id, "state": state, **page}

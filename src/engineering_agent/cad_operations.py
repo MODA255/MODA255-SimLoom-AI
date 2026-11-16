@@ -4190,6 +4190,13 @@ class CadOperationEngine:
             }
 
     def apply(self, operation: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if operation == "cad.events":
+            project_dir = arguments.get("project_dir")
+            if not project_dir:
+                raise ValueError("CAD_EVENT_PROJECT_REQUIRED")
+            return RunTransaction.event_page(project_dir, arguments.get("run_id", ""),
+                                             after=arguments.get("after", 0),
+                                             limit=arguments.get("limit", 100))
         if operation == "cad.history_view":
             from .cad_replay import history_view
             raw_input = Path(arguments["input_file"]).expanduser()
@@ -4311,6 +4318,8 @@ class CadOperationEngine:
             for index, item in enumerate(operations):
                 item = dict(item)
                 item_name = str(item.pop("operation", operation))
+                transaction.record("step_queued", {"phase": "queued", "step": index,
+                                                    "operation": item_name})
                 # AgentCAD-compatible ``$<index>`` selectors refer to entities
                 # created by an earlier operation in this same atomic batch.
                 # Keep the map request-local; it must never leak into the
@@ -4318,6 +4327,8 @@ class CadOperationEngine:
                 item["_batch_refs"] = batch_refs
                 step_before = document.clone()
                 before_validation = validate_cad_document(step_before, requirements)
+                transaction.record("step_started", {"phase": "running", "step": index,
+                                                     "operation": item_name})
                 before_snapshot = checkpoint_step(index, "before", item_name, step_before,
                                                   validation=before_validation)
                 skipped = False
@@ -4327,7 +4338,13 @@ class CadOperationEngine:
                         result = {"operation": item_name, "entities": [str(entity.get("id")) for entity in existing],
                                   "count": len(existing), "skipped": True}
                 if not skipped:
-                    result = {"operation": item_name, **self._apply_one(document, item_name, item)}
+                    try:
+                        result = {"operation": item_name, **self._apply_one(document, item_name, item)}
+                    except BaseException as exc:
+                        transaction.record("step_failed", {"phase": "failed", "step": index,
+                                                            "operation": item_name,
+                                                            "error": str(exc)})
+                        raise
                 step_diff = step_before.diff(document)
                 step_changes = _entity_change_ids(step_before, document)
                 batch_refs[index] = step_changes["added_ids"]
@@ -4335,8 +4352,18 @@ class CadOperationEngine:
                 if step_changes["added_ids"]:
                     result = _refresh_result_entities(result, document, set(step_changes["added_ids"]))
                 step_validation = validate_cad_document(document, requirements)
+                transaction.record("step_validation", {"phase": "validation", "step": index,
+                                                         "operation": item_name,
+                                                         "valid": bool(step_validation.get("valid")),
+                                                         "errors": step_validation.get("errors", [])})
                 after_snapshot = checkpoint_step(index, "after", item_name, document,
                                                  diff=step_diff, validation=step_validation)
+                transaction.record("step_committed", {"phase": "committed", "step": index,
+                                                       "operation": item_name,
+                                                       "changed": bool(step_diff.get("change_count")),
+                                                       "added_ids": step_changes["added_ids"],
+                                                       "removed_ids": step_changes["removed_ids"],
+                                                       "changed_ids": step_changes["changed_ids"]})
                 step_record = {"index": index, "operation": item_name,
                                **_entity_change_ids(step_before, document),
                                "diff": step_diff, "validation": step_validation,
@@ -4369,17 +4396,39 @@ class CadOperationEngine:
                         if key in repair_payload
                     }
                     index = len(replay_steps)
+                    transaction.record("step_queued", {"phase": "queued", "step": index,
+                                                        "operation": repair_name, "replanned": True,
+                                                        "repair": repair_metadata})
                     step_before = document.clone()
                     before_validation = validate_cad_document(step_before, requirements)
+                    transaction.record("step_started", {"phase": "running", "step": index,
+                                                         "operation": repair_name, "replanned": True})
                     before_snapshot = checkpoint_step(index, "before", repair_name, step_before,
                                                       validation=before_validation, replanned=True,
                                                       repair=repair_metadata)
-                    applied = self._apply_one(document, repair_name, repair_payload)
+                    try:
+                        applied = self._apply_one(document, repair_name, repair_payload)
+                    except BaseException as exc:
+                        transaction.record("step_failed", {"phase": "failed", "step": index,
+                                                            "operation": repair_name, "replanned": True,
+                                                            "error": str(exc), "repair": repair_metadata})
+                        raise
                     step_diff = step_before.diff(document)
                     step_validation = validate_cad_document(document, requirements)
+                    transaction.record("step_validation", {"phase": "validation", "step": index,
+                                                             "operation": repair_name, "replanned": True,
+                                                             "valid": bool(step_validation.get("valid")),
+                                                             "errors": step_validation.get("errors", [])})
                     after_snapshot = checkpoint_step(index, "after", repair_name, document,
                                                     diff=step_diff, validation=step_validation, replanned=True,
                                                     repair=repair_metadata)
+                    repair_changes = _entity_change_ids(step_before, document)
+                    transaction.record("step_committed", {"phase": "committed", "step": index,
+                                                           "operation": repair_name, "replanned": True,
+                                                           "changed": bool(step_diff.get("change_count")),
+                                                           "added_ids": repair_changes["added_ids"],
+                                                           "removed_ids": repair_changes["removed_ids"],
+                                                           "changed_ids": repair_changes["changed_ids"]})
                     step_record = {"index": index, "operation": repair_name, "replanned": True,
                                    **_entity_change_ids(step_before, document), "diff": step_diff,
                                    "validation": step_validation, "repair": repair_metadata,

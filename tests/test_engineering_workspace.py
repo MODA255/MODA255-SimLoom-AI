@@ -155,6 +155,23 @@ def test_batch_step_view_http_reads_read_only_checkpoint(service, tmp_path):
     assert result["checkpoint"].endswith("step-000-after/state.json")
 
 
+def test_cad_event_stream_http_supports_cursor_resume(service, tmp_path):
+    from engineering_agent.formats import write_dxf
+    call, _, agent = service
+    path = tmp_path / "events-http.dxf"
+    write_dxf(path, lines=[{"x1": 0, "y1": 0, "x2": 10, "y2": 0}])
+    batch = agent.execute_operation("cad.entity_move", {
+        "project_dir": str(tmp_path), "input_file": str(path), "output_file": str(path),
+        "entity_ids": ["e00001"], "delta": [3, 0, 0], "auto_repair": False})
+    query = urllib.parse.urlencode({"root": str(tmp_path), "run_id": batch["run_id"], "limit": 2})
+    status, first = call("/api/cad/events?" + query)
+    assert status == 200 and first["events"] and first["next_cursor"]
+    query = urllib.parse.urlencode({"root": str(tmp_path), "run_id": batch["run_id"],
+                                    "after": first["next_cursor"], "limit": 100})
+    status, resumed = call("/api/cad/events?" + query)
+    assert status == 200 and all(item["sequence"] > first["next_cursor"] for item in resumed["events"])
+
+
 def test_capabilities_explain_offline_and_connected_modes(service):
     call, _, _ = service
     status, capabilities = call("/api/capabilities")

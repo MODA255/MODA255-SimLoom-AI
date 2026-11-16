@@ -1,13 +1,60 @@
 'use strict';
 const $ = s => document.querySelector(s);
 const escapeHTML = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const state = {project:null, templates:[], busy:false, page:1, preview:0, previewPath:null, versions:[], versionView:0, cadHistory:false, historyRequest:0, watch:null, versionHtml:'', diffHtml:''};
+const state = {project:null, templates:[], busy:false, page:1, preview:0, previewPath:null, versions:[], versionView:0, cadHistory:false, historyRequest:0, watch:null, versionHtml:'', diffHtml:'', cadRunId:null, cadEventCursor:0, cadEventTimer:null, cadEventRequest:0};
 const icons = {catia:'◇', ansys:'△', adams:'⌁', 'vi-grade':'◎'};
 const labels = {waiting:'等待恢复连接',queued:'待运行', running:'运行中', completed:'已完成', failed:'失败'};
 let toastTimer;
 function toast(message) { clearTimeout(toastTimer); $('#toast').textContent=message; $('#toast').classList.add('show'); toastTimer=setTimeout(()=>$('#toast').classList.remove('show'),4000); }
 function details(data) { $('#output').textContent=JSON.stringify(data,null,2); }
 function reportError(error) { $('#runError').textContent=error.message; toast(error.message); }
+function resetCadEvents() {
+  if(state.cadEventTimer) { clearTimeout(state.cadEventTimer); state.cadEventTimer=null; }
+  state.cadRunId=null; state.cadEventCursor=0; state.cadEventRequest++;
+  const panel=$('#cadEventsPanel'); if(panel) panel.hidden=true;
+  const list=$('#cadEvents'); if(list) list.innerHTML='';
+  const status=$('#cadEventsStatus'); if(status) status.textContent='';
+}
+function cadEventLabel(event) {
+  const labels={queued:'已排队',running:'执行中',checkpoint:'已保存检查点',validation:'验证完成',committed:'已提交',failed:'失败',recovered:'已恢复',info:'记录'};
+  return labels[event.phase]||event.event||'记录';
+}
+function renderCadEvents(events) {
+  const list=$('#cadEvents'); if(!list) return;
+  if(!events?.length) { list.innerHTML='<li class="empty">暂无新增事件。</li>'; return; }
+  list.innerHTML=events.map(item=>{
+    const payload=item.payload||{};
+    const detail=payload.operation?`${payload.operation}${payload.step==null?'':` · 步骤 ${Number(payload.step)+1}`}`:(payload.label||payload.error||'');
+    return `<li><time>${escapeHTML(displayTime(item.at))}</time><div><strong>${escapeHTML(cadEventLabel(item))}</strong><p>${escapeHTML(detail)}</p></div></li>`;
+  }).join('');
+}
+async function refreshCadEvents(runId, follow=true) {
+  if(!state.project||!runId||state.cadRunId!==runId) return;
+  const requestId=++state.cadEventRequest, project=state.project;
+  try {
+    const query=new URLSearchParams({root:project.project_dir,run_id:runId,after:String(state.cadEventCursor),limit:'100'});
+    const data=await request('/api/cad/events?'+query);
+    if(requestId!==state.cadEventRequest||state.cadRunId!==runId||state.project?.id!==project.id) return;
+    if(data.events?.length) { state.cadEventCursor=data.next_cursor; renderCadEvents(data.events); }
+    const panel=$('#cadEventsPanel'); if(panel) panel.hidden=false;
+    const status=$('#cadEventsStatus');
+    const stateLabel={running:'正在执行',committed:'已完成',failed:'失败',rolled_back:'已回滚',recovered:'已恢复',unknown:'等待事件'}[data.state]||data.state;
+    if(status) status.textContent=`运行 ${runId.slice(0,8)} · ${stateLabel} · 游标 ${data.next_cursor}/${data.latest_cursor}`;
+    if(follow&&['running','committing','rolling_back','unknown'].includes(data.state)) state.cadEventTimer=setTimeout(()=>refreshCadEvents(runId,true),800);
+  } catch(error) {
+    if(requestId!==state.cadEventRequest) return;
+    const status=$('#cadEventsStatus'); if(status) status.textContent='事件读取暂时失败：'+error.message;
+    if(follow) state.cadEventTimer=setTimeout(()=>refreshCadEvents(runId,true),1500);
+  }
+}
+function attachCadRun(result) {
+  const runId=result?.run_id;
+  if(!runId||!state.project) return;
+  if(state.cadEventTimer) clearTimeout(state.cadEventTimer);
+  state.cadRunId=String(runId); state.cadEventCursor=0;
+  const panel=$('#cadEventsPanel'); if(panel) panel.hidden=false;
+  refreshCadEvents(state.cadRunId,true).catch(()=>{});
+}
 function standaloneHtml(title, body) {
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHTML(title)}</title><style>html,body{margin:0;min-height:100%;background:#f8fafc;font:14px system-ui,sans-serif}main{padding:18px;max-width:1400px;margin:auto}h1{font-size:18px;margin:0 0 14px;color:#1f2937}svg{display:block;width:100%;height:auto}</style></head><body><main><h1>${escapeHTML(title)}</h1>${body||'<p>没有可用预览。</p>'}</main></body></html>`;
 }
@@ -52,6 +99,7 @@ async function openProject(id) {
   const project=await request('/api/projects/'+encodeURIComponent(id));
   if(!project.project_dir) throw new Error('这是未关联目录的旧项目，请使用向导创建一个独立项目。');
   state.project=project; state.taskId=null; state.preview++; state.previewPath=null; state.cadHistory=false; state.historyRequest++;
+  resetCadEvents();
   try { localStorage.setItem('simloom.project',id); } catch (_) {}
   $('#currentProject').textContent=project.name;
   $('#projectHint').textContent='当前项目：'+project.name;
@@ -401,7 +449,7 @@ async function changeDrawing(prepare) {
     if(state.project?.id!==project.id||state.preview!==version) return;
     await previewAsset(path); $('#plotLayout').value=name; updateDrawingLayout();
     $('#drawingTools').open=true; $('#drawingStatus').textContent=prepare?'工程图纸已创建，可预览或导出；撤销可恢复创建前的图纸。':'标题栏已保存并验证。';
-    details(result); await refreshAssets();
+    details(result); attachCadRun(result); await refreshAssets();
   } catch(error) { if(state.project?.id===project.id&&state.preview===version) {$('#drawingStatus').textContent='保存失败：'+drawingError(error); details({error:error.message}); toast(drawingError(error));} }
   finally {busy(false); if(state.drawing) updateDrawingLayout(false);}
 }
@@ -430,7 +478,7 @@ async function exportDrawing(format,preview=false) {
     }
     const report=result.report;
     $('#drawingStatus').textContent=`已导出 ${report.page_mm.width.toFixed(1)} × ${report.page_mm.height.toFixed(1)} mm · ${report.warnings.length?'有 '+report.warnings.length+' 条出图提示，请查看出图记录':'文件校验通过'}。原图后续修改需重新导出。`;
-    details(result); await refreshAssets();
+    details(result); attachCadRun(result); await refreshAssets();
   } catch(error) { if(state.project?.id===project.id&&state.preview===version) {$('#drawingStatus').textContent='导出失败：'+drawingError(error); details({error:error.message}); toast(drawingError(error));} }
   finally { busy(false); if(state.drawing) updateDrawingLayout(false); }
 }
@@ -519,7 +567,8 @@ window.addEventListener('message', async event=>{
     const result=await request('/api/cad/operation',{operation,arguments:{...(data.arguments||{}),auto_repair:false,project_dir:projectDir,input_file:inputFile,output_file:inputFile}});
     const deleted=result.document===null;
     reply({ok:true,deleted,history:result.history});
-    toast(result.persisted_validation?.valid?'CAD 修改已保存并验证':'已恢复原始文件；原文件仍有几何验证问题');
+      attachCadRun(result);
+      toast(result.persisted_validation?.valid?'CAD 修改已保存并验证':'已恢复原始文件；原文件仍有几何验证问题');
     if(state.project?.id===projectId && state.preview===previewVersion) {
       if(!deleted) await previewAsset(assetPath,data.viewerState);
       else {$('#downloadAsset').hidden=true;$('#previewHint').textContent='文件创建已撤销；可点击重做恢复。';}

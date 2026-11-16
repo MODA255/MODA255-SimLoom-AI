@@ -254,6 +254,15 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
                     "project_dir": root, "input_file": relative,
                     "revision_id": query.get("revision_id", [""])[0],
                     "side": query.get("side", ["after"])[0]}))
+            if parsed.path == "/api/cad/events":
+                try:
+                    after = int(query.get("after", ["0"])[0])
+                    limit = int(query.get("limit", ["100"])[0])
+                except ValueError as exc:
+                    raise ValueError("CAD_EVENT_CURSOR_INVALID") from exc
+                return self._send(200, agent.execute_operation("cad.events", {
+                    "project_dir": root, "run_id": query.get("run_id", [""])[0],
+                    "after": after, "limit": limit}))
             if parsed.path == "/api/cad/batch-step-view":
                 return self._send(200, agent.execute_operation("cad.batch_step_view", {
                     "project_dir": root,
