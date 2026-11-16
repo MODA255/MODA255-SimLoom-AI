@@ -4,9 +4,16 @@ on:
   push:
   pull_request:
 
+concurrency:
+  # A newer push supersedes an older run on the same branch or PR. This keeps
+  # stale red runs from competing with the commit that will actually merge.
+  group: engineering-agent-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -27,12 +34,13 @@ jobs:
 
   cad-portability:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
     env:
       PYTHONUTF8: "1"
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-24.04, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -53,7 +61,12 @@ jobs:
           if-no-files-found: warn
 
   cad-browser:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      # Browser rendering occasionally hits transient startup/font timing on
+      # hosted runners; a final failure still fails the job after all attempts.
+      SIMLOOM_BROWSER_ATTEMPTS: "3"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
