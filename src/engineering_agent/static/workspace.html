@@ -97,7 +97,7 @@
 <div class="drawing-actions"><button class="btn btn-light" id="prepareSheet" type="button">创建工程图纸</button><button class="btn btn-light" id="saveTitle" type="button">保存标题栏</button></div>
 <p id="drawingStatus" role="status" aria-live="polite"></p><div id="plotResult"></div>
 <div id="cadEventsPanel" class="cad-events-panel" hidden><div class="cad-events-heading">操作事件</div><p id="cadEventsStatus" class="muted" role="status" aria-live="polite"></p><ol id="cadEvents" class="task-events cad-events-list"></ol></div>
-</details><div id="preview"><div class="empty">预览将在这里显示。</div></div><details><summary>文件信息与数据</summary><pre class="json" id="assetDetails">—</pre></details></div>
+</details><div id="preview"><div class="empty">预览将在这里显示。</div></div><details><summary>文件信息与数据</summary><pre class="json" id="assetDetails">—</pre></details><section id="cadActivity" class="cad-activity" hidden><div class="cad-activity-head"><div><div class="eyebrow">CAD activity</div><h3>CAD 操作记录</h3></div><button class="btn btn-light" id="refreshCadRuns" type="button">刷新</button></div><p id="cadActivityStatus" class="muted" role="status" aria-live="polite">打开项目后读取事务记录。</p><div id="cadRunList" class="cad-run-list"></div><div id="cadActivityDetail" class="cad-activity-detail" hidden><div class="cad-activity-detail-head"><strong id="cadActivityTitle">事件详情</strong><span id="cadActivityCursor" class="pill"></span></div><ol id="cadActivityEvents" class="task-events cad-events-list"></ol></div></section></div>
     </div></section>
     <section id="taskDetail" class="panel" hidden aria-label="任务详情">
       <div class="task-toolbar"><button class="btn btn-light" data-panel="workspace">← 返回工作台</button><button class="btn btn-light" id="refreshTaskDetail">刷新记录</button></div>

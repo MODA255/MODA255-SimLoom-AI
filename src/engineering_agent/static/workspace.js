@@ -1,7 +1,7 @@
 'use strict';
 const $ = s => document.querySelector(s);
 const escapeHTML = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const state = {project:null, templates:[], busy:false, page:1, preview:0, previewPath:null, versions:[], versionView:0, cadHistory:false, historyRequest:0, watch:null, versionHtml:'', diffHtml:'', cadRunId:null, cadEventCursor:0, cadEventTimer:null, cadEventRequest:0};
+const state = {project:null, templates:[], busy:false, page:1, preview:0, previewPath:null, versions:[], versionView:0, cadHistory:false, historyRequest:0, watch:null, versionHtml:'', diffHtml:'', cadRunId:null, cadEventCursor:0, cadEventTimer:null, cadEventRequest:0, cadRuns:[], cadActivityRunId:null, cadActivityCursor:0, cadActivityEvents:[], cadActivityTimer:null, cadActivityRequest:0};
 const icons = {catia:'◇', ansys:'△', adams:'⌁', 'vi-grade':'◎'};
 const labels = {waiting:'等待恢复连接',queued:'待运行', running:'运行中', completed:'已完成', failed:'失败'};
 let toastTimer;
@@ -54,6 +54,81 @@ function attachCadRun(result) {
   state.cadRunId=String(runId); state.cadEventCursor=0;
   const panel=$('#cadEventsPanel'); if(panel) panel.hidden=false;
   refreshCadEvents(state.cadRunId,true).catch(()=>{});
+  refreshCadRuns().then(()=>selectCadActivityRun(state.cadRunId)).catch(()=>{});
+}
+function resetCadActivity() {
+  if(state.cadActivityTimer) { clearTimeout(state.cadActivityTimer); state.cadActivityTimer=null; }
+  state.cadRuns=[]; state.cadActivityRunId=null; state.cadActivityCursor=0; state.cadActivityEvents=[]; state.cadActivityRequest++;
+  const panel=$('#cadActivity'); if(panel) panel.hidden=true;
+  const list=$('#cadRunList'); if(list) list.innerHTML='';
+  const events=$('#cadActivityEvents'); if(events) events.innerHTML='';
+  const detail=$('#cadActivityDetail'); if(detail) detail.hidden=true;
+}
+function cadRunStateLabel(value) {
+  return {created:'已创建',queued:'已排队',running:'执行中',committing:'提交中',committed:'已完成',failed:'失败',rolled_back:'已回滚',recovered:'已恢复',recovery_failed:'恢复失败',unknown:'未知'}[value]||value||'未知';
+}
+function renderCadRuns() {
+  const list=$('#cadRunList'); if(!list) return;
+  if(!state.cadRuns.length) { list.innerHTML='<p class="muted">当前项目还没有 CAD 事务记录。</p>'; return; }
+  list.innerHTML=state.cadRuns.map(run=>{
+    const active=run.run_id===state.cadActivityRunId;
+    const label=run.operation||run.last_event||'CAD 操作';
+    const pillClass=['committed','recovered'].includes(run.state)?'green':(['failed','recovery_failed'].includes(run.state)?'danger':'amber');
+    return `<button type="button" class="cad-run ${active?'active':''}" data-cad-run="${escapeHTML(run.run_id)}"><div class="cad-run-main"><strong>${escapeHTML(label)}</strong><span class="pill ${pillClass}">${escapeHTML(cadRunStateLabel(run.state))}</span></div><small>${escapeHTML(run.run_id)} · ${Number(run.event_count||0)} 个事件 · ${escapeHTML(displayTime(run.updated_at))}</small></button>`;
+  }).join('');
+}
+function renderCadActivityEvents() {
+  const list=$('#cadActivityEvents'); if(!list) return;
+  if(!state.cadActivityEvents.length) { list.innerHTML='<li class="empty">这次运行还没有事件。</li>'; return; }
+  list.innerHTML=state.cadActivityEvents.map(item=>{
+    const payload=item.payload||{};
+    const detail=payload.operation?`${payload.operation}${payload.step==null?'':` · 步骤 ${Number(payload.step)+1}`}`:(payload.label||payload.error||payload.reason||'');
+    return `<li><time>${escapeHTML(displayTime(item.at))}</time><div><strong>${escapeHTML(cadEventLabel(item))}</strong><p>${escapeHTML(detail)}</p></div></li>`;
+  }).join('');
+}
+async function refreshCadRuns() {
+  if(!state.project) { resetCadActivity(); return; }
+  const project=state.project, requestId=++state.cadActivityRequest;
+  try {
+    const data=await request('/api/cad/runs?'+new URLSearchParams({root:project.project_dir,limit:'30'}));
+    if(requestId!==state.cadActivityRequest||state.project?.id!==project.id) return;
+    state.cadRuns=data.runs||[];
+    $('#cadActivity').hidden=false;
+    renderCadRuns();
+    $('#cadActivityStatus').textContent=state.cadRuns.length?`共 ${Number(data.total||state.cadRuns.length)} 次事务运行；点击一项查看事件。`:'当前项目还没有 CAD 事务记录。';
+  } catch(error) {
+    if(requestId!==state.cadActivityRequest) return;
+    $('#cadActivity').hidden=false; $('#cadActivityStatus').textContent='事务记录读取失败：'+error.message;
+  }
+}
+async function refreshCadActivityEvents(runId, follow=true) {
+  if(!state.project||!runId||state.cadActivityRunId!==runId) return;
+  const project=state.project, requestId=++state.cadActivityRequest;
+  try {
+    const query=new URLSearchParams({root:project.project_dir,run_id:runId,after:String(state.cadActivityCursor),limit:'100'});
+    const data=await request('/api/cad/events?'+query);
+    if(requestId!==state.cadActivityRequest||state.cadActivityRunId!==runId||state.project?.id!==project.id) return;
+    if(state.cadActivityCursor===0) state.cadActivityEvents=[];
+    if(data.events?.length) state.cadActivityEvents=[...state.cadActivityEvents,...data.events].slice(-300);
+    state.cadActivityCursor=data.next_cursor;
+    const run=state.cadRuns.find(item=>item.run_id===runId);
+    if(run) run.state=data.state; renderCadRuns(); renderCadActivityEvents();
+    $('#cadActivityDetail').hidden=false;
+    $('#cadActivityTitle').textContent=run?.operation||runId;
+    $('#cadActivityCursor').textContent=`${cadRunStateLabel(data.state)} · ${data.next_cursor}/${data.latest_cursor}`;
+    if(follow&&['running','committing','rolling_back','unknown'].includes(data.state)) state.cadActivityTimer=setTimeout(()=>refreshCadActivityEvents(runId,true),800);
+  } catch(error) {
+    if(requestId!==state.cadActivityRequest) return;
+    $('#cadActivityDetail').hidden=false; $('#cadActivityCursor').textContent='读取失败';
+    if(follow) state.cadActivityTimer=setTimeout(()=>refreshCadActivityEvents(runId,true),1500);
+  }
+}
+function selectCadActivityRun(runId) {
+  if(!runId||!state.cadRuns.some(item=>item.run_id===runId)) return;
+  if(state.cadActivityTimer) { clearTimeout(state.cadActivityTimer); state.cadActivityTimer=null; }
+  state.cadActivityRunId=runId; state.cadActivityCursor=0; state.cadActivityEvents=[];
+  renderCadRuns(); renderCadActivityEvents();
+  refreshCadActivityEvents(runId,true).catch(()=>{});
 }
 function standaloneHtml(title, body) {
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHTML(title)}</title><style>html,body{margin:0;min-height:100%;background:#f8fafc;font:14px system-ui,sans-serif}main{padding:18px;max-width:1400px;margin:auto}h1{font-size:18px;margin:0 0 14px;color:#1f2937}svg{display:block;width:100%;height:auto}</style></head><body><main><h1>${escapeHTML(title)}</h1>${body||'<p>没有可用预览。</p>'}</main></body></html>`;
@@ -80,7 +155,7 @@ function choosePanel(id) {
   document.querySelectorAll('.panel').forEach(panel=>panel.hidden=panel.id!==id);
   document.querySelectorAll('[data-panel]').forEach(button=>button.classList.toggle('active',button.dataset.panel===id));
   if(id==='projects') { refreshProjects().catch(reportError); refreshVersions().catch(reportError); }
-  if(id==='assets') refreshAssets().catch(reportError);
+  if(id==='assets') { refreshAssets().catch(reportError); refreshCadRuns().catch(reportError); }
   if(id==='settings') refreshDoctor().catch(reportError);
 }
 function wizardPage(page) {
@@ -100,6 +175,7 @@ async function openProject(id) {
   if(!project.project_dir) throw new Error('这是未关联目录的旧项目，请使用向导创建一个独立项目。');
   state.project=project; state.taskId=null; state.preview++; state.previewPath=null; state.cadHistory=false; state.historyRequest++;
   resetCadEvents();
+  resetCadActivity();
   try { localStorage.setItem('simloom.project',id); } catch (_) {}
   $('#currentProject').textContent=project.name;
   $('#projectHint').textContent='当前项目：'+project.name;
@@ -617,6 +693,7 @@ document.addEventListener('click',event=>{
   if(target.dataset.action==='demo') runOffline(true);
   if(target.dataset.project) openProject(target.dataset.project).catch(reportError);
   if(target.dataset.asset) previewAsset(target.dataset.asset).catch(reportError);
+  if(target.dataset.cadRun) selectCadActivityRun(target.dataset.cadRun);
   if(target.dataset.versionView) inspectVersion(target.dataset.versionView).catch(reportError);
   if(target.dataset.versionAsset) inspectVersion(target.dataset.versionId,Number(target.dataset.versionAsset)).catch(reportError);
   if(target.dataset.run) runTask(target.dataset.run).catch(reportError);
@@ -627,7 +704,7 @@ $('#projectForm').addEventListener('submit',createProject);
 $('#nextWizard').onclick=()=>{if($('#projectName').reportValidity()) wizardPage(2);};
 $('#backWizard').onclick=()=>wizardPage(1); $('#cancelWizard').onclick=()=>$('#projectWizard').close();
 $('#planButton').onclick=plan; $('#queueButton').onclick=enqueue; $('#offlineButton').onclick=()=>runOffline();
-$('#refreshTasks').onclick=()=>refreshTasks().catch(reportError); $('#refreshAssets').onclick=()=>refreshAssets().catch(reportError);
+$('#refreshTasks').onclick=()=>refreshTasks().catch(reportError); $('#refreshAssets').onclick=()=>refreshAssets().catch(reportError); $('#refreshCadRuns').onclick=()=>refreshCadRuns().catch(reportError);
 $('#refreshDoctor').onclick=()=>refreshDoctor().catch(reportError); $('#viewResults').onclick=()=>choosePanel('assets');
 function resetWatchPanel() {
   state.watch=null; $('#watchState').textContent='未启动'; $('#watchState').className='pill';
