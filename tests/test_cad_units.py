@@ -88,6 +88,19 @@ def test_cad_operation_rejects_unknown_and_incompatible_units(tmp_path):
         })
 
 
+def test_mcp_quantity_failures_have_repairable_domain_codes(tmp_path):
+    source = _source(tmp_path)
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="full")
+    response = server.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+        "name": "operation.cad.circle_create", "arguments": {
+            "project_dir": str(tmp_path), "input_file": str(source),
+            "output_file": str(tmp_path / "bad.dxf"), "center": {"x": 0, "y": 0},
+            "radius": "2furlong",
+        }}})
+    assert response["result"]["isError"] is True
+    assert response["result"]["structuredContent"]["error"]["code"] == "CAD_UNIT_UNKNOWN"
+
+
 def test_operation_discovery_publishes_quantity_contract():
     schema = next(item for item in OperationRegistry().list() if item["name"] == "cad.circle_create")
     radius = schema["parameters_schema"]["radius"]

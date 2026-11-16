@@ -274,7 +274,15 @@ class MCPServer:
             envelope = failure(ProtocolError(str(exc.code), str(exc)))
         elif isinstance(exc, ValueError):
             text = str(exc)
-            code = ErrorCode.UNKNOWN_OPERATION if text.startswith("UNKNOWN_OPERATION:") else ErrorCode.INVALID_ARGUMENTS
+            if text.startswith("UNKNOWN_OPERATION:"):
+                code = ErrorCode.UNKNOWN_OPERATION
+            elif text.startswith(("CAD_UNIT_", "CAD_QUANTITY_")):
+                # CAD quantity parsing emits stable domain prefixes so an
+                # external agent can repair a unit or dimension without
+                # scraping the human-readable message.
+                code = text.split(":", 1)[0]
+            else:
+                code = ErrorCode.INVALID_ARGUMENTS
             envelope = failure(ProtocolError(code, text))
         elif isinstance(exc, RuntimeError) and "CONFLICT" in str(exc):
             envelope = failure(ProtocolError(ErrorCode.CONFLICT, str(exc), retryable=False))
