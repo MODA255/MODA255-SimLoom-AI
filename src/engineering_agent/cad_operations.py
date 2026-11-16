@@ -4190,6 +4190,14 @@ class CadOperationEngine:
             }
 
     def apply(self, operation: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if operation == "cad.runs":
+            project_dir = arguments.get("project_dir")
+            if not project_dir:
+                raise ValueError("CAD_RUN_PROJECT_REQUIRED")
+            return RunTransaction.list_runs(project_dir,
+                                            offset=arguments.get("offset", 0),
+                                            limit=arguments.get("limit", 50),
+                                            state=arguments.get("state"))
         if operation == "cad.events":
             project_dir = arguments.get("project_dir")
             if not project_dir:

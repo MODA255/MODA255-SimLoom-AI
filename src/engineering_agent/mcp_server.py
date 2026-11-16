@@ -514,6 +514,8 @@ class MCPServer:
         run_id = params.get("run_id")
         if isinstance(run_id, str) and run_id:
             resources.append({"uri": f"engineering://cad-events?root={root}&run_id={run_id}", "name": "CAD transaction events", "mimeType": "application/json"})
+        if params.get("include_runs", True):
+            resources.append({"uri": f"engineering://cad-runs?root={root}", "name": "CAD transaction runs", "mimeType": "application/json"})
         return resources
 
     @staticmethod
@@ -524,6 +526,7 @@ class MCPServer:
             {"uriTemplate": "engineering://dependencies?root={root}", "name": "Project dependency graph", "mimeType": "application/json"},
             {"uriTemplate": "engineering://cad?root={root}&path={path}", "name": "CAD document context", "mimeType": "application/json"},
             {"uriTemplate": "engineering://cad-events?root={root}&run_id={run_id}&after={after}", "name": "CAD transaction events", "mimeType": "application/json"},
+            {"uriTemplate": "engineering://cad-runs?root={root}&offset={offset}", "name": "CAD transaction runs", "mimeType": "application/json"},
             {"uriTemplate": "engineering://asset?root={root}&path={path}", "name": "Project asset preview and image", "mimeType": "image/svg+xml"},
             {"uriTemplate": "engineering://watch?root={root}&watch_id={watch_id}", "name": "External file watch status", "mimeType": "application/json"},
         ]
@@ -560,6 +563,15 @@ class MCPServer:
                 raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "after and limit must be integers") from exc
             value = self.agent.execute_operation("cad.events", {
                 "project_dir": root, "run_id": run_id, "after": after, "limit": limit})
+        elif parsed.netloc == "cad-runs":
+            try:
+                offset = int(query.get("offset", ["0"])[0])
+                limit = int(query.get("limit", ["50"])[0])
+            except ValueError as exc:
+                raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "offset and limit must be integers") from exc
+            value = self.agent.execute_operation("cad.runs", {
+                "project_dir": root, "offset": offset, "limit": limit,
+                "state": query.get("state", [None])[0]})
         elif parsed.netloc == "cad":
             path = query.get("path", [""])[0]
             if not path:

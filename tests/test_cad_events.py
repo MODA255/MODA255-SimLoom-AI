@@ -89,3 +89,23 @@ def test_cad_events_resource_supports_read_subscribe_and_update_notification(tmp
     assert any(item["method"] == "notifications/resources/updated" and item["params"]["uri"] == uri
                for item in notifications)
 
+
+def test_cad_runs_index_is_paginated_and_exposed_as_mcp_resource(tmp_path):
+    path = source(tmp_path)
+    agent = EngineeringAgent()
+    run_ids = []
+    for delta in (1, 2, 3):
+        result = agent.execute_operation("cad.entity_move", {
+            "project_dir": str(tmp_path), "input_file": str(path), "output_file": str(path),
+            "entity_ids": ["e00001"], "delta": [delta, 0, 0], "auto_repair": False})
+        run_ids.append(result["run_id"])
+    first = agent.execute_operation("cad.runs", {"project_dir": str(tmp_path), "limit": 2})
+    assert first["total"] >= 3 and len(first["runs"]) == 2 and first["next_offset"] == 2
+    second = agent.execute_operation("cad.runs", {"project_dir": str(tmp_path), "offset": first["next_offset"], "limit": 2, "state": "committed"})
+    assert second["runs"] and all(item["state"] == "committed" for item in second["runs"])
+    server = MCPServer(agent, profile="safe")
+    uri = f"engineering://cad-runs?root={tmp_path}&offset=0&limit=1"
+    response = server.handle({"jsonrpc": "2.0", "id": 1, "method": "resources/read", "params": {"uri": uri}})
+    value = json.loads(response["result"]["contents"][0]["text"])
+    assert value["runs"] and value["runs"][0]["run_id"] in run_ids
+

@@ -263,6 +263,15 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
                 return self._send(200, agent.execute_operation("cad.events", {
                     "project_dir": root, "run_id": query.get("run_id", [""])[0],
                     "after": after, "limit": limit}))
+            if parsed.path == "/api/cad/runs":
+                try:
+                    offset = int(query.get("offset", ["0"])[0])
+                    limit = int(query.get("limit", ["50"])[0])
+                except ValueError as exc:
+                    raise ValueError("CAD_RUN_OFFSET_INVALID") from exc
+                return self._send(200, agent.execute_operation("cad.runs", {
+                    "project_dir": root, "offset": offset, "limit": limit,
+                    "state": query.get("state", [None])[0]}))
             if parsed.path == "/api/cad/batch-step-view":
                 return self._send(200, agent.execute_operation("cad.batch_step_view", {
                     "project_dir": root,

@@ -172,6 +172,19 @@ def test_cad_event_stream_http_supports_cursor_resume(service, tmp_path):
     assert status == 200 and all(item["sequence"] > first["next_cursor"] for item in resumed["events"])
 
 
+def test_cad_runs_http_lists_recent_transaction_activity(service, tmp_path):
+    from engineering_agent.formats import write_dxf
+    call, _, agent = service
+    path = tmp_path / "runs-http.dxf"
+    write_dxf(path, lines=[{"x1": 0, "y1": 0, "x2": 10, "y2": 0}])
+    result = agent.execute_operation("cad.entity_move", {
+        "project_dir": str(tmp_path), "input_file": str(path), "output_file": str(path),
+        "entity_ids": ["e00001"], "delta": [2, 0, 0], "auto_repair": False})
+    query = urllib.parse.urlencode({"root": str(tmp_path), "limit": 1, "state": "committed"})
+    status, payload = call("/api/cad/runs?" + query)
+    assert status == 200 and payload["runs"] and payload["runs"][0]["run_id"] == result["run_id"]
+
+
 def test_capabilities_explain_offline_and_connected_modes(service):
     call, _, _ = service
     status, capabilities = call("/api/capabilities")

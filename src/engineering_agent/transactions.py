@@ -546,3 +546,63 @@ class RunTransaction:
             except (OSError, UnicodeDecodeError, json.JSONDecodeError):
                 state = "invalid"
         return {"run_id": run_id, "state": state, **page}
+
+    @classmethod
+    def list_runs(cls, project_dir: str | Path, *, offset: int = 0, limit: int = 50,
+                  state: str | None = None) -> dict[str, Any]:
+        """List durable CAD transaction runs for recovery and activity UIs."""
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise ValueError("CAD_RUN_OFFSET_INVALID")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
+            raise ValueError("CAD_RUN_LIMIT_INVALID")
+        if state is not None and (not isinstance(state, str) or not state.strip()):
+            raise ValueError("CAD_RUN_STATE_INVALID")
+        root = Path(project_dir).expanduser().resolve()
+        runs_root = confined_path(root, "artifacts/runs")
+        if not runs_root.exists():
+            return {"schema_version": 2, "runs": [], "offset": offset,
+                    "limit": limit, "total": 0, "next_offset": None}
+        rows: list[dict[str, Any]] = []
+        for run_dir in runs_root.iterdir():
+            if not run_dir.is_dir() or run_dir.is_symlink():
+                continue
+            run_id = run_dir.name
+            if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", run_id):
+                continue
+            state_path = run_dir / "state.json"
+            raw_state: dict[str, Any] = {}
+            if state_path.is_file():
+                try:
+                    value = json.loads(state_path.read_text(encoding="utf-8"))
+                    if isinstance(value, dict):
+                        raw_state = value
+                except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                    raw_state = {}
+            events = cls._read_events_file(run_dir / "journal.jsonl", run_id)
+            first = events[0] if events else {}
+            last = events[-1] if events else {}
+            plan = raw_state.get("plan") if isinstance(raw_state.get("plan"), dict) else {}
+            if not plan and isinstance(first.get("payload"), dict):
+                plan = first["payload"].get("plan") if isinstance(first["payload"].get("plan"), dict) else {}
+            current_state = str(raw_state.get("state") or ("queued" if events else "unknown"))
+            if state is not None and current_state != state:
+                continue
+            rows.append({
+                "run_id": run_id,
+                "state": current_state,
+                "operation": plan.get("operation"),
+                "plan": plan,
+                "created_at": first.get("at"),
+                "updated_at": raw_state.get("updated_at") or last.get("at"),
+                "event_count": len(events),
+                "latest_cursor": max((int(item.get("sequence", 0)) for item in events), default=0),
+                "last_event": last.get("event"),
+                "last_phase": last.get("phase"),
+                "last_error": (last.get("payload") or {}).get("reason") or (last.get("payload") or {}).get("error"),
+            })
+        rows.sort(key=lambda item: (str(item.get("updated_at") or ""), item["run_id"]), reverse=True)
+        total = len(rows)
+        selected = rows[offset:offset + limit]
+        next_offset = offset + len(selected) if offset + len(selected) < total else None
+        return {"schema_version": 2, "runs": selected, "offset": offset,
+                "limit": limit, "total": total, "next_offset": next_offset}
