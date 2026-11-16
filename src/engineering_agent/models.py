@@ -10,6 +10,7 @@ class ToolName(str, Enum):
     CATIA = "catia"
     ADAMS = "adams"
     VI_GRADE = "vi-grade"
+    AUTOCAD = "autocad"
 
 
 class AssetKind(str, Enum):

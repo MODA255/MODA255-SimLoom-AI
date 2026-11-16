@@ -290,6 +290,8 @@ class MCPServer:
             envelope = failure(exc)
         elif isinstance(exc, FileNotFoundError):
             envelope = failure(ProtocolError(ErrorCode.RESOURCE_NOT_FOUND, str(exc), details={"path": str(exc)}))
+        elif getattr(exc, "code", None):
+            envelope = failure(ProtocolError(str(exc.code), str(exc), details=getattr(exc, "details", {}) or {}))
         elif isinstance(exc, ValueError) and getattr(exc, "code", None):
             envelope = failure(ProtocolError(str(exc.code), str(exc)))
         elif isinstance(exc, ValueError):

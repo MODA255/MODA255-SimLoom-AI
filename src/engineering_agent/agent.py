@@ -36,6 +36,8 @@ from .cad_diff_view import visual_diff
 from .software_preflight import preflight_plan
 from .file_watch import FileWatchStore
 from .dependencies import DependencyScanner
+from .autocad_backend import AutoCADError, backend_status, run_core_console
+from .dxf_validation import inspect_native
 
 
 def _project_path(project_root: Path, value: str | Path, *, must_exist: bool = False,
@@ -303,6 +305,91 @@ class EngineeringAgent:
     def diff_versions(self, project_dir: str, left: str, right: str) -> dict[str, Any]:
         return VersionStore(project_dir).diff(left, right)
 
+    def _autocad_config(self) -> dict[str, Any]:
+        """Resolve the optional AutoCAD backend config without requiring it."""
+        configured = self.config.get("autocad")
+        if isinstance(configured, dict):
+            return configured
+        bridge = self.config.get("windows_bridge")
+        if isinstance(bridge, dict):
+            nested = bridge.get("autocad")
+            if isinstance(nested, dict):
+                return nested
+            return bridge
+        return {}
+
+    @staticmethod
+    def _autocad_local_validation(path: Path) -> dict[str, Any]:
+        if path.suffix.lower() in {".dxf", ".dxb"}:
+            return inspect_native(path)
+        return {"valid": None, "available": False, "errors": [],
+                "warnings": ["DWG_LOCAL_AUDIT_REQUIRES_AUTOCAD"]}
+
+    def _autocad_operation(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        config = self._autocad_config()
+        if name == "autocad.status":
+            return backend_status(arguments.get("config") if isinstance(arguments.get("config"), dict) else config)
+        project_root = Path(arguments.get("project_dir", ".")).resolve()
+        input_path = _project_path(project_root, arguments["input_file"], must_exist=True, require_file=True) if "input_file" in arguments else None
+        if name == "autocad.audit":
+            local = self._autocad_local_validation(input_path)
+            native = {"requested": bool(arguments.get("native", False)), "status": "not_requested"}
+            if native["requested"]:
+                try:
+                    native = {"requested": True, "status": "completed",
+                              "evidence": run_core_console(input_path, action="audit", config=config,
+                                                            timeout_seconds=int(arguments.get("timeout_seconds", 600)))}
+                except AutoCADError as exc:
+                    native = {"requested": True, "status": "failed", "code": exc.code,
+                              "message": str(exc), "details": exc.details}
+                    raise
+            return {"schema_version": "simloom-ai/autocad-audit/v1",
+                    "path": input_path.relative_to(project_root).as_posix(),
+                    "sha256": file_hash(input_path), "local_validation": local, "native": native}
+        if name == "autocad.convert":
+            output_path = _project_path(project_root, arguments["output_file"])
+            if input_path == output_path:
+                raise AutoCADError("AUTOCAD_IN_PLACE_UNSUPPORTED", "AutoCAD conversion requires a distinct output path")
+            if bool(arguments.get("dry_run", True)):
+                return {"schema_version": "simloom-ai/autocad-convert/v1", "status": "planned",
+                        "input": input_path.relative_to(project_root).as_posix(),
+                        "output": output_path.relative_to(project_root).as_posix(),
+                        "audit": bool(arguments.get("audit", True)),
+                        "backend": backend_status(config), "real_machine_verified": False}
+            txn = RunTransaction(project_root)
+            txn.begin({"operation": name, "arguments": arguments})
+            try:
+                staged = txn.stage_dir / output_path.name
+                evidence = run_core_console(input_path, action="convert", output_path=staged, config=config,
+                                            timeout_seconds=int(arguments.get("timeout_seconds", 600)),
+                                            audit=bool(arguments.get("audit", True)))
+                staged_validation = self._autocad_local_validation(staged)
+                txn.record("autocad_staged_validation", staged_validation)
+                txn.checkpoint("after-autocad-convert", {"validation": staged_validation, "evidence": evidence})
+                if staged_validation.get("valid") is False and staged_validation.get("errors"):
+                    raise AutoCADError("AUTOCAD_OUTPUT_VALIDATION_FAILED", "converted output failed local validation",
+                                       details={"validation": staged_validation})
+                relative = output_path.relative_to(project_root).as_posix()
+                persisted: dict[str, Any] = {}
+
+                def validate_persisted(_committed: dict[str, str]):
+                    report = self._autocad_local_validation(output_path)
+                    persisted["validation"] = report
+                    txn.record("autocad_persisted_validation", report)
+                    if report.get("valid") is False and report.get("errors"):
+                        raise AutoCADError("AUTOCAD_PERSISTED_VALIDATION_FAILED", "persisted output failed local validation",
+                                           details={"validation": report})
+
+                committed = txn.commit({relative: str(staged)}, destination_root=project_root, validate=validate_persisted)
+                return {"schema_version": "simloom-ai/autocad-convert/v1", "status": "completed",
+                        "output": committed[relative], "native": evidence,
+                        "validation": staged_validation, "persisted_validation": persisted["validation"],
+                        "run_id": txn.run_id, "real_machine_verified": False}
+            except Exception as exc:
+                txn.fail(str(exc))
+                raise
+        raise ValueError(f"UNKNOWN_AUTOCAD_OPERATION:{name}")
+
     def execute_operation(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
         name, arguments, _was_compat_alias = normalize_operation(name, arguments)
         spec = self.operations.get(name)
@@ -381,6 +468,8 @@ class EngineeringAgent:
                     "visual_diff": visual_diff(left_geometry, right_geometry,
                                                 width=max(320, min(int(arguments.get("width", 900)), 2400)),
                                                 height=max(240, min(int(arguments.get("height", 560)), 1600)))}
+        if name.startswith("autocad."):
+            return self._autocad_operation(name, arguments)
         if name == "artifact.write":
             return {"path": self.write_asset(arguments["path"], arguments["format"], arguments["payload"], project_dir=arguments.get("project_dir"))}
         if name.startswith("cad."):

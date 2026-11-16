@@ -119,6 +119,7 @@ PYTHONPATH=src python -m engineering_agent.cli \
 | 事务与恢复 | ✅ | staging、锁、journal、checkpoint、commit、rollback、stale recovery |
 | 版本与 diff | ✅ | 不可变快照、字段级差异、资产路径匹配和时间线 |
 | Viewer | ✅ | DXF 选择、高亮、图层开关、直接编辑和跨会话撤销/重做；自包含 WebGL 网格/结果云图 viewer |
+| 可选 AutoCAD 后端 | ✅ 契约已实现 | `autocad.status`、`autocad.audit` 和事务化 `autocad.convert` 支持 Windows Core Console；没有 AutoCAD 时保持明确 unavailable，不伪造实机证据 |
 | MCP | ✅ 基础闭环 | tools、resources、prompts、分页、schema/error envelope；资产预览可返回结构化数据和 SVG image content；写操作后支持 resource update notification |
 | Web 控制台 | ✅ | 规划、任务队列、项目、artifact、资产预览和时间线 API |
 
