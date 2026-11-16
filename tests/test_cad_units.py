@@ -70,6 +70,7 @@ def test_agentcad_alias_and_mcp_discovery_keep_quantity_behavior(tmp_path):
     alias = next(item for item in listed["result"]["tools"] if item["name"] == "operation.add_circle")
     assert alias["inputSchema"]["properties"]["radius"]["type"] == ["number", "string"]
     assert alias["inputSchema"]["properties"]["radius"]["x-quantity-dimension"] == "length"
+    assert alias["inputSchema"]["x-compatibility"]["alias_for"] == "cad.circle_create"
 
 
 def test_cad_operation_rejects_unknown_and_incompatible_units(tmp_path):

@@ -381,6 +381,12 @@ class MCPServer:
                 "x-side-effects": operation.get("side_effects", []),
                 "x-safety": operation.get("safety", "safe"),
             }
+            if operation.get("compatibility"):
+                # Preserve AgentCAD alias metadata in the MCP contract.  A
+                # client can therefore choose the flat public name while
+                # still understanding the canonical SimLoom operation and
+                # parameter spellings before it makes a call.
+                input_schema["x-compatibility"] = operation["compatibility"]
             input_schema["properties"]["schema_version"] = {
                 "type": "string",
                 "description": "Optional MCP schema version; rejected when unsupported",
