@@ -127,11 +127,15 @@ def _parser() -> argparse.ArgumentParser:
     projects.add_argument("--db", default="engineering-agent.db")
     mcp = sub.add_parser("mcp", help="启动 stdio MCP tool server")
     mcp.add_argument("--profile", choices=["safe", "full"], default="safe")
+    mcp.add_argument("--toolset", choices=["all", "compact"], default="all",
+                     help="all exposes typed operation tools; compact discovers schemas on demand")
     mcp.add_argument("--allow-scripts", action="store_true", help="显式允许受控 CAD 辅助脚本策略")
     mcp_config = sub.add_parser("mcp-config", help="生成外部 MCP 客户端配置")
     mcp_config.add_argument("--client", choices=["generic", "claude", "codex"], default="generic")
     mcp_config.add_argument("--name", default="simloom-ai")
     mcp_config.add_argument("--profile", choices=["safe", "full"], default="safe")
+    mcp_config.add_argument("--toolset", choices=["all", "compact"], default="all",
+                            help="写入 MCP 配置的工具发现模式")
     mcp_config.add_argument("--python", dest="python_executable", help="MCP server 使用的 Python 可执行文件")
     mcp_config.add_argument("--read-only", action="store_true", help="生成 safe profile 配置")
     mcp_config.add_argument("--allow-scripts", action="store_true", help="让生成的 server 显式允许受控 CAD 辅助脚本")
@@ -247,12 +251,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "mcp":
         if args.allow_scripts:
             agent.config.setdefault("cad", {})["allow_scripts"] = True
-        serve_stdio(agent, args.profile)
+        serve_stdio(agent, args.profile, args.toolset)
         return 0
     if args.command == "mcp-config":
         profile = "safe" if args.read_only else args.profile
         options = {"client": args.client, "name": args.name, "config_path": args.config,
                    "profile": profile, "python_executable": args.python_executable,
+                   "toolset": args.toolset,
                    "allow_scripts": args.allow_scripts}
         if args.output or args.write:
             output = args.output or (str(Path.home() / ".codex" / "config.toml")

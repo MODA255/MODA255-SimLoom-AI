@@ -102,15 +102,26 @@ class MCPPolicy:
 
 
 class MCPServer:
-    """Small stdio MCP-compatible tool surface for local agent clients."""
+    """Small stdio MCP-compatible tool surface for local agent clients.
+
+    ``toolset='all'`` keeps the historical surface where every typed
+    operation is discoverable as an MCP tool.  ``toolset='compact'`` exposes
+    an operation index, on-demand schemas and one generic dispatcher so
+    clients do not need to load hundreds of operation schemas up front.
+    """
 
     SUPPORTED_PROTOCOL_VERSIONS = ("2024-11-05", "2025-03-26")
     DEFAULT_PROTOCOL_VERSION = "2025-03-26"
 
-    def __init__(self, agent: EngineeringAgent, profile: str = "safe", policy: dict[str, Any] | MCPPolicy | None = None):
+    def __init__(self, agent: EngineeringAgent, profile: str = "safe",
+                 policy: dict[str, Any] | MCPPolicy | None = None,
+                 toolset: str = "all"):
         self.agent = agent
         self.operations = OperationRegistry()
         self.profile = profile if profile in {"safe", "full"} else "safe"
+        if toolset not in {"all", "compact"}:
+            raise ValueError("MCP toolset must be all or compact")
+        self.toolset = toolset
         configured_policy = policy if policy is not None else getattr(agent, "config", {}).get("mcp", {})
         self.policy = configured_policy if isinstance(configured_policy, MCPPolicy) else MCPPolicy.from_dict(configured_policy)
         self.schema_version = "engineering-agent/mcp/v1"
@@ -150,14 +161,23 @@ class MCPServer:
 
     def _queue_resource_updates(self, tool_name: str, arguments: dict[str, Any]) -> None:
         """Queue standard resource-update notifications after mutating calls."""
+        operation_name = None
+        operation_arguments = arguments
+        if tool_name == "engineering_operation":
+            operation_name = str(arguments.get("operation", ""))
+            nested = arguments.get("arguments")
+            operation_arguments = nested if isinstance(nested, dict) else {}
+        elif tool_name.startswith("operation."):
+            operation_name = tool_name[len("operation."):]
         mutating = (
             tool_name in {"engineering_generate", "engineering_offline_run", "engineering_version"}
             or tool_name == "engineering_run" and not bool(arguments.get("dry_run", True))
-            or tool_name.startswith("operation.") and self.operations.get(tool_name[len("operation."):]).safety in {"write", "execute"}
+            or operation_name is not None and self.operations.get(operation_name).safety in {"write", "execute"}
         )
         if not mutating:
             return
-        project_dir = str(arguments.get("project_dir") or arguments.get("root") or "")
+        project_dir = str(operation_arguments.get("project_dir") or operation_arguments.get("root")
+                          or arguments.get("project_dir") or arguments.get("root") or "")
         for uri in sorted(self._subscriptions):
             query = parse_qs(urlparse(uri).query)
             subscribed_root = query.get("root", [""])[0]
@@ -183,7 +203,7 @@ class MCPServer:
             if requested and requested not in self.SUPPORTED_PROTOCOL_VERSIONS:
                 return self._error(request_id, ProtocolError(ErrorCode.INVALID_ARGUMENTS, f"UNSUPPORTED_PROTOCOL_VERSION:{requested}"))
             selected = requested or self.DEFAULT_PROTOCOL_VERSION
-            return {"jsonrpc": "2.0", "id": request_id, "result": {"protocolVersion": selected, "serverInfo": {"name": "engineering-agent", "version": "0.4.0", "schemaVersion": self.schema_version, "supportedSchemaVersions": [self.schema_version]}, "capabilities": {"tools": {"listChanged": False}, "resources": {"subscribe": True, "listChanged": False}, "prompts": {"listChanged": False}}, "profile": self.profile, "policy": self.policy.to_dict()}}
+            return {"jsonrpc": "2.0", "id": request_id, "result": {"protocolVersion": selected, "serverInfo": {"name": "engineering-agent", "version": "0.4.0", "schemaVersion": self.schema_version, "supportedSchemaVersions": [self.schema_version]}, "capabilities": {"tools": {"listChanged": False}, "resources": {"subscribe": True, "listChanged": False}, "prompts": {"listChanged": False}}, "profile": self.profile, "toolset": self.toolset, "policy": self.policy.to_dict()}}
         if method == "tools/list":
             try:
                 return {"jsonrpc": "2.0", "id": request_id, "result": self._paged(self._tools(), request.get("params") or {}, "tools")}
@@ -318,7 +338,11 @@ class MCPServer:
     def _error(self, request_id: Any, exc: Exception) -> dict[str, Any]:
         return {"jsonrpc": "2.0", "id": request_id, "error": self._error_payload(exc)}
 
-    def _tools(self, *, include_profile: bool = True, apply_policy: bool = True) -> list[dict[str, Any]]:
+    def _tools(self, *, include_profile: bool = True, apply_policy: bool = True,
+               toolset: str | None = None) -> list[dict[str, Any]]:
+        toolset = toolset or self.toolset
+        if toolset not in {"all", "compact"}:
+            raise ValueError("MCP toolset must be all or compact")
         tools = [
             {"name": "engineering_plan", "description": "Create a validated four-tool execution plan", "inputSchema": {"type": "object", "required": ["prompt"], "properties": {"prompt": {"type": "string"}, "project_dir": {"type": "string"}}}},
             {"name": "engineering_preflight", "description": "Check planned vendor action bindings, scripts, commands and output contracts without starting CATIA, Ansys, Adams or VI-grade", "inputSchema": {"type": "object", "required": ["prompt"], "properties": {"prompt": {"type": "string"}, "project_dir": {"type": "string"}, "parameters": {"type": "object"}, "probe": {"type": "boolean", "default": False}}}},
@@ -414,6 +438,25 @@ class MCPServer:
             tools.append({"name": "operation." + operation["name"], "description": operation["description"],
                           "inputSchema": input_schema,
                           "outputSchema": {"type": "object", "properties": output_properties}})
+        if toolset == "compact":
+            # Keep the operation index and generic dispatcher small enough for
+            # MCP clients that load every advertised tool schema into context.
+            tools = [tool for tool in tools if not tool["name"].startswith("operation.")]
+            tools.extend([
+                {"name": "engineering_operation_schema",
+                 "description": "Fetch full schemas for selected typed operations on demand",
+                 "inputSchema": {"type": "object", "properties": {
+                     "operations": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}],
+                                    "description": "Operation names, with or without the operation. prefix"},
+                     "category": {"type": "string", "description": "Filter by canonical category such as cad, brep or ansys"},
+                     "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 50},
+                     "cursor": {"type": "string"}}}},
+                {"name": "engineering_operation",
+                 "description": "Call one typed operation by name using its discovered schema",
+                 "inputSchema": {"type": "object", "required": ["operation"], "properties": {
+                     "operation": {"type": "string"},
+                     "arguments": {"type": "object", "description": "Arguments matching engineering_operation_schema"}}}},
+            ])
         # MCP clients should be able to discover a typed output contract using
         # the standard field.  Keep the schemas intentionally permissive for
         # built-in tools because their result shape is versioned in
@@ -437,6 +480,8 @@ class MCPServer:
             "engineering_software_job": {"type": "object"},
             "engineering_worker_evidence": {"type": "object"},
             "engineering_cad_context": {"type": "object", "properties": {"context": {"type": ["object", "null"]}}},
+            "engineering_operation_schema": {"type": "object", "properties": {"schemas": {"type": "array"}}},
+            "engineering_operation": {"type": "object"},
         }
         for tool in tools:
             tool.setdefault("outputSchema", builtin_outputs.get(tool["name"], {"type": "object"}))
@@ -452,11 +497,13 @@ class MCPServer:
 
     def _known_tool_names(self) -> set[str]:
         """Names that are valid regardless of profile or allow-list filtering."""
-        return {tool["name"] for tool in self._tools(include_profile=False, apply_policy=False)}
+        names = {tool["name"] for tool in self._tools(include_profile=False, apply_policy=False, toolset="all")}
+        names.update({"engineering_operation_schema", "engineering_operation"})
+        return names
 
     def _visible_operation_names(self) -> set[str]:
         return {tool["name"][len("operation."):]
-                for tool in self._tools()
+                for tool in self._tools(toolset="all")
                 if tool["name"].startswith("operation.")}
 
     def _check_access(self, tool_name: str) -> None:
@@ -538,9 +585,7 @@ class MCPServer:
         query = parse_qs(parsed.query)
         root = query.get("root", ["."])[0]
         if parsed.netloc == "operations":
-            visible = self._visible_operation_names()
-            value = {"operations": [item for item in self.operations.list()
-                                     if item["name"] in visible], "schemaVersion": self.schema_version}
+            value = self._operation_discovery({"detail": self.toolset == "all", "limit": 500})
         elif parsed.netloc == "versions":
             value = {"versions": VersionStore(root).list(), "timeline": VersionStore(root).timeline(), "schemaVersion": self.schema_version}
         elif parsed.netloc == "project":
@@ -619,6 +664,68 @@ class MCPServer:
             return {"description": "Result review prompt", "messages": [{"role": "user", "content": {"type": "text", "text": f"Review engineering result file: {arguments.get('result_file', '')}"}}]}
         raise ProtocolError(ErrorCode.RESOURCE_NOT_FOUND, f"unknown prompt: {name}")
 
+    def _operation_tools_for_discovery(self) -> list[dict[str, Any]]:
+        """Return operation schemas after profile and policy filtering."""
+        operations = []
+        for operation in self.operations.list():
+            if self.profile == "safe" and operation["safety"] in {"write", "execute"}:
+                continue
+            if not self.policy.allows("operation." + operation["name"]):
+                continue
+            operations.append(operation)
+        return operations
+
+    @staticmethod
+    def _operation_category(tool: dict[str, Any]) -> str:
+        compatibility = tool.get("compatibility") or {}
+        alias_for = compatibility.get("alias_for")
+        name = str(alias_for or tool.get("name", ""))
+        return name.split(".", 1)[0] if "." in name else "cad"
+
+    def _operation_discovery(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        tools = self._operation_tools_for_discovery()
+        category = arguments.get("category")
+        if category:
+            category = str(category).strip().lower()
+            tools = [tool for tool in tools if self._operation_category(tool) == category]
+        requested = arguments.get("operations", arguments.get("operation"))
+        if requested is not None:
+            if isinstance(requested, str):
+                requested = [requested]
+            if not isinstance(requested, list) or not all(isinstance(item, str) and item.strip() for item in requested):
+                raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "operations must be a string or a list of strings")
+            wanted = {item.strip().removeprefix("operation.") for item in requested}
+            tools = [tool for tool in tools if tool["name"] in wanted]
+        detail_default = self.toolset == "all"
+        detail = bool(arguments.get("detail", detail_default))
+        if not detail:
+            compact: list[dict[str, Any]] = []
+            for tool in tools:
+                item = {
+                    "name": tool["name"],
+                    "description": tool.get("description", ""),
+                    "tool": tool.get("tool"),
+                    "safety": tool.get("safety", "safe"),
+                    "version": tool.get("version", "1.0"),
+                    "required_parameters": tool.get("required_parameters", []),
+                    "output_kinds": tool.get("output_kinds", []),
+                }
+                compatibility = tool.get("compatibility")
+                if compatibility:
+                    item["compatibility"] = compatibility
+                compact.append(item)
+            tools = compact
+        params = dict(arguments)
+        params.setdefault("limit", 500 if self.toolset == "all" else 50)
+        return self._paged(tools, params, "operations")
+
+    def _operation_schemas(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        params = dict(arguments)
+        params["detail"] = True
+        result = self._operation_discovery(params)
+        result["schemas"] = result.pop("operations")
+        return result
+
     def call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         self._check_access(name)
         if self.profile == "safe":
@@ -630,6 +737,19 @@ class MCPServer:
         requested_schema = arguments.get("schema_version") or arguments.get("schemaVersion")
         if requested_schema and requested_schema not in {self.schema_version, "1.0"}:
             raise ProtocolError(ErrorCode.SCHEMA_VERSION_UNSUPPORTED, f"unsupported schema version: {requested_schema}")
+        if name == "engineering_operations":
+            return self._operation_discovery(arguments)
+        if name == "engineering_operation_schema":
+            return self._operation_schemas(arguments)
+        if name == "engineering_operation":
+            operation = arguments.get("operation")
+            operation_arguments = arguments.get("arguments") or {}
+            if not isinstance(operation, str) or not operation.strip():
+                raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "operation is required")
+            if not isinstance(operation_arguments, dict):
+                raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "arguments must be an object")
+            target = operation if operation.startswith("operation.") else "operation." + operation
+            return self.call(target, operation_arguments)
         operation_arguments = arguments
         operation_spec = None
         operation_name = None
@@ -791,8 +911,8 @@ class MCPServer:
         raise ValueError(f"UNKNOWN_TOOL:{name}")
 
 
-def serve_stdio(agent: EngineeringAgent, profile: str = "safe"):
-    server = MCPServer(agent, profile=profile)
+def serve_stdio(agent: EngineeringAgent, profile: str = "safe", toolset: str = "all"):
+    server = MCPServer(agent, profile=profile, toolset=toolset)
     for line in sys.stdin:
         if not line.strip():
             continue

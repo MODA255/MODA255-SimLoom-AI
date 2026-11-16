@@ -582,6 +582,11 @@ MCP 层支持资源发现、资源模板、分页、订阅、schema version、�
 源像素区域做受限颜色测量并返回 overlay。写操作完成后会发送标准
 `notifications/resources/updated`，便于工作台刷新订阅资源。
 
+对于会一次性加载全部工具 schema 的 MCP 客户端，可以使用 `--toolset compact`。该模式先
+通过 `engineering_operations` 获取轻量 operation 索引，再用
+`engineering_operation_schema` 按需读取契约，并通过 `engineering_operation` 调用；默认的
+`all` 模式和现有 typed `operation.*` 入口保持不变。
+
 外部客户端可以直接生成连接配置：
 
 ```bash

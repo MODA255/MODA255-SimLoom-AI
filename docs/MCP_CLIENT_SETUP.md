@@ -52,6 +52,20 @@ engineering-agent.exe --config C:\SimLoom\worker.json mcp-config ^
 `--read-only` 可以强制生成 safe 配置；`--allow-scripts` 会把受控 CAD 脚本开关传给 server，
 但不会绕过 safe profile 或 operation 策略。
 
+如果 MCP 客户端会把所有工具 schema 一次性放入上下文，可以使用精简发现模式：
+
+```bash
+PYTHONPATH=src python -m engineering_agent.cli \
+  --config configs/my-engineering-agent.json \
+  mcp-config --client generic --profile full --toolset compact
+```
+
+`compact` 模式只发布通用入口和 operation 索引。客户端先调用
+`engineering_operations` 获取轻量清单，再用 `engineering_operation_schema` 请求需要的
+完整参数契约，最后通过 `engineering_operation` 调用具体 operation。底层仍使用相同的
+事务、权限、schema version、验证和 rollback；默认 `all` 模式保持每个 typed operation
+都可直接发现。
+
 生成器只写 MCP 客户端配置，不会启动 server，也不会修改工程文件。`--output` 使用临时文件替换
 目标文件，父目录不存在时会创建。
 

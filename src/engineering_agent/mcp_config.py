@@ -21,12 +21,15 @@ def _server_name(value: str) -> str:
 
 
 def _command(config_path: str | Path, profile: str, python_executable: str | None,
-             allow_scripts: bool = False) -> dict[str, Any]:
+             allow_scripts: bool = False, toolset: str = "all") -> dict[str, Any]:
     if profile not in {"safe", "full"}:
         raise ValueError("MCP profile must be safe or full")
+    if toolset not in {"all", "compact"}:
+        raise ValueError("MCP toolset must be all or compact")
     path = Path(config_path).expanduser().resolve()
     executable = str(Path(python_executable).expanduser().resolve()) if python_executable else sys.executable
-    args = ["-m", "engineering_agent.cli", "--config", str(path), "mcp", "--profile", profile]
+    args = ["-m", "engineering_agent.cli", "--config", str(path), "mcp", "--profile", profile,
+            "--toolset", toolset]
     if allow_scripts:
         args.append("--allow-scripts")
     return {
@@ -38,12 +41,12 @@ def _command(config_path: str | Path, profile: str, python_executable: str | Non
 def build_config(*, client: str = "generic", name: str = "simloom-ai",
                  config_path: str | Path = "configs/engineering-agent.example.json",
                  profile: str = "safe", python_executable: str | None = None,
-                 allow_scripts: bool = False) -> dict[str, Any]:
+                 allow_scripts: bool = False, toolset: str = "all") -> dict[str, Any]:
     """Return a JSON-compatible config for a supported MCP host."""
     if client not in CLIENTS:
         raise ValueError(f"unsupported MCP client: {client}")
     server_name = _server_name(name)
-    command = _command(config_path, profile, python_executable, allow_scripts)
+    command = _command(config_path, profile, python_executable, allow_scripts, toolset)
     if client in {"generic", "claude"}:
         return {"mcpServers": {server_name: command}}
     return {"mcp_servers": {server_name.replace("-", "_"): {**command, "startup_timeout_sec": 20}}}
@@ -52,11 +55,11 @@ def build_config(*, client: str = "generic", name: str = "simloom-ai",
 def render_config(*, client: str = "generic", name: str = "simloom-ai",
                   config_path: str | Path = "configs/engineering-agent.example.json",
                   profile: str = "safe", python_executable: str | None = None,
-                  allow_scripts: bool = False) -> str:
+                  allow_scripts: bool = False, toolset: str = "all") -> str:
     """Render JSON for generic/Claude hosts or TOML for Codex."""
     value = build_config(client=client, name=name, config_path=config_path,
                          profile=profile, python_executable=python_executable,
-                         allow_scripts=allow_scripts)
+                         allow_scripts=allow_scripts, toolset=toolset)
     if client != "codex":
         return json.dumps(value, ensure_ascii=False, indent=2) + "\n"
     server_name, settings = next(iter(value["mcp_servers"].items()))
