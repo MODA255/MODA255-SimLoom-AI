@@ -65,6 +65,39 @@ def test_local_worker_requirement_requires_bridge(tmp_path):
     assert result.details["error"]["code"] == "WORKER_FEATURE_REQUIRES_BRIDGE"
 
 
+def test_doctor_marks_missing_action_capability_as_not_execution_ready(tmp_path):
+    root = _project(tmp_path)
+    config = _config({"adapter_capabilities": ["unknown-vendor-feature"]})
+    adapter = CatiaAdapter(config["tools"]["catia"])
+    doctor = adapter.doctor(probe=False)
+    assert doctor["actions"] == [ACTION]
+    assert doctor["ready_actions"] == []
+    assert doctor["execution_ready"] is False
+    assert doctor["action_requirements"][ACTION]["status"] == "missing"
+
+
+def test_doctor_marks_remote_worker_requirement_as_not_probed_without_probe(tmp_path):
+    root = _project(tmp_path)
+    config = _config({"worker_features": ["durable_jobs"]})
+    server = create_bridge_server({"root_dir": str(tmp_path / "worker"), "port": 0,
+                                   "token": "token", "commands": {f"catia.{ACTION}": COMMAND}})
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        config["tools"]["catia"].update(bridge_url=f"http://127.0.0.1:{server.server_port}", bridge_token="token")
+        adapter = CatiaAdapter(config["tools"]["catia"])
+        doctor = adapter.doctor(probe=False)
+        assert doctor["action_requirements"][ACTION]["status"] == "not_probed"
+        assert doctor["execution_ready"] is False
+        probed = adapter.doctor(probe=True)
+        assert probed["action_requirements"][ACTION]["status"] == "ready"
+        assert probed["execution_ready"] is True
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+
+
 def test_remote_worker_requirement_is_checked_before_job_launch(tmp_path):
     root = _project(tmp_path)
     server = create_bridge_server({"root_dir": str(tmp_path / "worker"), "port": 0,

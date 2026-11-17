@@ -33,6 +33,8 @@ SimLoom 的一个 CATIA、Ansys、Adams 或 VI-grade 动作可以声明它需要
 - **contract**：`operation_contract.requirements` 保存规范化后的两类要求，并参与 `definition_digest`。worker 收到请求时会重新验证它与 payload 的要求一致，防止请求在传输前被篡改。
 - **result**：统一 `engineering_result.operation_contract` 保留要求；它仍然只表示声明和协议检查，不改变 `real_machine_verified` 或工程验收结论。
 
+环境检查的每个软件项还会返回 `action_requirements` 和 `ready_actions`。`ready_actions` 只包含当前已找到启动程序、适配器能力满足且 worker 要求已探测通过的动作；远程检查未探测时动作状态为 `not_probed`，不会被能力矩阵当成可执行。`actions` 仍表示配置中找到的命令，不能单独当作执行就绪证据。
+
 ## 典型结果
 
 动作缺少适配器能力时：

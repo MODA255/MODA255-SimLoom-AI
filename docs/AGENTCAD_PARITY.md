@@ -275,7 +275,7 @@ vendor-neutral P&ID 图模型，不等于 ISO/ISA 全部符号、厂商对象和
 耗尽都会留下停止决策并转人工复核。这推进了 Agent-facing 的反馈闭环，但仍不是无策略约束的
 通用自主工程师。
 
-2026-11-17 后续：四软件动作增加 `capability_requirements`。适配器能力和远程 worker 特性会进入统一 operation contract；preflight 可以在不启动软件时指出缺失能力，执行前也会拒绝不满足的绑定。该机制改善 Agent 的调度和失败分类，但它仍是配置/协议证据，不是商业软件实机验收。详见 `SOFTWARE_CAPABILITY_REQUIREMENTS.md`。
+2026-11-17 后续：四软件动作增加 `capability_requirements`。适配器能力和远程 worker 特性会进入统一 operation contract；preflight 可以在不启动软件时指出缺失能力，doctor/CLI/Web/MCP 能力矩阵会把未探测或不满足要求的动作从 `ready_actions` 中排除，执行前也会拒绝不满足的绑定。该机制改善 Agent 的调度和失败分类，但它仍是配置/协议证据，不是商业软件实机验收。详见 `SOFTWARE_CAPABILITY_REQUIREMENTS.md`。
 
 2026-11-17 后续：`EngineeringResult/v1` 增加可选 `engineering-context/v1`。runner 可以明确导出
 软件版本/构建/许可证状态、原生对象、坐标系、工况和模型引用；控制端只做有界字段归一化，不从

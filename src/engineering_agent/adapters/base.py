@@ -183,7 +183,29 @@ class CommandAdapter(ToolAdapter):
                                      if self._valid_command(cfg.get("command")) and shutil.which(cfg["command"][0]))
             if item["actions"]:
                 item["status"] = "executable_found"
-        item["execution_ready"] = item["available"] = bool(item["actions"])
+        advertised_features = set(item.get("worker_features", []) or [])
+        action_requirements = {}
+        ready_actions = []
+        for action, binding in bound.items():
+            requirements = self._capability_requirements(binding)
+            missing_adapter = sorted(set(requirements.get("adapter_capabilities", [])) - set(self.capabilities))
+            missing_worker = (sorted(set(requirements.get("worker_features", [])) - advertised_features)
+                              if probe else [])
+            if requirements.get("worker_features") and not self.bridge_url:
+                missing_worker = list(requirements["worker_features"])
+            status = "ready" if action in item["actions"] else "unavailable"
+            if missing_adapter or missing_worker:
+                status = "missing"
+            elif requirements.get("worker_features") and not probe:
+                status = "not_probed"
+            action_requirements[action] = {"declared": requirements, "status": status,
+                                           "missing_adapter_capabilities": missing_adapter,
+                                           "missing_worker_features": missing_worker}
+            if status == "ready":
+                ready_actions.append(action)
+        item["action_requirements"] = action_requirements
+        item["ready_actions"] = sorted(ready_actions)
+        item["execution_ready"] = item["available"] = bool(item["ready_actions"])
         item["evidence"].append("VENDOR_OPERATION_AND_LICENSE_NOT_VERIFIED")
         return item
 
