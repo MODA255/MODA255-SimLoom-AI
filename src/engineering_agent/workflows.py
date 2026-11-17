@@ -114,6 +114,7 @@ class WorkflowStore:
             'repair_attempt_id': state.get('repair_attempt_id'),
             'repair_history': copy.deepcopy(state.get('repair_history', [])),
             'repair_decision': copy.deepcopy(state.get('repair_decision')),
+            'repair_loop': copy.deepcopy(state.get('repair_loop')),
             'repair_available': state.get('status') == 'completed' and repair_available,
             'steps': [{'id': s['id'], 'tool': s['tool'], 'action': s['action'],
                        'objective': s['objective'], 'status': state['steps'][s['id']]['status'],
@@ -312,6 +313,56 @@ class DurableWorkflow:
                                 'candidate': candidate.to_dict(), 'comparison': comparison,
                                 'decision': decision}
             return result
+
+    def repair_loop(self, identifier, budget=1):
+        """Run declared repair candidates until a stop condition or budget limit.
+
+        Each attempt is still an independent child workflow.  The loop only
+        continues when the previous comparison reports an improvement or an
+        unchanged result and another declared strategy remains available.
+        It never invents a patch or bypasses the per-strategy attempt limit.
+        """
+        if type(budget) is not int or budget < 1 or budget > 8:
+            raise WorkerError('REPAIR_BUDGET_INVALID', 'budget must be an integer from 1 to 8')
+        attempts = []
+        result = None
+        for index in range(budget):
+            result = self.repair(identifier)
+            repair = result.get('repair') if isinstance(result, dict) else None
+            attempts.append({
+                'index': index + 1,
+                'status': result.get('status') if isinstance(result, dict) else None,
+                'workflow_id': result.get('workflow_id') if isinstance(result, dict) else None,
+                'candidate': copy.deepcopy((repair or {}).get('candidate')) if isinstance(repair, dict) else None,
+                'comparison': copy.deepcopy((repair or {}).get('comparison')) if isinstance(repair, dict) else None,
+                'decision': copy.deepcopy((repair or {}).get('decision')) if isinstance(repair, dict) else None,
+            })
+            if not isinstance(repair, dict) or (repair.get('decision') or {}).get('next_action') != 'evaluate_next_candidate':
+                break
+        if result is None:
+            result = {'status': 'needs_review', 'workflow_id': identifier}
+        last_repair = result.get('repair') if isinstance(result, dict) else None
+        decision = copy.deepcopy((last_repair or {}).get('decision')) if isinstance(last_repair, dict) else None
+        if isinstance(decision, dict) and decision.get('next_action') == 'evaluate_next_candidate' and len(attempts) >= budget:
+            decision = {'status': 'stopped', 'reason': 'repair_budget_exhausted', 'next_action': 'manual_review'}
+            if isinstance(last_repair, dict):
+                last_repair['decision'] = copy.deepcopy(decision)
+            attempts[-1]['decision'] = copy.deepcopy(decision)
+        loop = {
+            'schema_version': 'simloom-ai/repair-loop/v1',
+            'budget': budget,
+            'attempt_count': len(attempts),
+            'attempts': attempts,
+            'decision': decision,
+        }
+        parent = self.store.read(identifier)
+        parent['repair_loop'] = copy.deepcopy(loop)
+        if decision is not None:
+            parent['repair_decision'] = copy.deepcopy(decision)
+        self.store.save(parent)
+        if isinstance(result, dict):
+            result['repair_loop'] = loop
+        return result
 
     @staticmethod
     def _repair_evidence(state, step_id):

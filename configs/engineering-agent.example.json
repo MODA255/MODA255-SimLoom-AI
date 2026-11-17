@@ -31,6 +31,9 @@
   "timeouts": {
     "step_seconds": 600
   },
+  "repair": {
+    "auto_budget": 1
+  },
   "environment": {},
   "tools": {
     "ansys": {

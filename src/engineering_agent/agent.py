@@ -126,7 +126,8 @@ class EngineeringAgent:
         return result
 
     def run(self, prompt: str, *, project_dir: str = ".", parameters: dict[str, Any] | None = None,
-            dry_run: bool = True, on_event=None, auto_repair: bool = False) -> RunReport:
+            dry_run: bool = True, on_event=None, auto_repair: bool = False,
+            repair_budget: int | None = None) -> RunReport:
         progress = Progress(on_event)
         with progress.stage("planning", "生成并检查计划"):
             plan = self.plan(prompt, project_dir=project_dir, parameters=parameters)
@@ -143,7 +144,15 @@ class EngineeringAgent:
                     repair.update({"status": "deferred", "reason": f"工程链状态为 {report.status}，等待稳定结果后再修复"})
                 else:
                     try:
-                        repair.update(workflow.repair(report.workflow_id))
+                        configured_budget = repair_budget
+                        if configured_budget is None:
+                            configured_budget = (self.config.get('repair') or {}).get('auto_budget', 1)
+                        if type(configured_budget) is not int or configured_budget < 1 or configured_budget > 8:
+                            raise WorkerError('REPAIR_BUDGET_INVALID', 'budget must be an integer from 1 to 8')
+                        if configured_budget == 1:
+                            repair.update(workflow.repair(report.workflow_id))
+                        else:
+                            repair.update(workflow.repair_loop(report.workflow_id, configured_budget))
                     except Exception as exc:
                         # Preserve the completed parent report. A repair error
                         # must be visible to the caller without pretending the

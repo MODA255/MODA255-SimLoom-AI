@@ -104,7 +104,7 @@ bulge 弧段、SPLINE 采样段和 HATCH 多段线边界检查自交/重叠；�
 
 1. **真实软件闭环仍是最大缺口。** 四款软件的动作绑定、脚本、文件传输、worker、结果契约和 evidence schema 已具备，但当前机器没有 Windows 和商业软件，四款软件的 `real_machine_verified` 仍为 false。没有真实运行证据，就不能确认 CATIA 参数树、Ansys 求解数据库、Adams 结果曲线或 VI-grade 场景的脚本语义、许可证状态、GUI 占用、版本差异和异常恢复。
 2. **工程结果的统一语义还不够深。** 现在能可靠解析 JSON、CSV、文本和声明式 vendor report；`EngineeringResult/v1` 已统一暴露输入/输出路径、报告路径、必需指标、单位和原始规则，并由 MCP schema 发布。真实软件的原生数据库、结果对象、坐标系、工况和模型引用仍主要依赖每个动作的绑定脚本导出，后续要把这些原生对象继续映射进同一 `EngineeringEvidence` 结构。
-3. **自主闭环目前是“有界修复”，还不是通用自主工程师。** 工作流可以恢复，统一 envelope 中的失败指标可以匹配工程师声明的 repair strategy，并由 CLI、MCP 或 Python 入口自动创建一次独立子工作流；现在也会生成 `repair-comparison/v1`，比较父子指标并在验收通过、回归、无改善或证据不足时停止或转人工。仍然不会在没有显式策略时推断新的载荷、边界条件、求解设置或建模动作。
+3. **自主闭环目前是“有界修复”，还不是通用自主工程师。** 工作流可以恢复，统一 envelope 中的失败指标可以匹配工程师声明的 repair strategy，并由 CLI、MCP 或 Python 入口在总预算内串联多个独立子工作流；每轮生成 `repair-comparison/v1`，比较父子指标并在验收通过、回归、无改善、证据不足或预算耗尽时停止或转人工。仍然不会在没有显式策略时推断新的载荷、边界条件、求解设置或建模动作。
 4. **Agent 操作契约仍需继续收敛。** MCP 已有分页、订阅、profile、schema 版本和 error envelope，vendor operation 现在也会展开 `engineering_result.contract`、`lifecycle` 和 `failure`；preflight、worker 请求、结果回收和工作流状态已经共享 `software-operation-contract/v1` 与 `definition_digest`。剩余差距是把真实软件原生对象、坐标系、工况和恢复条件继续纳入同一份可版本化 contract，并补更多外部 MCP 客户端互操作。
 5. **产品化和可重复部署还有差距。** 本地 Web、CLI、MCP 和测试已经可用，但干净 Windows 安装、worker 配置向导、版本升级、许可证诊断、真实软件路径发现和正式发布包还没有完成一轮端到端验收。
 6. **对照项目的细节体验仍有差距。** SimLoom 的 2D CAD 和 Viewer 已经很丰富，并且额外覆盖了 B-Rep、结果查看和四软件流程；但 AgentCAD 的优势在于围绕单一图纸 runtime 形成了很紧凑的 agent contract、独立验证和可复现工作流。SimLoom 需要继续减少跨模块的特殊分支，让 Agent 面对 CAD、仿真结果和厂商任务时都得到一致的调用和失败反馈。
@@ -268,3 +268,9 @@ DXF，重新计算已生成尺寸并检查机械语义元数据。当前是 vend
 生成语义 P&ID 符号与正交流程线，保存管线编号和端口记录，并在内存和 DXF 落盘后分别重建图检查
 孤立符号、连接器和重复编号。端口锚点现在也参与 `pid_audit` 的独立连通性判断；它仍是轻量
 vendor-neutral P&ID 图模型，不等于 ISO/ISA 全部符号、厂商对象和工艺设计审查。
+
+2026-11-17 后续：有界修复增加 `repair-loop/v1`。CLI、Python 和 MCP 可以在 1～8 次预算内串联
+多个显式 repair strategy；每次尝试仍创建独立子工程链，并复用 `repair-comparison/v1` 的父子
+指标比较。只有比较结果允许 `evaluate_next_candidate` 时才继续，验收通过、回归、证据不足和预算
+耗尽都会留下停止决策并转人工复核。这推进了 Agent-facing 的反馈闭环，但仍不是无策略约束的
+通用自主工程师。

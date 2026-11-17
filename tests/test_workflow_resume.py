@@ -432,6 +432,46 @@ def test_repair_comparison_stops_on_regression_even_when_a_candidate_remains():
     assert decide_repair(comparison, 3)['status']=='stopped'
 
 
+def test_repair_loop_evaluates_next_candidate_until_success(workflow_setup, monkeypatch):
+    project,manager,config,plan,make=workflow_setup
+    (project.parent/'gate').touch(); config['timeouts']['step_seconds']=10
+    first=make().run('fixture',project_dir=str(project),dry_run=False)
+    calls=[]
+    responses=[
+        {'status':'committed','workflow_id':'child-one','repair':{
+            'decision':{'status':'continue_allowed','reason':'remaining_declared_candidates','next_action':'evaluate_next_candidate'},
+            'candidate':{'strategy_id':'first'}}},
+        {'status':'committed','workflow_id':'child-two','repair':{
+            'decision':{'status':'stopped','reason':'engineering_acceptance_passed','next_action':'stop_success'},
+            'candidate':{'strategy_id':'second'}}},
+    ]
+    def fake_repair(self, identifier):
+        calls.append(identifier)
+        return responses.pop(0)
+    monkeypatch.setattr(DurableWorkflow, 'repair', fake_repair)
+    result=DurableWorkflow(make(), project).repair_loop(first.workflow_id, budget=2)
+    assert calls == [first.workflow_id, first.workflow_id]
+    assert result['repair_loop']['attempt_count']==2
+    assert result['repair_loop']['decision']['next_action']=='stop_success'
+    saved=WorkflowStore(project).read(first.workflow_id)
+    assert saved['repair_loop']['schema_version']=='simloom-ai/repair-loop/v1'
+    assert saved['repair_decision']['reason']=='engineering_acceptance_passed'
+
+
+def test_repair_loop_marks_budget_exhaustion_as_manual_review(workflow_setup, monkeypatch):
+    project,manager,config,plan,make=workflow_setup
+    (project.parent/'gate').touch(); config['timeouts']['step_seconds']=10
+    first=make().run('fixture',project_dir=str(project),dry_run=False)
+    def fake_repair(self, identifier):
+        return {'status':'committed','workflow_id':'child','repair':{
+            'decision':{'status':'continue_allowed','reason':'remaining_declared_candidates','next_action':'evaluate_next_candidate'},
+            'candidate':{'strategy_id':'repeat'}}}
+    monkeypatch.setattr(DurableWorkflow, 'repair', fake_repair)
+    result=DurableWorkflow(make(), project).repair_loop(first.workflow_id, budget=1)
+    assert result['repair_loop']['decision']=={
+        'status':'stopped','reason':'repair_budget_exhausted','next_action':'manual_review'}
+
+
 def test_unified_engineering_result_can_drive_repair_without_legacy_vendor_field(workflow_setup,tmp_path):
     project,manager,config,plan,make=workflow_setup
     (tmp_path/'gate').touch();config['timeouts']['step_seconds']=10
@@ -480,6 +520,26 @@ def test_run_auto_repair_records_bounded_child_result(workflow_setup,monkeypatch
     assert report.status=='committed'
     assert report.validation['auto_repair']['requested'] is True
     assert report.validation['auto_repair']['status']=='needs_review'
+
+
+def test_run_forwards_multi_attempt_repair_budget(workflow_setup,monkeypatch):
+    project,manager,config,plan,make=workflow_setup
+    from engineering_agent.models import RunReport
+    import engineering_agent.workflows as workflows
+
+    def fake_start(self, submitted_plan, metadata=None):
+        return RunReport(submitted_plan, [], run_id='parent-run', status='committed', workflow_id='b' * 32)
+
+    def fake_loop(self, identifier, budget):
+        assert identifier == 'b' * 32 and budget == 3
+        return {'status':'committed', 'workflow_id':'child-run',
+                'repair_loop':{'schema_version':'simloom-ai/repair-loop/v1','budget':3,'attempt_count':2}}
+
+    monkeypatch.setattr(workflows.DurableWorkflow, 'start', fake_start)
+    monkeypatch.setattr(workflows.DurableWorkflow, 'repair_loop', fake_loop)
+    report=make().run('fixture',project_dir=str(project),dry_run=False,
+                      auto_repair=True,repair_budget=3)
+    assert report.validation['auto_repair']['repair_loop']['budget']==3
 
 
 def test_repair_requires_explicit_strategy_and_does_not_change_thresholds(workflow_setup,tmp_path):

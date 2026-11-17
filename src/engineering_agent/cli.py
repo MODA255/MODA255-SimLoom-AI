@@ -61,7 +61,8 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("prompt")
     run.add_argument("--parameters", default="{}", help="传递给软件步骤的工程参数 JSON")
     run.add_argument("--execute", action="store_true", help="允许调用已配置的外部工具")
-    run.add_argument("--auto-repair", action="store_true", help="工程链完成但指标失败时，按已声明策略自动创建一次修复链")
+    run.add_argument("--auto-repair", action="store_true", help="工程链完成但指标失败时，按已声明策略自动创建修复链")
+    run.add_argument("--repair-budget", type=int, help="自动修复最多连续尝试的子工程链数量（1～8）")
     workflow = sub.add_parser("workflow", help="查看或恢复已有工程链；恢复会继续剩余的软件操作")
     workflow.add_argument("action", choices=["list", "status", "resume", "repair"])
     workflow.add_argument("workflow_id", nargs="?")
@@ -383,7 +384,8 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(agent.plan(args.prompt, project_dir=args.project_dir, parameters=json.loads(args.parameters)).to_dict(), ensure_ascii=False, indent=2))
         return 0
     report = agent.run(args.prompt, project_dir=args.project_dir, parameters=json.loads(args.parameters),
-                       dry_run=not args.execute, auto_repair=bool(args.auto_repair))
+                       dry_run=not args.execute, auto_repair=bool(args.auto_repair),
+                       repair_budget=args.repair_budget)
     print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
     return 0 if report.status == "committed" and all(result.status in {"planned", "completed"} for result in report.results) else 2
 

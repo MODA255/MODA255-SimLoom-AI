@@ -359,6 +359,7 @@ def test_mcp_passes_engineering_parameters_to_configured_software(project):
     server = MCPServer(EngineeringAgent(config()), profile="full")
     listed = {item["name"]: item for item in server._tools()}
     assert "parameters" in listed["engineering_run"]["inputSchema"]["properties"]
+    assert listed["engineering_run"]["inputSchema"]["properties"]["repair_budget"]["maximum"] == 8
     report = server.call("engineering_run", {"prompt": "VI-grade", "project_dir": str(project), "dry_run": False,
                                              "parameters": {"scenario": "fixture-only", "speed_kph": 60}})
     assert report["status"] == "committed"
