@@ -19,6 +19,7 @@ from ..worker_protocol import (SCHEMA, MAX_HTTP_BYTES, WorkerError, decode_files
 from ..vendor_validation import VendorValidationError, validate_report
 from ..vendor_evidence import SCHEMA as EVIDENCE_SCHEMA, build_contract, requirements, strict_json, validate_evidence
 from ..engineering_result import normalize_engineering_result
+from ..software_contract import build_operation_contract
 
 
 class AdapterError(RuntimeError):
@@ -34,6 +35,7 @@ class AdapterContext:
     workspace_dir: Path | None = None
     input_files: dict[str, str] = field(default_factory=dict)
     on_event: Any = None
+    workflow: bool = False
 
     def env(self) -> dict[str, str]:
         return dict(os.environ) | self.environment
@@ -362,9 +364,13 @@ class CommandAdapter(ToolAdapter):
                           "required_checks": list(validation.get("required_checks", []))}
             if validation["report"] not in outputs:
                 raise WorkerError("INVALID_VALIDATION_CONTRACT")
+        operation_contract = build_operation_contract(
+            tool=self.name.value, action=step.action, script=script, inputs=inputs,
+            outputs=outputs, validation=validation,
+            mode="bridge" if self.bridge_url else "local", bridge=bool(self.bridge_url), workflow=bool(context.workflow))
         return {"schema_version": SCHEMA, "operation": "run", "request_id": uuid.uuid4().hex,
                 "tool": self.name.value, "action": step.action, "script": script,
                 "parameters": step.parameters, "inputs": inputs, "outputs": outputs, "files": files,
-                "validation": validation,
+                "validation": validation, "operation_contract": operation_contract,
                 **({"vendor_options": json.loads(json.dumps(binding["vendor_options"], allow_nan=False))}
                    if "vendor_options" in binding else {})}

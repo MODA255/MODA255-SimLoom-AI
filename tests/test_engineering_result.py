@@ -58,6 +58,7 @@ def test_vendor_operation_schema_advertises_normalized_result():
     assert envelope["properties"]["failure"]["properties"]["category"]["enum"] == [
         "configuration", "input_contract", "transport", "execution", "collection",
         "validation", "recovery", "concurrency", "publication", "unknown"]
+    assert envelope["properties"]["operation_contract"]["properties"]["definition_digest"]["type"] == "string"
 
 
 def test_normalized_result_exposes_the_input_output_and_metric_contract():

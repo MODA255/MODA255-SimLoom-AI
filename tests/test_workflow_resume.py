@@ -106,6 +106,9 @@ def test_resume_entire_plan_preserves_ids_and_uses_original_upstream_outputs(wor
     report=start(workflow_setup)
     initial=WorkflowStore(project).read(report.workflow_id)
     assert initial['steps']['geometry']['status']=='completed'
+    assert initial['steps']['geometry']['operation_contract']['schema_version']=='simloom-ai/software-operation-contract/v1'
+    assert initial['steps']['geometry']['operation_contract']['definition_digest']
+    assert initial['steps']['geometry']['operation_contract']['recovery']['workflow'] is True
     assert initial['steps']['geometry']['lifecycle']['current_stage']=='completed'
     assert initial['steps']['solve']['lifecycle']['current_stage']=='recover'
     assert initial['steps']['solve']['lifecycle']['recoverable'] is True

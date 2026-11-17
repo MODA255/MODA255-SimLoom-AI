@@ -101,7 +101,8 @@ def normalize_engineering_result(*, tool: str, action: str, status: str,
                                  contract: dict[str, Any] | None = None,
                                  phase: str | None = None,
                                  lifecycle: dict[str, Any] | None = None,
-                                 recoverable: bool = False) -> dict[str, Any]:
+                                 recoverable: bool = False,
+                                 operation_contract: dict[str, Any] | None = None) -> dict[str, Any]:
     """Build the common result envelope from an adapter/worker response.
 
     The function intentionally copies only bounded structured fields.  It does
@@ -171,6 +172,8 @@ def normalize_engineering_result(*, tool: str, action: str, status: str,
         "observations": observations,
         "artifacts": {"inputs": input_artifacts, "outputs": output_artifacts},
         "contract": _contract_summary(contract, input_artifacts, output_artifacts),
+        "operation_contract": (operation_contract if isinstance(operation_contract, dict)
+                               else details.get("operation_contract")),
         "lifecycle": lifecycle_value,
         "evidence": {
             "request_id": details.get("request_id") if isinstance(details.get("request_id"), str) else None,

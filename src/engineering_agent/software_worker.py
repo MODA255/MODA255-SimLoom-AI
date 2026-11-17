@@ -19,6 +19,7 @@ from .vendor_validation import VendorValidationError, read_report
 from .vendor_evidence import SCHEMA as EVIDENCE_SCHEMA, check_contract, strict_json, validate_evidence, requirements
 from .engineering_result import normalize_engineering_result
 from .engineering_lifecycle import build_lifecycle
+from .software_contract import validate_operation_contract
 
 
 def _with_engineering_result(body: dict[str, Any], payload: dict[str, Any], *, status: str | None = None,
@@ -37,6 +38,7 @@ def _with_engineering_result(body: dict[str, Any], payload: dict[str, Any], *, s
         tool=str(payload.get("tool", "")), action=str(payload.get("action", "")),
         status=resolved_status, message=message, outputs=payload.get("outputs") or [], details=body,
         contract=payload.get("validation"), phase=phase,
+        operation_contract=body.get("operation_contract"),
         lifecycle=(build_lifecycle(
             phase, resolved_status,
             validation_requested=payload.get("validation") is not None,
@@ -112,9 +114,17 @@ def validate_job(payload, commands, transfer_store: ArtifactTransferStore | None
             raise WorkerError("VENDOR_CONTRACT_UNSUPPORTED")
         if not isinstance(report, str) or report not in outputs or not isinstance(checks, list) or not all(isinstance(v, str) for v in checks):
             raise WorkerError("INVALID_VALIDATION_CONTRACT", "report must be one of outputs and required_checks must be a list")
+    operation_contract = payload.get("operation_contract")
+    if operation_contract is not None:
+        try:
+            validate_operation_contract(operation_contract, tool=tool, action=action,
+                                       script=script, inputs=inputs, outputs=outputs)
+        except ValueError as exc:
+            raise WorkerError(str(exc)) from exc
     request_text = json.dumps({"schema_version": SCHEMA, "request_id": request_id,
                               "tool": tool, "action": action, "parameters": params,
                               "inputs": inputs, "outputs": outputs, "validation": validation,
+                              "operation_contract": operation_contract,
                               "vendor_options": payload.get("vendor_options", {})}, ensure_ascii=False, allow_nan=False, indent=2)
     return request_id, tool, action, template, inputs, outputs, files, script, request_text
 
@@ -149,7 +159,9 @@ def _run_job(root, payload, commands, timeout, environment, monitor=None, transf
     logs.mkdir()
     details = {"schema_version": SCHEMA, "request_id": request_id, "tool": tool, "action": action,
                "job_dir": str(job), "command": command, "inputs": manifest(payload["files"]),
-               "verification": "artifact_integrity", "vendor_validation": "not_run"}
+               "verification": "artifact_integrity", "vendor_validation": "not_run",
+               **({"operation_contract": payload["operation_contract"]}
+                  if isinstance(payload.get("operation_contract"), dict) else {})}
     process = None
     try:
         with (logs / "stdout.txt").open("wb") as stdout, (logs / "stderr.txt").open("wb") as stderr:

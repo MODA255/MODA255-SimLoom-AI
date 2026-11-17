@@ -116,6 +116,7 @@ class WorkflowStore:
             'steps': [{'id': s['id'], 'tool': s['tool'], 'action': s['action'],
                        'objective': s['objective'], 'status': state['steps'][s['id']]['status'],
                        'request_id': state['steps'][s['id']].get('request_id'),
+                       'operation_contract': copy.deepcopy(state['steps'][s['id']].get('operation_contract')),
                        'lifecycle': copy.deepcopy(state['steps'][s['id']].get('lifecycle')),
                        'failure': copy.deepcopy(state['steps'][s['id']].get('failure'))}
                       for s in state['plan']['steps']]}
@@ -169,7 +170,7 @@ class DurableWorkflow:
                     raise WorkerError('WORKFLOW_OUTPUT_COLLISION', name)
                 produced[name] = step.id
             state['steps'][step.id] = {'status': 'not_started', 'binding_digest': self.binding_fingerprint(step),
-                                       'lifecycle': empty_lifecycle()}
+                                       'operation_contract': None, 'lifecycle': empty_lifecycle()}
         for path in path_cases:
             if any(str(parent) in path_cases for parent in PurePosixPath(path).parents if str(parent) != "."):
                 raise WorkerError("WORKFLOW_PATH_COLLISION", path)
@@ -312,7 +313,8 @@ class DurableWorkflow:
         context = AdapterContext(self.store.project, False,
                                  timeout_seconds=float(self.agent.config.get('timeouts', {}).get('step_seconds', 600)),
                                  environment=self.agent.config.get('environment', {}),
-                                 workspace_dir=txn.stage_dir / 'software', on_event=self.progress.emit)
+                                 workspace_dir=txn.stage_dir / 'software', on_event=self.progress.emit,
+                                 workflow=True)
         context.workspace_dir.mkdir()
         context.input_files = {name: str(confined_path(root, 'inputs/' + name)) for name in state['inputs']}
         try:
@@ -331,6 +333,8 @@ class DurableWorkflow:
                     engineering_result = (result.details or {}).get('engineering_result')
                     if isinstance(engineering_result, dict):
                         entry = state['steps'][step.id]
+                        if isinstance(engineering_result.get('operation_contract'), dict):
+                            entry['operation_contract'] = copy.deepcopy(engineering_result['operation_contract'])
                         if isinstance(engineering_result.get('lifecycle'), dict):
                             entry['lifecycle'] = copy.deepcopy(engineering_result['lifecycle'])
                         if isinstance(engineering_result.get('failure'), dict):

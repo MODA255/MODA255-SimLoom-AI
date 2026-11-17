@@ -48,7 +48,8 @@ AgentCAD 的完整实时 2D 交互，也不提供 CATIA、Ansys、Adams 或 VI-g
 `preflight → execute → collect → validate → recover` 生命周期状态，便于 Agent 依据原始
 规则做失败归因、修复候选比较和重规划；错误还会带有配置、契约、传输、执行、回收、验证、恢复、
 并发和发布分类，且会持久到工作流步骤状态供恢复页直接读取；详见 `ENGINEERING_RESULT.md`。
-这减少了 Agent 为四款
+preflight、worker 请求和结果回收还共享版本化的 `software-operation-contract/v1` 与
+`definition_digest`，避免动作绑定在不同入口发生漂移。这减少了 Agent 为四款
 软件编写不同结果解析器的工作，但尚未替代真实软件的原生结果读取和 Windows 实机证据。
 
 `cad.change_space` 现已补齐：可把选定实体事务化移动到模型空间或已有纸空间，并在原生 DXF

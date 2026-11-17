@@ -283,6 +283,11 @@ def test_preflight_reports_action_readiness_before_launch(project):
     assert result["step_count"] == 4
     assert all(item["ready"] for item in result["steps"])
     assert all(item["contract"]["outputs"] for item in result["steps"])
+    assert all(item["operation_contract"]["schema_version"] == "simloom-ai/software-operation-contract/v1"
+               for item in result["steps"])
+    assert all(item["operation_contract"]["definition_digest"] for item in result["steps"])
+    assert all(item["operation_contract"]["recovery"]["workflow"] is True
+               for item in result["steps"])
 
 
 def test_preflight_identifies_unbound_vendor_action(project):
@@ -290,6 +295,23 @@ def test_preflight_identifies_unbound_vendor_action(project):
     result = agent.preflight("CATIA建模", project_dir=str(project))
     assert result["ready"] is False
     assert result["steps"][0]["issues"][0]["code"] == "ACTION_BINDING_REQUIRED"
+
+
+def test_worker_result_keeps_the_same_operation_contract_definition(project, tmp_path):
+    adapter = CatiaAdapter(config()["tools"]["catia"])
+    prepared = adapter._prepare(step(load_n=1500), AdapterContext(project), config()["tools"]["catia"]["actions"][ACTIONS["catia"]])
+    assert prepared["operation_contract"]["schema_version"] == "simloom-ai/software-operation-contract/v1"
+    result = run_job(tmp_path / "worker", prepared, {"catia.create_or_update_model": COMMAND})
+    assert result["engineering_result"]["operation_contract"]["definition_digest"] == prepared["operation_contract"]["definition_digest"]
+
+
+def test_worker_rejects_tampered_operation_contract_before_launch(project, tmp_path):
+    adapter = CatiaAdapter(config()["tools"]["catia"])
+    prepared = adapter._prepare(step(load_n=1500), AdapterContext(project), config()["tools"]["catia"]["actions"][ACTIONS["catia"]])
+    prepared["operation_contract"]["definition_digest"] = "0" * 64
+    result = run_job(tmp_path / "worker", prepared, {"catia.create_or_update_model": COMMAND})
+    assert result["status"] == "failed"
+    assert result["error"]["code"] == "SOFTWARE_OPERATION_CONTRACT_DIGEST_MISMATCH"
 
 
 def test_failed_downstream_does_not_publish_first_step_or_replace_previous_outputs(project, monkeypatch):

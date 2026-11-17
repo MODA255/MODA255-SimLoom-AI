@@ -173,6 +173,12 @@ macOS/Linux 可以控制远程 Windows worker。pywin32 只用于 COM，不作�
 执行结果，不能把 `engineering_acceptance=unknown` 自动变成通过；`recover=deferred` 也不会
 声称执行和验证已经完成。
 
+`operation_contract`（`simloom-ai/software-operation-contract/v1`）把 preflight 看到的动作脚本、
+项目相对输入/输出、验证声明、生命周期阶段和恢复能力固定下来，并计算 `definition_digest`。
+worker 请求会携带同一摘要，worker 在启动 runner 前校验工具、动作、脚本和文件列表；结果回收时
+再次暴露该摘要。这样 Agent 可以确认“预检查的动作”和“实际执行的动作”一致，而不把动态输入
+哈希混入定义摘要。
+
 当结果有错误时，`engineering_result.failure` 提供保守的下一步分类。`configuration` 和
 `input_contract` 通常先修配置或输入；`transport`、`collection` 和可恢复的 `recovery` 可以
 继续使用原 request ID；`validation` 表示需要检查工程报告或指标，不应盲目重跑；未知类别会

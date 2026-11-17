@@ -12,6 +12,7 @@ from typing import Any
 
 from .models import ExecutionPlan, PlanStep, ToolName
 from .worker_protocol import WorkerError, relative_path
+from .software_contract import build_operation_contract
 
 
 def _command_status(command: Any) -> tuple[bool, str, str | None]:
@@ -40,7 +41,8 @@ def _script_status(root: Path, script: Any) -> tuple[bool, str, str | None]:
     return True, "READY", str(path)
 
 
-def _step_preflight(adapter: Any, step: PlanStep, root: Path, *, probe: bool = False) -> dict[str, Any]:
+def _step_preflight(adapter: Any, step: PlanStep, root: Path, *, probe: bool = False,
+                    workflow: bool = False) -> dict[str, Any]:
     binding = getattr(adapter, "config", {}).get("actions", {}).get(step.action)
     result: dict[str, Any] = {
         "step_id": step.id,
@@ -91,6 +93,11 @@ def _step_preflight(adapter: Any, step: PlanStep, root: Path, *, probe: bool = F
         script, inputs, outputs, validation, kind = adapter.file_contract(step, binding)
         result["contract"] = {"script": script, "inputs": inputs, "outputs": outputs,
                                "validation_kind": kind, "validation": validation}
+        result["operation_contract"] = build_operation_contract(
+            tool=step.tool.value, action=step.action, script=script, inputs=inputs,
+            outputs=outputs, validation=validation,
+            mode="bridge" if getattr(adapter, "bridge_url", None) else "local",
+            bridge=bool(getattr(adapter, "bridge_url", None)), workflow=workflow)
         result["outputs"] = outputs
     except Exception as exc:
         result["issues"].append({"code": getattr(exc, "code", "ACTION_CONTRACT_INVALID"), "message": str(exc)})
@@ -103,7 +110,7 @@ def _step_preflight(adapter: Any, step: PlanStep, root: Path, *, probe: bool = F
 def preflight_plan(adapters: dict[ToolName, Any], plan: ExecutionPlan, project_dir: str | Path,
                    *, probe: bool = False, plan_validation: dict[str, Any] | None = None) -> dict[str, Any]:
     root = Path(project_dir).resolve()
-    steps = [_step_preflight(adapters[step.tool], step, root, probe=probe) for step in plan.steps
+    steps = [_step_preflight(adapters[step.tool], step, root, probe=probe, workflow=len(plan.steps) > 1) for step in plan.steps
              if step.tool in adapters and step.action != "clarify_request"]
     skipped = [step.id for step in plan.steps if step.action == "clarify_request"]
     ready_count = sum(bool(item["ready"]) for item in steps)

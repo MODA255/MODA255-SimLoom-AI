@@ -40,6 +40,18 @@ ENGINEERING_RESULT_SCHEMA = {
                 "metric_rules": {"type": "array", "items": {"type": "object"}},
             },
         },
+        "operation_contract": {
+            "type": ["object", "null"],
+            "description": "Versioned software-operation contract shared by preflight, worker execution and recovery",
+            "properties": {
+                "schema_version": {"type": "string", "const": "simloom-ai/software-operation-contract/v1"},
+                "tool": {"type": "string"}, "action": {"type": "string"},
+                "definition_digest": {"type": "string"},
+                "execution": {"type": "object"}, "artifacts": {"type": "object"},
+                "validation": {"type": ["object", "null"]}, "lifecycle": {"type": "object"},
+                "recovery": {"type": "object"},
+            },
+        },
         "lifecycle": {
             "type": "object",
             "description": f"{ENGINEERING_LIFECYCLE_SCHEMA} stage state",
