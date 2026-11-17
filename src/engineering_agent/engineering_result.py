@@ -80,16 +80,23 @@ def _engineering_context(details: dict[str, Any], vendor_validation: Any,
     raw = details.get("engineering_context")
     if not isinstance(raw, dict) and isinstance(vendor_validation, dict):
         raw = vendor_validation.get("engineering_context")
+        if not isinstance(raw, dict):
+            observations = vendor_validation.get("observations")
+            if isinstance(observations, dict):
+                raw = observations.get("engineering_context")
     if not isinstance(raw, dict):
         raw = {}
         source = details if isinstance(details, dict) else {}
         vendor = vendor_validation if isinstance(vendor_validation, dict) else {}
+        vendor_observations = vendor.get("observations") if isinstance(vendor.get("observations"), dict) else {}
         for key in ("software_version", "software_build", "software_edition", "license_status",
                     "native_objects", "coordinate_systems", "load_cases", "model_references", "source"):
             if key in source:
                 raw[key] = source[key]
             elif key in vendor:
                 raw[key] = vendor[key]
+            elif key in vendor_observations:
+                raw[key] = vendor_observations[key]
         if not raw:
             return None
     else:

@@ -179,3 +179,17 @@ def test_context_can_be_read_from_legacy_vendor_validation_fields():
     assert result["engineering_context"]["software"]["name"] == "catia"
     assert result["engineering_context"]["software"]["version"] == "V5-6R2024"
 
+
+def test_context_can_be_read_from_vendor_observations():
+    result = normalize_engineering_result(
+        tool="adams", action="build_and_run_multibody", status="completed",
+        details={"vendor_validation": {
+            "engineering_acceptance": "passed",
+            "observations": {"engineering_context": {
+                "software_version": "2025.1",
+                "load_cases": [{"id": "maneuver-1", "kind": "handling"}],
+            }}}})
+    context = result["engineering_context"]
+    assert context["software"] == {"name": "adams", "version": "2025.1"}
+    assert context["load_cases"][0]["id"] == "maneuver-1"
+
