@@ -52,3 +52,37 @@ def test_vendor_operation_schema_advertises_normalized_result():
     details = schema["output_schema"]["details"]
     assert "engineering_result" in details["properties"]
 
+
+def test_normalized_result_exposes_the_input_output_and_metric_contract():
+    result = normalize_engineering_result(
+        tool="ansys", action="solve_configured_model", status="failed",
+        message="runner stopped", outputs=["result.json", "report.json"],
+        details={
+            "inputs": [{"path": "model.mechdat", "bytes": 12, "sha256": "a" * 64}],
+            "error": {"code": "SOFTWARE_TIMEOUT", "message": "runner stopped"},
+        },
+        contract={
+            "schema_version": "simloom-ai/vendor-evidence/v2",
+            "kind": "mechanical_solve",
+            "report": "report.json",
+            "input_hashes": {"model.mechdat": "a" * 64},
+            "expectations": {
+                "required_metrics": ["equivalent_stress"],
+                "metric_units": {"equivalent_stress": "MPa"},
+                "metric_rules": [{"name": "equivalent_stress", "operator": "<=", "target": 80, "unit": "MPa"}],
+            },
+        },
+    )
+    assert result["contract"] == {
+        "schema_version": "simloom-ai/vendor-evidence/v2",
+        "kind": "mechanical_solve",
+        "report": "report.json",
+        "inputs": ["model.mechdat"],
+        "outputs": ["result.json", "report.json"],
+        "required_checks": [],
+        "required_metrics": ["equivalent_stress"],
+        "metric_units": {"equivalent_stress": "MPa"},
+        "metric_rules": [{"name": "equivalent_stress", "operator": "<=", "target": 80, "unit": "MPa"}],
+    }
+    assert result["error"]["code"] == "SOFTWARE_TIMEOUT"
+

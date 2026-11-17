@@ -18,6 +18,17 @@
     {"name": "equivalent_stress", "passed": false}
   ],
   "observations": {"solution_status": "Done"},
+  "contract": {
+    "schema_version": "simloom-ai/vendor-evidence/v2",
+    "kind": "mechanical_solve",
+    "report": "artifacts/report.json",
+    "inputs": ["inputs/model.mechdat"],
+    "outputs": ["artifacts/results.json", "artifacts/report.json"],
+    "required_checks": [],
+    "required_metrics": ["equivalent_stress"],
+    "metric_units": {"equivalent_stress": "MPa"},
+    "metric_rules": [{"name": "equivalent_stress", "operator": "<=", "target": 80, "unit": "MPa"}]
+  },
   "artifacts": {
     "inputs": [{"path": "inputs/model.mechdat", "bytes": 100, "sha256": "..."}],
     "outputs": [{"path": "artifacts/results.json", "bytes": 200, "sha256": "..."}]
@@ -38,6 +49,7 @@
 - `real_machine_verified` 只有经过 Windows worker 的机器证据记录才可能为 `true`。本地 fixture、COM 探针和文件哈希不能填充这个字段。
 - `metrics` 是已按契约单位规范化的数值，`metric_verdicts` 保存每项规则的目标、运算符和通过状态。
 - `observations` 保存 runner 报告中的软件观察，例如 CATIA 参数回读、Ansys 解算状态或 Adams/VI-grade 返回码。
+- `contract` 是本次请求实际使用的输入、输出和验收契约摘要。它包括 evidence schema、报告路径、输入/输出路径、必须检查的指标、期望单位和原始规则。该摘要有长度限制，适合 Agent 做失败归因、修复候选比较和重规划；它不会替代原始报告，也不会因为契约存在就把结果判为通过。
 - `artifacts` 只包含项目相对路径、大小和 SHA-256，不包含本机绝对路径。
 
 ## 兼容策略
@@ -46,7 +58,7 @@
 
 ## 入口和测试
 
-统一结果会从 CATIA、Ansys、Adams 和 VI-grade 的 worker 响应及本地/远程 adapter 返回，并出现在工作流、CLI、Web 和 MCP 的结构化结果中。MCP operation schema 在 vendor operation 的 `details` 中声明了该 envelope。即使 worker 在启动前校验失败、runner 超时或输出契约不完整，也会返回 `status=failed` 的 envelope，避免 Agent 只通过是否收到响应来判断状态。
+统一结果会从 CATIA、Ansys、Adams 和 VI-grade 的 worker 响应及本地/远程 adapter 返回，并出现在工作流、CLI、Web 和 MCP 的结构化结果中。MCP operation schema 在 vendor operation 的 `details` 中声明了该 envelope。即使 worker 在启动前校验失败、runner 超时或输出契约不完整，也会返回 `status=failed` 的 envelope，并尽可能保留原始契约摘要，避免 Agent 只通过是否收到响应来判断状态。
 
 ```bash
 .venv/bin/python -m pytest -q tests/test_engineering_result.py tests/test_four_vendor_runners.py tests/test_software_integration.py

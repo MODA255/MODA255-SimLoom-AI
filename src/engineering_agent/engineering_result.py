@@ -4,6 +4,11 @@ The four software adapters historically returned a mixture of ``verification``
 and ``vendor_validation`` fields.  This module adds one small, stable envelope
 without discarding those fields, so an agent can consume CATIA, Ansys, Adams
 and VI-grade results through the same shape.
+
+The envelope also carries a bounded summary of the exact input/output and
+metric contract used for the run.  The summary is descriptive evidence: it
+never replaces the native vendor report or claims that a contract was
+satisfied merely because it was present.
 """
 from __future__ import annotations
 
@@ -41,16 +46,66 @@ def _acceptance(vendor_validation: Any) -> str:
     return value if value in ACCEPTANCE_STATES else "unknown"
 
 
+def _contract_summary(contract: Any, input_artifacts: list[dict[str, Any]],
+                      output_artifacts: list[dict[str, Any]]) -> dict[str, Any]:
+    """Project a validation contract into a bounded, agent-readable summary."""
+    if not isinstance(contract, dict):
+        contract = {}
+    expectations = contract.get("expectations")
+    if not isinstance(expectations, dict):
+        expectations = {}
+    input_hashes = contract.get("input_hashes")
+    if not isinstance(input_hashes, dict):
+        input_hashes = {}
+    input_paths = [item["path"] for item in input_artifacts]
+    if input_hashes:
+        input_paths = [key for key in input_hashes if isinstance(key, str) and key][:512]
+    output_paths = [item["path"] for item in output_artifacts]
+    required_metrics = expectations.get("required_metrics", contract.get("required_metrics", []))
+    if not isinstance(required_metrics, list):
+        required_metrics = []
+    required_metrics = [item for item in required_metrics if isinstance(item, str) and item][:256]
+    metric_units = expectations.get("metric_units", contract.get("metric_units", {}))
+    if not isinstance(metric_units, dict):
+        metric_units = {}
+    metric_units = {str(key): value for key, value in list(metric_units.items())[:256]
+                    if isinstance(key, str) and isinstance(value, str)}
+    metric_rules = expectations.get("metric_rules", contract.get("metric_rules", []))
+    if not isinstance(metric_rules, list):
+        metric_rules = []
+    metric_rules = [item for item in metric_rules[:256] if isinstance(item, dict)]
+    required_checks = contract.get("required_checks", [])
+    if not isinstance(required_checks, list):
+        required_checks = []
+    required_checks = [item for item in required_checks if isinstance(item, str) and item][:256]
+    report = contract.get("report")
+    return {
+        "schema_version": contract.get("schema_version") if isinstance(contract.get("schema_version"), str) else None,
+        "kind": contract.get("kind") if isinstance(contract.get("kind"), str) else None,
+        "report": report if isinstance(report, str) else None,
+        "inputs": input_paths,
+        "outputs": output_paths,
+        "required_checks": required_checks,
+        "required_metrics": required_metrics,
+        "metric_units": metric_units,
+        "metric_rules": metric_rules,
+    }
+
+
 def normalize_engineering_result(*, tool: str, action: str, status: str,
                                  message: str = "", outputs: Iterable[str] = (),
-                                 details: dict[str, Any] | None = None) -> dict[str, Any]:
+                                 details: dict[str, Any] | None = None,
+                                 contract: dict[str, Any] | None = None) -> dict[str, Any]:
     """Build the common result envelope from an adapter/worker response.
 
     The function intentionally copies only bounded structured fields.  It does
     not infer engineering validity from a process exit code or from artifact
-    hashes; those remain separate evidence fields.
+    hashes; those remain separate evidence fields. ``contract`` is included as
+    a descriptive snapshot so a planner can compare attempts without parsing
+    vendor-specific payloads.
     """
     details = details if isinstance(details, dict) else {}
+    contract = contract if isinstance(contract, dict) else details.get("validation")
     vendor_validation = details.get("vendor_validation")
     if vendor_validation == "failed":
         acceptance = "unknown"
@@ -97,6 +152,7 @@ def normalize_engineering_result(*, tool: str, action: str, status: str,
         "metric_verdicts": metric_verdicts,
         "observations": observations,
         "artifacts": {"inputs": input_artifacts, "outputs": output_artifacts},
+        "contract": _contract_summary(contract, input_artifacts, output_artifacts),
         "evidence": {
             "request_id": details.get("request_id") if isinstance(details.get("request_id"), str) else None,
             "scope": scope if isinstance(scope, str) else None,
@@ -106,4 +162,3 @@ def normalize_engineering_result(*, tool: str, action: str, status: str,
     if error is not None:
         result["error"] = error
     return result
-

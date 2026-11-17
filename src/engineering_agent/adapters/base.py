@@ -192,7 +192,7 @@ class CommandAdapter(ToolAdapter):
             details = {"doctor": self.doctor(probe=False), "execution": "not_run"}
             details["engineering_result"] = normalize_engineering_result(
                 tool=self.name.value, action=step.action, status="planned",
-                message=f"dry-run: {self.name.value} {step.action}", outputs=step.outputs, details=details)
+                message=f"dry-run: {self.name.value} {step.action}", outputs=step.outputs, details=details, contract=step.parameters.get("validation"))
             return ToolResult(step.id, self.name, "planned", f"dry-run: {self.name.value} {step.action}",
                               step.outputs, details)
         binding = self.config.get("actions", {}).get(step.action)
@@ -201,7 +201,7 @@ class CommandAdapter(ToolAdapter):
             details["engineering_result"] = normalize_engineering_result(
                 tool=self.name.value, action=step.action, status="unavailable",
                 message="Configure an action script and a runner command or worker URL",
-                outputs=step.outputs, details=details)
+                outputs=step.outputs, details=details, contract=step.parameters.get("validation"))
             return ToolResult(step.id, self.name, "unavailable", "Configure an action script and a runner command or worker URL",
                               details=details)
         try:
@@ -225,7 +225,7 @@ class CommandAdapter(ToolAdapter):
                                          "receipt_path": str(ReceiptStore(context.project_dir).path(payload["request_id"]))}
             details["engineering_result"] = normalize_engineering_result(
                 tool=self.name.value, action=step.action, status="failed", message=str(exc),
-                outputs=step.outputs, details=details)
+                outputs=step.outputs, details=details, contract=(payload.get("validation") if "payload" in locals() else step.parameters.get("validation")))
             return ToolResult(step.id, self.name, "failed", str(exc), details=details)
 
     def collect_response(self, step, body, request_id, expected_outputs, workspace, validation=None):
@@ -236,7 +236,7 @@ class CommandAdapter(ToolAdapter):
             message = body.get("error", {}).get("message", "Worker execution failed")
             details["engineering_result"] = normalize_engineering_result(
                 tool=self.name.value, action=step.action, status="failed", message=message,
-                outputs=expected_outputs, details=details)
+                outputs=expected_outputs, details=details, contract=validation)
             return ToolResult(step.id, self.name, "failed", message, details=details)
         if body.get("status") != "completed" or type(body.get("returncode")) is not int or body["returncode"] != 0:
             raise WorkerError("INVALID_WORKER_COMPLETION")
@@ -295,7 +295,7 @@ class CommandAdapter(ToolAdapter):
         details["engineering_result"] = normalize_engineering_result(
             tool=self.name.value, action=step.action, status="completed",
             message="Runner completed; declared output files collected and hashes verified",
-            outputs=list(output_files), details=details)
+            outputs=list(output_files), details=details, contract=validation)
         return ToolResult(step.id, self.name, "completed", "Runner completed; declared output files collected and hashes verified",
                           list(output_files), details)
 

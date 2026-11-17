@@ -33,7 +33,7 @@ def _with_engineering_result(body: dict[str, Any], payload: dict[str, Any], *, s
         message = str(error.get("message", ""))
     body["engineering_result"] = normalize_engineering_result(
         tool=str(payload.get("tool", "")), action=str(payload.get("action", "")),
-        status=resolved_status, message=message, outputs=payload.get("outputs") or [], details=body)
+        status=resolved_status, message=message, outputs=payload.get("outputs") or [], details=body, contract=payload.get("validation"))
     return body
 
 
