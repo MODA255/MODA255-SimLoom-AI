@@ -80,6 +80,15 @@ PYTHONPATH=src python -m engineering_agent.cli \
 这一步只检查启动条件；它不会启动商业软件，也不把连接成功当成许可证、求解收敛或工程指标
 合格。Web 的 `POST /api/preflight` 和 MCP 的 `engineering_preflight` 提供相同检查。
 
+也可以在命令行直接查看同一份能力矩阵：
+
+```bash
+engineering-agent --config ./configs/engineering-agent.example.json capabilities
+```
+
+输出使用 `simloom-ai/capabilities/v1`，与 Web `/api/capabilities` 和 MCP
+`engineering_capabilities` 保持一致。
+
 ## 能解决什么问题
 
 - 把一个车辆或机械研发目标拆成有依赖关系的 CATIA、Ansys、Adams、VI-grade 任务。
