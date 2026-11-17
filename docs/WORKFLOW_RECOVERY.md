@@ -97,6 +97,7 @@ CLI 使用：
 
 ```sh
 engineering-agent --project-dir ./project workflow repair <workflow_id>
+engineering-agent --project-dir ./project workflow repair <workflow_id> --repair-budget 3
 ```
 
 如果希望工程链稳定完成后立即尝试一次已声明的修复策略，可以在执行入口打开有界自动修复：
@@ -115,7 +116,7 @@ Python 使用 `agent.run(..., dry_run=False, auto_repair=True)`，MCP `engineeri
 策略或达到尝试上限则返回 `needs_review`。这不是让模型自由修改载荷或放宽阈值，仍受每个动作的
 显式策略、契约字段、单策略最大尝试次数和总预算约束。
 
-MCP full profile 使用 `engineering_workflow` 的 `action=repair`；safe profile 仍只读。修复策略必须
+MCP full profile 使用 `engineering_workflow` 的 `action=repair`，可选 `repair_budget`；safe profile 仍只读。修复策略必须
 写在对应软件动作的 `repair_strategies` 中，例如：
 
 ```json

@@ -332,6 +332,7 @@ def test_safe_mcp_exposes_read_only_workflow_actions(workflow_setup):
     report=start(workflow_setup);server=MCPServer(make())
     schema=next(t for t in server._tools() if t['name']=='engineering_workflow')
     assert schema['inputSchema']['properties']['action']['enum']==['list','status']
+    assert schema['inputSchema']['properties']['repair_budget']['maximum']==8
     result=server.call('engineering_workflow',{'action':'status','workflow_id':report.workflow_id,'project_dir':str(project)})
     assert result['workflow_id']==report.workflow_id
     with pytest.raises(ProtocolError,match='observation only'):

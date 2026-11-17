@@ -66,6 +66,7 @@ def _parser() -> argparse.ArgumentParser:
     workflow = sub.add_parser("workflow", help="查看或恢复已有工程链；恢复会继续剩余的软件操作")
     workflow.add_argument("action", choices=["list", "status", "resume", "repair"])
     workflow.add_argument("workflow_id", nargs="?")
+    workflow.add_argument("--repair-budget", type=int, help="repair 动作最多连续尝试的子工程链数量（1～8）")
     sub.add_parser("doctor", help="检查四个工具的连接配置")
     job = sub.add_parser("software-job", help="查看、取消或回收已有远程软件任务，不重新启动求解")
     job.add_argument("tool", choices=["catia", "ansys", "adams", "vi-grade"])
@@ -200,7 +201,8 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     agent = EngineeringAgent(EngineeringAgent.load_config(args.config))
     if args.command == "workflow":
-        result = agent.workflow(args.action, args.workflow_id, project_dir=args.project_dir)
+        result = agent.workflow(args.action, args.workflow_id, project_dir=args.project_dir,
+                                repair_budget=args.repair_budget)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if args.action in {"list", "status"} or result.get("status") in {"committed", "needs_review"} else 2
     if args.command == "software-job":

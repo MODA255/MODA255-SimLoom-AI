@@ -371,7 +371,9 @@ class MCPServer:
                       "inputSchema": {"type": "object", "required": ["action"], "properties": {
                           "action": {"type": "string", "enum": ["list", "status"] + (["resume", "repair"] if self.profile == "full" else [])},
                           "workflow_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
-                          "project_dir": {"type": "string"}}}})
+                          "project_dir": {"type": "string"},
+                          "repair_budget": {"type": "integer", "minimum": 1, "maximum": 8,
+                                             "description": "repair 动作最多连续尝试的独立子工程链数量"}}}})
         job_actions = ["list", "receipts", "status", "logs", "events"]
         if self.profile == "full":
             job_actions += ["cancel", "release", "collect"]
@@ -794,7 +796,8 @@ class MCPServer:
             action = arguments.get("action", "list")
             if self.profile == "safe" and action not in {"list", "status"}:
                 raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "Safe profile permits workflow observation only")
-            return self.agent.workflow(action, arguments.get("workflow_id"), project_dir=arguments.get("project_dir", "."))
+            return self.agent.workflow(action, arguments.get("workflow_id"), project_dir=arguments.get("project_dir", "."),
+                                       repair_budget=arguments.get("repair_budget"))
         if name == "engineering_software_job":
             action = arguments.get("action", "status")
             if self.profile == "safe" and action not in {"list", "receipts", "status", "logs", "events"}:

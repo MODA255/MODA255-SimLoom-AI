@@ -732,12 +732,19 @@ class EngineeringAgent:
                                                     result.details.get("output_manifest", [])))
         return staged
 
-    def workflow(self, action: str = "list", workflow_id: str | None = None, *, project_dir: str = ".", on_event=None):
+    def workflow(self, action: str = "list", workflow_id: str | None = None, *, project_dir: str = ".",
+                 on_event=None, repair_budget: int | None = None):
         from .workflows import DurableWorkflow, WorkflowStore
         if action == "resume":
             return DurableWorkflow(self, project_dir, on_event).resume(workflow_id).to_dict()
         if action == "repair":
-            return DurableWorkflow(self, project_dir, on_event).repair(workflow_id)
+            workflow = DurableWorkflow(self, project_dir, on_event)
+            budget = repair_budget
+            if budget is None:
+                budget = (self.config.get('repair') or {}).get('auto_budget', 1)
+            if type(budget) is not int or budget < 1 or budget > 8:
+                raise WorkerError('REPAIR_BUDGET_INVALID', 'budget must be an integer from 1 to 8')
+            return workflow.repair(workflow_id) if budget == 1 else workflow.repair_loop(workflow_id, budget)
         store = WorkflowStore(project_dir)
         if action not in {"list", "status"}:
             raise WorkerError("UNKNOWN_WORKFLOW_OPERATION")

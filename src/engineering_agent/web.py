@@ -318,7 +318,8 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
                 task = queue.find_workflow(identifier) if action == "resume" and identifier else None
                 if task and Path(task["project_dir"]).resolve() == Path(root).resolve():
                     return self._send(200, runner.resume(task["id"]))
-                return self._send(200, agent.workflow(action, identifier, project_dir=root))
+                return self._send(200, agent.workflow(action, identifier, project_dir=root,
+                                                     repair_budget=body.get("repair_budget")))
             if path == "/api/software-jobs":
                 root, _metadata, _project_id = self._project_input(body)
                 options = {key: body[key] for key in ("limit", "cursor", "offset", "after", "stream", "confirmed_stopped", "reason") if key in body}
