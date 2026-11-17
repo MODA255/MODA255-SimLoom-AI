@@ -231,8 +231,11 @@ def test_environment_panel_has_per_vendor_worker_capability_cards():
     assert 'id="vendorCapabilities"' in INDEX_HTML
     assert "renderVendorCapabilities" in script
     assert "real_machine_verified" in script
+    assert "ready_actions" in script
+    assert "not_probed" in script
     assert "vendor-capability-grid" in stylesheet
     assert "action-chip" in stylesheet
+    assert "action-chip.blocked" in stylesheet
 
 
 def test_windows_installer_includes_worker_dependencies():

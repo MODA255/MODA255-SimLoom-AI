@@ -677,13 +677,20 @@ function renderVendorCapabilities(tools) {
     const readiness=vendorReadiness(item);
     const actions=Array.isArray(item.actions)?item.actions:[];
     const verified=new Set(Array.isArray(item.verified_actions)?item.verified_actions:[]);
+    const ready=new Set(Array.isArray(item.ready_actions)?item.ready_actions:[]);
+    const requirements=item.action_requirements&&typeof item.action_requirements==='object'?item.action_requirements:{};
     const actionHtml=actions.length
-      ? actions.map(action=>`<span class="action-chip ${verified.has(action)?'verified':''}">${escapeHTML(action)}${verified.has(action)?' · 已验收':''}</span>`).join('')
+      ? actions.map(action=>{
+          const status=requirements[action]?.status|| (ready.has(action)?'ready':'unavailable');
+          const className=verified.has(action)?'verified':status==='ready'?'ready':status==='not_probed'?'unknown':'blocked';
+          const suffix=verified.has(action)?' · 已验收':status==='ready'?' · 可执行':status==='not_probed'?' · 待探测':status==='missing'?' · 能力缺失':' · 未就绪';
+          return `<span class="action-chip ${className}" title="${escapeHTML(requirements[action]?.missing_worker_features?.join(', ')||requirements[action]?.missing_adapter_capabilities?.join(', ')||'')}">${escapeHTML(action)}${suffix}</span>`;
+        }).join('')
       : '<span class="muted">暂无可执行动作</span>';
     const mode=item.mode==='bridge'?'远程 Windows worker':'本机命令';
     const platform=item.worker_platform?` · ${escapeHTML(item.worker_platform)}`:'';
     const evidenceCount=verified.size;
-    return `<article class="vendor-capability-card"><div class="vendor-capability-head"><div class="vendor-title"><span class="vendor-icon">${escapeHTML(icons[name]||'◇')}</span><div><strong>${escapeHTML(vendorNames[name]||name)}</strong><p class="muted">${escapeHTML(mode)}${platform}</p></div></div><span class="pill ${readiness.className}">${escapeHTML(readiness.label)}</span></div><p class="vendor-hint">${escapeHTML(readiness.hint)}</p><div class="vendor-meta"><span>动作 ${actions.length}</span><span>已验收 ${evidenceCount}</span>${item.bridge_url?`<span class="vendor-url" title="${escapeHTML(item.bridge_url)}">${escapeHTML(item.bridge_url)}</span>`:''}</div><div class="vendor-actions">${actionHtml}</div></article>`;
+    return `<article class="vendor-capability-card"><div class="vendor-capability-head"><div class="vendor-title"><span class="vendor-icon">${escapeHTML(icons[name]||'◇')}</span><div><strong>${escapeHTML(vendorNames[name]||name)}</strong><p class="muted">${escapeHTML(mode)}${platform}</p></div></div><span class="pill ${readiness.className}">${escapeHTML(readiness.label)}</span></div><p class="vendor-hint">${escapeHTML(readiness.hint)}</p><div class="vendor-meta"><span>已发现 ${actions.length}</span><span>可执行 ${ready.size}</span><span>已验收 ${evidenceCount}</span>${item.bridge_url?`<span class="vendor-url" title="${escapeHTML(item.bridge_url)}">${escapeHTML(item.bridge_url)}</span>`:''}</div><div class="vendor-actions">${actionHtml}</div></article>`;
   }).join('');
 }
 document.addEventListener('click',event=>{
