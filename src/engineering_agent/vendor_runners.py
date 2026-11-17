@@ -18,10 +18,24 @@ def _write(path, data):
     path.write_text(json.dumps(data, ensure_ascii=False, allow_nan=False, indent=2), encoding='utf-8')
 
 
-def _software_context(job, *, version=None, native_objects=None, load_cases=None):
-    """Build explicit context exported by a runner without inferring vendor state."""
+def _software_context(job, *, version=None, native_objects=None, coordinate_systems=None,
+                      load_cases=None, model_references=None):
+    """Build bounded context from runner evidence and trusted action config.
+
+    ``vendor_options.engineering_context`` is configuration supplied by the
+    project owner. It can describe a known build, license state or model
+    object, but it never attests that the commercial application ran. Native
+    values collected by this runner remain authoritative when present.
+    """
     params = job.params
-    references = []
+    configured = job.options.get('engineering_context', {})
+    if not isinstance(configured, dict):
+        configured = {}
+    configured_software = configured.get('software')
+    if not isinstance(configured_software, dict):
+        configured_software = {}
+    references = [item for item in configured.get('model_references', []) if isinstance(item, dict)][:256] \
+        if isinstance(configured.get('model_references'), list) else []
     for key, role in (
             ('input_model', 'input_model'), ('db_file', 'input_model'),
             ('command_file', 'command_file'), ('scenario_file', 'scenario_file'),
@@ -31,14 +45,26 @@ def _software_context(job, *, version=None, native_objects=None, load_cases=None
         if isinstance(value, str) and value:
             references.append({'id': role, 'kind': 'file', 'path': value, 'role': role})
     software = {'name': str(job.request.get('tool', ''))}
-    if isinstance(version, str) and version.strip():
-        software['version'] = version.strip()[:256]
+    selected_version = version if isinstance(version, str) and version.strip() else configured_software.get('version')
+    if isinstance(selected_version, str) and selected_version.strip():
+        software['version'] = selected_version.strip()[:256]
+    for key in ('build', 'edition', 'license_status'):
+        value = configured_software.get(key)
+        if isinstance(value, str) and value.strip():
+            software[key] = value.strip()[:256]
+    def records(key, fallback):
+        configured_records = configured.get(key)
+        if isinstance(configured_records, list):
+            values = configured_records + list(fallback or [])
+        else:
+            values = list(fallback or [])
+        return [item for item in values if isinstance(item, dict)][:256]
     return {
         'source': 'explicit_vendor_runner_export',
         'software': software,
-        'native_objects': list(native_objects or []),
-        'coordinate_systems': [],
-        'load_cases': list(load_cases or []),
+        'native_objects': records('native_objects', native_objects),
+        'coordinate_systems': records('coordinate_systems', coordinate_systems),
+        'load_cases': records('load_cases', load_cases),
         'model_references': references,
     }
 

@@ -16,7 +16,7 @@ from engineering_agent.worker_protocol import WorkerError
 ROOT = Path(__file__).resolve().parents[1] / 'examples' / 'vendor_runners'
 
 
-def setup_export(tmp_path, tool='adams', contents=None):
+def setup_export(tmp_path, tool='adams', contents=None, engineering_context=None):
     kind = 'adams_export' if tool == 'adams' else 'vi_grade_export'
     action = 'build_and_run_multibody' if tool == 'adams' else 'run_vehicle_dynamics'
     filename = 'adams_command_runner.py' if tool == 'adams' else 'vi_grade_scenario_runner.py'
@@ -29,6 +29,8 @@ def setup_export(tmp_path, tool='adams', contents=None):
     binding = {'script': 'scripts/runner.py', 'command': [sys.executable, '{script}', '{request_file}'],
                'inputs': ['scripts/vendor.py'], 'validation': {'kind': kind},
                'vendor_options': {'command': [sys.executable, 'scripts/vendor.py', '{result_output}' if tool == 'adams' else '{metrics_output}']}}
+    if engineering_context is not None:
+        binding['vendor_options']['engineering_context'] = engineering_context
     params = {'command_file' if tool == 'adams' else 'scenario_file': 'scenario.txt',
               'result_output' if tool == 'adams' else 'metrics_output': 'artifacts/result.json',
               'report_output': 'artifacts/report.json', 'required_metrics': ['peak'],
@@ -79,6 +81,27 @@ def test_model_parameters_cannot_replace_trusted_executable(tmp_path):
     result = adapter.execute(step, AdapterContext(project, False, workspace_dir=tmp_path / 'stage'))
     assert result.status == 'failed'
     assert 'COMMAND_MUST_BE_CONFIGURED' in result.details['stderr']
+
+
+def test_export_preserves_explicit_software_context_from_action_config(tmp_path):
+    configured = {
+        'software': {'build': '2025.1.3', 'edition': 'Enterprise', 'license_status': 'available'},
+        'coordinate_systems': [{'id': 'body', 'kind': 'cartesian', 'unit': 'mm'}],
+        'load_cases': [{'id': 'maneuver-1', 'kind': 'handling'}],
+        'native_objects': [{'id': 'vehicle', 'kind': 'model'}],
+        'model_references': [{'id': 'vehicle-ref', 'kind': 'native', 'role': 'vehicle_model'}],
+    }
+    project, adapter, step, _ = setup_export(tmp_path, engineering_context=configured)
+    result = adapter.execute(step, AdapterContext(project, False, workspace_dir=tmp_path / 'staging'))
+    assert result.status == 'completed', result.to_dict()
+    context = result.details['engineering_result']['engineering_context']
+    assert context['software'] == {
+        'name': 'adams', 'build': '2025.1.3', 'edition': 'Enterprise', 'license_status': 'available'}
+    assert context['coordinate_systems'] == [{'id': 'body', 'kind': 'cartesian', 'unit': 'mm'}]
+    assert context['load_cases'] == [{'id': 'maneuver-1', 'kind': 'handling'}]
+    assert any(item['id'] == 'vehicle' for item in context['native_objects'])
+    assert any(item['id'] == 'vehicle-ref' for item in context['model_references'])
+    assert context['source'] == 'explicit_vendor_runner_export'
 
 
 @pytest.mark.parametrize('data', [b'time,acc\n0,3\n1,NaN\n', b'time,acc\n0,3\n1,\n', b'time,acc,acc\n0,3,4\n', b'time,acc\n0,3\n1\n'])

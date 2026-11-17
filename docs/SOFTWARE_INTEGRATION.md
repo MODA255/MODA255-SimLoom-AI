@@ -231,6 +231,36 @@ Adams/VI-grade 请求里的旧 `vendor_command` 会明确报错，需迁移到�
 solver、工况、车辆模型等语义必须由命令生成的 JSON/CSV 报告扩展契约后再加入；当前 runner
 只负责执行受配置保护的导出命令、重读指标并验证单位。
 
+动作绑定可以通过 `vendor_options.engineering_context` 提供工作站已知的补充上下文。它适合记录
+部署清单中的 build、edition、许可证状态，以及由项目模板明确标识的坐标系、工况、原生对象和模型
+引用：
+
+```json
+{
+  "vendor_options": {
+    "command": ["C:/SimLoom/python/python.exe", "{script}", "{request_file}"],
+    "engineering_context": {
+      "software": {
+        "build": "2025.1.3",
+        "edition": "Enterprise",
+        "license_status": "available"
+      },
+      "coordinate_systems": [{"id": "body", "kind": "cartesian", "unit": "mm"}],
+      "load_cases": [{"id": "maneuver-1", "kind": "handling"}],
+      "native_objects": [{"id": "vehicle", "kind": "model"}],
+      "model_references": [{"id": "vehicle-ref", "kind": "native", "role": "vehicle_model"}]
+    }
+  }
+}
+```
+
+runner 会把配置内容与本轮从 CATIA/Mechanical API 或导出结果读到的字段合并；同名的软件版本以
+runner 实际读取值为准，软件名称始终由动作工具决定。上下文记录只接受 JSON 对象并限制条目数，
+之后还会由控制端按 `engineering-context/v1` 做长度和字段白名单归一化。配置中的
+`license_status=available` 只是部署声明，不能让 `real_machine_verified` 变为 true，也不能证明
+求解已经启动。真实许可证、版本和原生对象仍必须由 Windows machine evidence 记录和独立 vendor
+evidence 支持。
+
 结果验收仍分成两层：`engineering_context` 描述“本次动作明确接触了什么”，
 `vendor_validation` 描述输出文件和工程指标是否满足契约。上下文存在不能证明许可证、网格质量、
 求解收敛或几何拓扑正确；`real_machine_verified` 仍只能来自 Windows 工作站上登记的有效
