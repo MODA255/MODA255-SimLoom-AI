@@ -11,6 +11,41 @@ from .cad_units import normalize_cad_arguments, quantity_schema
 from .models import PlanStep, ToolName
 
 
+ENGINEERING_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Unified simloom-ai/engineering-result/v1 envelope",
+    "properties": {
+        "schema_version": {"type": "string"},
+        "tool": {"type": "string"},
+        "action": {"type": "string"},
+        "status": {"type": "string"},
+        "verification": {"type": "string"},
+        "engineering_acceptance": {"type": "string", "enum": ["not_requested", "passed", "failed", "unknown"]},
+        "real_machine_verified": {"type": "boolean"},
+        "metrics": {"type": "object"},
+        "metric_verdicts": {"type": "array", "items": {"type": "object"}},
+        "observations": {"type": "object"},
+        "contract": {
+            "type": "object",
+            "properties": {
+                "schema_version": {"type": ["string", "null"]},
+                "kind": {"type": ["string", "null"]},
+                "report": {"type": ["string", "null"]},
+                "inputs": {"type": "array", "items": {"type": "string"}},
+                "outputs": {"type": "array", "items": {"type": "string"}},
+                "required_checks": {"type": "array", "items": {"type": "string"}},
+                "required_metrics": {"type": "array", "items": {"type": "string"}},
+                "metric_units": {"type": "object", "additionalProperties": {"type": "string"}},
+                "metric_rules": {"type": "array", "items": {"type": "object"}},
+            },
+        },
+        "artifacts": {"type": "object"},
+        "evidence": {"type": "object"},
+        "error": {"type": "object"},
+    },
+}
+
+
 @dataclass(frozen=True)
 class OperationSpec:
     name: str
@@ -77,7 +112,7 @@ class OperationSpec:
                        "status": {"type": "string", "enum": ["planned", "completed", "failed", "unavailable"]},
                        "message": {"type": "string"}, "outputs": {"type": "array", "items": {"type": "string"}},
                        "details": {"type": "object", "description": "File receipts, execution logs and transaction status; not proof of engineering validity", "properties": {
-                           "engineering_result": {"type": "object", "description": "Unified simloom-ai/engineering-result/v1 envelope with metrics, artifacts, verification and engineering acceptance"}
+                           "engineering_result": ENGINEERING_RESULT_SCHEMA
                        }}}
         return {
             "name": self.name,

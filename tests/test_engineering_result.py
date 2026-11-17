@@ -51,6 +51,9 @@ def test_vendor_operation_schema_advertises_normalized_result():
     schema = OperationRegistry().get("ansys.solve_configured_model").schema()
     details = schema["output_schema"]["details"]
     assert "engineering_result" in details["properties"]
+    envelope = details["properties"]["engineering_result"]
+    assert envelope["properties"]["contract"]["properties"]["metric_rules"]["type"] == "array"
+    assert envelope["properties"]["real_machine_verified"]["type"] == "boolean"
 
 
 def test_normalized_result_exposes_the_input_output_and_metric_contract():
