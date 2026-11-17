@@ -584,6 +584,8 @@ MCP 层支持资源发现、资源模板、分页、订阅、schema version、�
 `engineering://asset` 的结构化 JSON + SVG image resource。`engineering_measure_image` 可对
 源像素区域做受限颜色测量并返回 overlay。写操作完成后会发送标准
 `notifications/resources/updated`，便于工作台刷新订阅资源。
+只读 `engineering_capabilities` 与 Web `/api/capabilities` 返回同一份离线、排练、连接、执行和
+实机验收能力矩阵；Agent 不需要从多个诊断调用自行推断当前状态。
 
 对于会一次性加载全部工具 schema 的 MCP 客户端，可以使用 `--toolset compact`。该模式先
 通过 `engineering_operations` 获取轻量 operation 索引，再用

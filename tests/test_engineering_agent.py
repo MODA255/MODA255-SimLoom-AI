@@ -231,15 +231,28 @@ def test_mcp_negotiates_requested_protocol_and_publishes_standard_output_schema(
     listed = server.handle({"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {"limit": 500}})
     plan = next(item for item in listed["result"]["tools"] if item["name"] == "engineering_plan")
     preflight = next(item for item in listed["result"]["tools"] if item["name"] == "engineering_preflight")
+    capabilities = next(item for item in listed["result"]["tools"] if item["name"] == "engineering_capabilities")
     operation = next(item for item in listed["result"]["tools"] if item["name"] == "operation.cad.entity_move")
     assert plan["outputSchema"]["type"] == "object"
     assert preflight["outputSchema"]["properties"]["schema_version"]["const"] == "simloom-ai/software-preflight/v1"
     context_schema = preflight["outputSchema"]["properties"]["steps"]["items"]["properties"]["operation_contract"]["properties"]["engineering_context"]
     assert context_schema["type"] == ["object", "null"]
+    assert capabilities["outputSchema"]["properties"]["schema_version"]["const"] == "simloom-ai/capabilities/v1"
     assert "schema_version" in plan["inputSchema"]["properties"]
     assert operation["outputSchema"]["type"] == "object"
     assert "document" in operation["outputSchema"]["properties"]
     assert "operationSchemaVersion" in operation["inputSchema"]["properties"]
+
+
+def test_mcp_capabilities_matches_controller_readiness_matrix(tmp_path):
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="safe")
+    response = server.handle({"jsonrpc": "2.0", "id": 7, "method": "tools/call",
+                              "params": {"name": "engineering_capabilities", "arguments": {}}})
+    capabilities = response["result"]["structuredContent"]
+    assert capabilities["schema_version"] == "simloom-ai/capabilities/v1"
+    assert {item["id"] for item in capabilities["modes"]} >= {"offline", "rehearsal", "connected", "execute"}
+    assert set(capabilities["tools"]) == {"catia", "ansys", "adams", "vi-grade"}
+    assert capabilities["components"]["software_connection"]["real_machine_verified"] is False
 
 
 def test_mcp_stdio_notifications_ping_and_real_subprocess_round_trip(tmp_path):

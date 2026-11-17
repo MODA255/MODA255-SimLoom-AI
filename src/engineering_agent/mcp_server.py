@@ -353,6 +353,7 @@ class MCPServer:
             {"name": "engineering_generate", "description": "Generate vendor scripts and scenario files", "inputSchema": {"type": "object", "properties": {"project_dir": {"type": "string"}, "model_spec": {"type": "object"}}}},
             {"name": "engineering_offline_run", "description": "Run the deterministic CATIA-to-VI-grade fixture chain without commercial software", "inputSchema": {"type": "object", "properties": {"project_dir": {"type": "string"}, "model_spec": {"type": "object"}, "rules": {"type": "array"}}}},
             {"name": "engineering_doctor", "description": "Inspect configured vendor backends and COM", "inputSchema": {"type": "object"}},
+            {"name": "engineering_capabilities", "description": "Return the offline, rehearsal, software connection, execution and real-machine readiness matrix", "inputSchema": {"type": "object"}},
             {"name": "engineering_operations", "description": "List typed operations and schemas", "inputSchema": {"type": "object"}},
             {"name": "engineering_ingest", "description": "Read STEP/CSV/JSON into the canonical object model", "inputSchema": {"type": "object", "required": ["path"], "properties": {"path": {"type": "string"}, "kind": {"type": "string"}}}},
             {"name": "engineering_project", "description": "Inspect all supported artifacts in a project", "inputSchema": {"type": "object", "properties": {"project_dir": {"type": "string"}}}},
@@ -473,6 +474,11 @@ class MCPServer:
             "engineering_generate": {"type": "object"},
             "engineering_offline_run": {"type": "object"},
             "engineering_doctor": {"type": "object"},
+            "engineering_capabilities": {"type": "object", "properties": {
+                "schema_version": {"type": "string", "const": "simloom-ai/capabilities/v1"},
+                "modes": {"type": "array", "items": {"type": "object"}},
+                "components": {"type": "object"}, "tools": {"type": "object"},
+            }},
             "engineering_operations": {"type": "object", "properties": {"operations": {"type": "array"}}},
             "engineering_ingest": {"type": "object"},
             "engineering_project": {"type": "object"},
@@ -844,6 +850,8 @@ class MCPServer:
             return self.agent.run_offline_vehicle_chain(arguments.get("project_dir", "."), arguments.get("model_spec") or {}, arguments.get("rules"))
         if name == "engineering_doctor":
             return {"tools": self.agent.doctor()}
+        if name == "engineering_capabilities":
+            return self.agent.capabilities()
         if name == "engineering_operations":
             visible = self._visible_operation_names()
             return {"operations": [item for item in self.operations.list()
