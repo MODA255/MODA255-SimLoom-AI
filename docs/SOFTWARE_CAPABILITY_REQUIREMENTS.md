@@ -28,7 +28,7 @@ SimLoom 的一个 CATIA、Ansys、Adams 或 VI-grade 动作可以声明它需要
 
 ## 生命周期
 
-- **preflight**：检查适配器能力。远程 worker 未请求探测时，worker 特性标为 `not_probed` 并设置 `probe_required=true`，这样离线检查不会偷偷联网。传入 `probe=true` 后会调用 worker 健康检查，并把缺失特性列入 `issues`。
+- **preflight**：检查适配器能力。远程 worker 未请求探测时，worker 特性标为 `not_probed`、设置 `probe_required=true`，并返回 `WORKER_CAPABILITY_PROBE_REQUIRED`；这样离线检查不会偷偷联网，也不会把未验证的动作标记为 `ready`。传入 `probe=true` 后会调用 worker 健康检查，并把缺失特性列入 `issues`。
 - **execute**：本地动作在启动 runner 前检查适配器能力；远程动作还会探测 worker 并拒绝缺失的 worker 特性。失败不会启动软件进程。
 - **contract**：`operation_contract.requirements` 保存规范化后的两类要求，并参与 `definition_digest`。worker 收到请求时会重新验证它与 payload 的要求一致，防止请求在传输前被篡改。
 - **result**：统一 `engineering_result.operation_contract` 保留要求；它仍然只表示声明和协议检查，不改变 `real_machine_verified` 或工程验收结论。

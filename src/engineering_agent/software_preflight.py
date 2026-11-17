@@ -140,6 +140,8 @@ def _step_preflight(adapter: Any, step: PlanStep, root: Path, *, probe: bool = F
                 result["issues"].append({"code": "BRIDGE_UNREACHABLE", "message": str(exc)})
         elif worker_features:
             result["requirements"].update(status="not_probed", probe_required=True)
+            result["issues"].append({"code": "WORKER_CAPABILITY_PROBE_REQUIRED",
+                                     "message": "执行前必须探测远程 worker 能力"})
     else:
         command = binding.get("command")
         result["command"] = command

@@ -98,6 +98,21 @@ def test_doctor_marks_remote_worker_requirement_as_not_probed_without_probe(tmp_
         server.server_close()
 
 
+def test_preflight_does_not_call_an_unprobed_worker_action_ready(tmp_path):
+    root = _project(tmp_path)
+    config = _config({"worker_features": ["durable_jobs"]})
+    config["tools"]["catia"]["bridge_url"] = "http://worker.invalid"
+    adapter = CatiaAdapter(config["tools"]["catia"])
+    result = preflight_plan({ToolName.CATIA: adapter},
+                            ExecutionPlan(AgentRequest("test", str(root), {}), [_step()], []), root,
+                            probe=False)
+    step = result["steps"][0]
+    assert result["ready"] is False
+    assert step["ready"] is False
+    assert step["requirements"]["status"] == "not_probed"
+    assert step["issues"][0]["code"] == "WORKER_CAPABILITY_PROBE_REQUIRED"
+
+
 def test_remote_worker_requirement_is_checked_before_job_launch(tmp_path):
     root = _project(tmp_path)
     server = create_bridge_server({"root_dir": str(tmp_path / "worker"), "port": 0,
