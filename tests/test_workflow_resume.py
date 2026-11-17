@@ -106,6 +106,9 @@ def test_resume_entire_plan_preserves_ids_and_uses_original_upstream_outputs(wor
     report=start(workflow_setup)
     initial=WorkflowStore(project).read(report.workflow_id)
     assert initial['steps']['geometry']['status']=='completed'
+    assert initial['steps']['geometry']['lifecycle']['current_stage']=='completed'
+    assert initial['steps']['solve']['lifecycle']['current_stage']=='recover'
+    assert initial['steps']['solve']['lifecycle']['recoverable'] is True
     assert not (project/'outputs/model.step').exists()
     assert not (project/'outputs/results.json').exists()
     resumed=finish(workflow_setup,tmp_path,report.workflow_id)

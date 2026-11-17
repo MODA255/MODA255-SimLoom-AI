@@ -19,6 +19,7 @@ from .validation import validate_plan, validate_report
 from .worker_jobs import job_id, request_digest
 from .worker_protocol import WorkerError, safe_file
 from .repair import RepairCandidate, build_repair_plan, propose_repairs
+from .engineering_lifecycle import empty_lifecycle
 
 SCHEMA = 'simloom-ai/workflow/v1'
 
@@ -114,7 +115,9 @@ class WorkflowStore:
             'repair_available': state.get('status') == 'completed' and repair_available,
             'steps': [{'id': s['id'], 'tool': s['tool'], 'action': s['action'],
                        'objective': s['objective'], 'status': state['steps'][s['id']]['status'],
-                       'request_id': state['steps'][s['id']].get('request_id')}
+                       'request_id': state['steps'][s['id']].get('request_id'),
+                       'lifecycle': copy.deepcopy(state['steps'][s['id']].get('lifecycle')),
+                       'failure': copy.deepcopy(state['steps'][s['id']].get('failure'))}
                       for s in state['plan']['steps']]}
 
 
@@ -165,7 +168,8 @@ class DurableWorkflow:
                 if name in produced:
                     raise WorkerError('WORKFLOW_OUTPUT_COLLISION', name)
                 produced[name] = step.id
-            state['steps'][step.id] = {'status': 'not_started', 'binding_digest': self.binding_fingerprint(step)}
+            state['steps'][step.id] = {'status': 'not_started', 'binding_digest': self.binding_fingerprint(step),
+                                       'lifecycle': empty_lifecycle()}
         for path in path_cases:
             if any(str(parent) in path_cases for parent in PurePosixPath(path).parents if str(parent) != "."):
                 raise WorkerError("WORKFLOW_PATH_COLLISION", path)
@@ -324,6 +328,15 @@ class DurableWorkflow:
                     result = self.execute_step(state, step, context)
                     report.results.append(result)
                     stage.update(status=result.status, message=result.message)
+                    engineering_result = (result.details or {}).get('engineering_result')
+                    if isinstance(engineering_result, dict):
+                        entry = state['steps'][step.id]
+                        if isinstance(engineering_result.get('lifecycle'), dict):
+                            entry['lifecycle'] = copy.deepcopy(engineering_result['lifecycle'])
+                        if isinstance(engineering_result.get('failure'), dict):
+                            entry['failure'] = copy.deepcopy(engineering_result['failure'])
+                        else:
+                            entry.pop('failure', None)
                     if result.status != 'completed':
                         pending = result.details.get('remote_job', {}).get('requires_reconnect')
                         state['status'] = report.status = 'waiting' if pending else 'failed'
