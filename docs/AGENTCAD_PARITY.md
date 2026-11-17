@@ -117,6 +117,10 @@ MCP 复用同一个矩阵，避免 Agent 从不同入口拼接 `doctor()` 字段
 2026-11-17 后续：`software-operation-contract/v1` 增加可选 `recovery.policy`，统一记录
 超时、断线、输出冲突、重试预算、停止确认和可重试错误码。它约束 Agent 的恢复边界，
 不会把不确定的软件状态自动判定为可重跑；真实软件会话仍需 Windows 实机验证。
+
+同日新增 Windows worker `simloom-ai/worker-diagnostics/v1`，提供命令、根目录、认证、
+COM 声明和 evidence 的只读诊断，并随 `/capabilities` 返回；它改善部署排障，不等于四款
+软件的真实建模、求解或许可证验收。
 5. **产品化和可重复部署还有差距。** 本地 Web、CLI、MCP 和测试已经可用，但干净 Windows 安装、worker 配置向导、版本升级、许可证诊断、真实软件路径发现和正式发布包还没有完成一轮端到端验收。
 6. **对照项目的细节体验仍有差距。** SimLoom 的 2D CAD 和 Viewer 已经很丰富，并且额外覆盖了 B-Rep、结果查看和四软件流程；但 AgentCAD 的优势在于围绕单一图纸 runtime 形成了很紧凑的 agent contract、独立验证和可复现工作流。SimLoom 需要继续减少跨模块的特殊分支，让 Agent 面对 CAD、仿真结果和厂商任务时都得到一致的调用和失败反馈。
 

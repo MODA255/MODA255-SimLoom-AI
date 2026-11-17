@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import platform
 import shutil
 import socketserver
@@ -15,6 +16,9 @@ from .artifact_transfer import ArtifactTransferStore
 from .machine_evidence import MachineEvidenceStore, SCHEMA as EVIDENCE_SCHEMA
 from .windows_control import WindowsAutomation
 from .worker_protocol import SCHEMA, MAX_HTTP_BYTES, WorkerError, failure
+
+
+DIAGNOSTICS_SCHEMA = "simloom-ai/worker-diagnostics/v1"
 
 
 class _LocalThreadingHTTPServer(ThreadingHTTPServer):
@@ -82,6 +86,7 @@ class WindowsBridge:
         it never marks a licensed vendor operation as real-machine verified.
         """
         health = self.health()
+        diagnostics = self.diagnostics()
         verified = self.evidence.verified_actions()
         tools: dict[str, dict[str, Any]] = {}
         for tool in ("catia", "ansys", "adams", "vi-grade"):
@@ -101,7 +106,86 @@ class WindowsBridge:
                 "platform": health["platform"], "tools": tools,
                 "features": health["features"], "vendor_validation": "not_run",
                 "evidence_schema": EVIDENCE_SCHEMA,
+                "diagnostics": diagnostics,
                 "real_machine_verified": bool(verified)}
+
+    def diagnostics(self) -> dict[str, Any]:
+        """Return read-only worker configuration and evidence diagnostics.
+
+        The report deliberately separates configuration readiness from vendor
+        acceptance. A resolved command or configured COM ProgID is useful
+        evidence for setup, but it never becomes ``real_machine_verified``.
+        """
+        health = self.health()
+        records = self.evidence.list(limit=500)["records"]
+        command_tools: dict[str, dict[str, Any]] = {}
+        for key, check in health["command_checks"].items():
+            if "." in key:
+                tool, action = key.split(".", 1)
+            else:
+                tool, action = "unknown", key
+            item = command_tools.setdefault(tool, {"actions": [], "ready_actions": [], "missing_actions": []})
+            action_record = {
+                "name": action,
+                "status": "ready" if check.get("valid_argv") and check.get("executable_found") else "missing",
+                "valid_argv": bool(check.get("valid_argv")),
+                "executable_found": bool(check.get("executable_found")),
+                "resolved": check.get("resolved"),
+            }
+            item["actions"].append(action_record)
+            (item["ready_actions"] if action_record["status"] == "ready" else item["missing_actions"]).append(action)
+        for item in command_tools.values():
+            item["actions"].sort(key=lambda record: record["name"])
+            item["ready_actions"].sort()
+            item["missing_actions"].sort()
+        evidence_by_tool: dict[str, dict[str, int]] = {}
+        license_states: set[str] = set()
+        valid_count = 0
+        for record in records:
+            tool = str(record.get("tool", "unknown"))
+            summary = evidence_by_tool.setdefault(tool, {"records": 0, "valid": 0, "invalid": 0})
+            summary["records"] += 1
+            if record.get("valid") is True:
+                summary["valid"] += 1
+                valid_count += 1
+            else:
+                summary["invalid"] += 1
+            status = record.get("license_status")
+            if isinstance(status, str) and status:
+                license_states.add(status)
+        root_exists = self.root.is_dir()
+        root_writable = root_exists and bool(os.access(self.root, os.W_OK))
+        warnings = []
+        issues = []
+        if platform.system().lower() != "windows":
+            issues.append("WINDOWS_HOST_REQUIRED")
+        if not root_exists:
+            issues.append("WORKER_ROOT_MISSING")
+        elif not root_writable:
+            issues.append("WORKER_ROOT_NOT_WRITABLE")
+        if not self.config.token:
+            warnings.append("BRIDGE_TOKEN_NOT_CONFIGURED")
+        command_count = sum(len(item["actions"]) for item in command_tools.values())
+        ready_count = sum(len(item["ready_actions"]) for item in command_tools.values())
+        return {
+            "schema_version": DIAGNOSTICS_SCHEMA,
+            "worker_protocol": SCHEMA,
+            "platform": health["platform"],
+            "root": {"path": str(self.root), "exists": root_exists, "writable": root_writable},
+            "authentication": {"token_configured": bool(self.config.token), "header": "X-Bridge-Token"},
+            "commands": command_tools,
+            "com": {"configured_prog_ids": sorted(self.config.com), "dispatch_probe": "not_run",
+                    "real_machine_verified": False},
+            "features": health["features"],
+            "evidence": {"schema_version": EVIDENCE_SCHEMA, "records": len(records),
+                         "valid": valid_count, "invalid": len(records) - valid_count,
+                         "by_tool": evidence_by_tool, "license_states": sorted(license_states)},
+            "readiness": {"worker_health": bool(health.get("ok")), "configured_actions": command_count,
+                          "ready_actions": ready_count, "execution_ready": ready_count > 0,
+                          "real_machine_verified": valid_count > 0},
+            "issues": sorted(issues),
+            "warnings": sorted(warnings),
+        }
 
     def handle(self, payload: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(payload, dict):
@@ -113,6 +197,8 @@ class WindowsBridge:
             return self.health()
         if operation == "capabilities":
             return self.capabilities()
+        if operation == "diagnostics":
+            return self.diagnostics()
         if operation == "run":
             return self.run(payload)
         if operation.startswith("job."):
@@ -200,6 +286,8 @@ def create_bridge_server(config: BridgeConfig | dict[str, Any]) -> ThreadingHTTP
                 return self._send(200, bridge.health())
             if self.path == "/capabilities":
                 return self._send(200, bridge.capabilities())
+            if self.path == "/diagnostics":
+                return self._send(200, bridge.diagnostics())
             if self.path == "/evidence":
                 return self._send(200, bridge.evidence.list())
             return self._send(404, failure(WorkerError("NOT_FOUND")))

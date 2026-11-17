@@ -248,6 +248,24 @@ def test_windows_bridge_capabilities_are_discoverable_without_claiming_real_vend
     assert httpx.get(url + "/capabilities").status_code == 401
 
 
+def test_windows_worker_diagnostics_are_read_only_and_explicit(bridge):
+    url, _ = bridge
+    response = httpx.get(url + "/diagnostics", headers={"X-Bridge-Token": "contract-test-token"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["schema_version"] == "simloom-ai/worker-diagnostics/v1"
+    assert body["authentication"] == {"token_configured": True, "header": "X-Bridge-Token"}
+    assert body["commands"]["catia"]["ready_actions"] == ["create_or_update_model"]
+    assert body["readiness"]["real_machine_verified"] is False
+    assert "contract-test-token" not in json.dumps(body)
+    assert httpx.get(url + "/diagnostics").status_code == 401
+
+    adapter = CatiaAdapter(config(url, "contract-test-token")["tools"]["catia"])
+    doctor = adapter.doctor(probe=True)
+    assert doctor["worker_diagnostics_schema"] == "simloom-ai/worker-diagnostics/v1"
+    assert doctor["worker_diagnostics"]["ready_actions"] == ["create_or_update_model"]
+
+
 def test_remote_one_software_is_usable_from_non_windows_controller(project, bridge, monkeypatch):
     url, _ = bridge
     cfg = config(url, "contract-test-token")

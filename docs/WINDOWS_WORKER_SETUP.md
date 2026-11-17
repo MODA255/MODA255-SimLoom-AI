@@ -85,6 +85,10 @@ GET /health
 GET /capabilities
 ```
 
+只读配置诊断可以使用 `GET /diagnostics`。它检查 Windows 平台、worker 根目录、命令
+argv、认证配置、COM 声明和已有 machine evidence，但不会启动商业软件；字段和证据等级
+见 [WINDOWS_WORKER_DIAGNOSTICS.md](WINDOWS_WORKER_DIAGNOSTICS.md)。
+
 `/capabilities` 返回四款软件已配置的动作、命令检查和协议能力；`real_machine_verified` 在
 真实软件动作完成前保持 `false`。它不会因为路径存在、COM dispatch 成功或 fixture 运行成功
 而宣称软件已验收。

@@ -176,6 +176,10 @@ class CommandAdapter(ToolAdapter):
                 item["verified_actions"] = list(tool_capabilities.get("verified_actions", []))
                 item["real_machine_verified"] = bool(set(item["actions"]) & set(item["verified_actions"]))
                 item["evidence"] = list((tool_capabilities.get("evidence") or {}).values())
+                worker_diagnostics = (capabilities.get("diagnostics") or {}).get("commands", {}).get(self.name.value)
+                if worker_diagnostics is not None:
+                    item["worker_diagnostics"] = worker_diagnostics
+                item["worker_diagnostics_schema"] = (capabilities.get("diagnostics") or {}).get("schema_version")
             except Exception as exc:
                 item["evidence"].append(str(exc))
         elif not self.bridge_url:
