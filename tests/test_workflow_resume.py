@@ -16,6 +16,7 @@ from engineering_agent.software_jobs_client import ReceiptStore
 from engineering_agent.transactions import RunTransaction
 from engineering_agent.worker_jobs import JobManager, TERMINAL
 from engineering_agent.worker_protocol import WorkerError
+from engineering_agent.repair import compare_repair_results, decide_repair
 from engineering_agent.workflows import WorkflowStore, DurableWorkflow
 
 SCRIPT = '''import json,sys,time
@@ -390,6 +391,45 @@ def test_failed_engineering_metric_creates_child_repair_workflow_without_overwri
     assert (project / next(path for path in child['published'] if path['path'].startswith('artifacts/repairs/'))['path']).is_file()
     parent_after=WorkflowStore(project).read(first.workflow_id)
     assert parent_after['repair_history'][0]['child_workflow_id']==child_id
+    assert repaired['repair']['comparison']['schema_version']=='simloom-ai/repair-comparison/v1'
+    assert repaired['repair']['decision']['next_action']=='manual_review'
+
+
+def test_repair_comparison_marks_improvement_and_allows_next_declared_candidate():
+    parent={
+        'workflow_id':'parent', 'status':'completed',
+        'report':{'results':[{'step_id':'solve','status':'completed','message':'failed','details':{
+            'engineering_result':{'engineering_acceptance':'failed','metric_verdicts':[
+                {'name':'stress','value':120,'operator':'<=','target':80,'unit':'MPa','passed':False}]}}}]}}
+    child={
+        'workflow_id':'child', 'status':'completed',
+        'report':{'results':[{'step_id':'solve','status':'completed','message':'improved','details':{
+            'engineering_result':{'engineering_acceptance':'failed','metric_verdicts':[
+                {'name':'stress','value':95,'operator':'<=','target':80,'unit':'MPa','passed':False}]}}}]}}
+    comparison=compare_repair_results(parent, child, {'strategy_id':'reduce_load'})
+    assert comparison['outcome']=='improved'
+    assert comparison['counts']['improved']==1
+    assert comparison['metrics'][0]['delta']==-25
+    assert comparison['should_continue'] is True
+    decision=decide_repair(comparison, 1)
+    assert decision=={'status':'continue_allowed','reason':'remaining_declared_candidates','next_action':'evaluate_next_candidate'}
+
+
+def test_repair_comparison_stops_on_regression_even_when_a_candidate_remains():
+    parent={
+        'workflow_id':'parent', 'status':'completed',
+        'report':{'results':[{'step_id':'solve','status':'completed','message':'passed','details':{
+            'vendor_validation':{'engineering_acceptance':'passed','metric_verdicts':[
+                {'name':'displacement','value':2,'operator':'<=','target':5,'unit':'mm','passed':True}]}}}]}}
+    child={
+        'workflow_id':'child', 'status':'completed',
+        'report':{'results':[{'step_id':'solve','status':'completed','message':'regressed','details':{
+            'vendor_validation':{'engineering_acceptance':'failed','metric_verdicts':[
+                {'name':'displacement','value':7,'operator':'<=','target':5,'unit':'mm','passed':False}]}}}]}}
+    comparison=compare_repair_results(parent, child)
+    assert comparison['outcome']=='regressed'
+    assert comparison['next_action']=='manual_review'
+    assert decide_repair(comparison, 3)['status']=='stopped'
 
 
 def test_unified_engineering_result_can_drive_repair_without_legacy_vendor_field(workflow_setup,tmp_path):

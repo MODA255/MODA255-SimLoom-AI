@@ -129,3 +129,26 @@ MCP full profile 使用 `engineering_workflow` 的 `action=repair`；safe profil
 系统不会通过放宽阈值来制造通过，也不会猜测新载荷、命令或边界条件。每次尝试创建新的子工程链，
 将所有产物写入 `artifacts/repairs/<父工程链>/<尝试编号>/`；父工程链、失败指标和原始产物继续保留。
 没有匹配的显式策略时返回 `needs_review`，不启动软件。
+
+## 父子结果比较与停止条件
+
+修复子工程链完成后，控制端会读取父工程链和子工程链各自保存的工程结果，生成
+`simloom-ai/repair-comparison/v1`。比较按 `step_id + metric.name` 对齐指标，保留父值、子值、
+单位、operator、target、通过状态和数值变化趋势。`<`/`<=` 指标默认数值越低越好，`>`/`>=`
+指标默认数值越高越好，`=`/`==` 指标比较到 target 的距离；单位不一致或缺少数值时标记为
+`comparable=false` 或 `trend=unknown`，不会猜测工程含义。
+
+比较结果的 `outcome` 和下一步含义如下：
+
+| outcome | 触发条件 | 默认处理 |
+| --- | --- | --- |
+| `accepted` | 子工程链的工程验收变为 `passed` | `stop_success`，停止继续修复 |
+| `improved` | 仍未通过，但至少一个指标改善且没有更多冲突证据 | 在预算内评估下一条已声明策略 |
+| `unchanged` | 仍未通过，指标可比较但没有改善 | 只有存在剩余策略时才允许继续 |
+| `regressed` | 子工程链恶化，或从通过变为失败 | `manual_review`，停止自动修复 |
+| `needs_review` | 没有独立指标、结果状态不明或证据无法比较 | `manual_review`，停止自动修复 |
+
+最终决策会以 `repair.decision` 返回，并写入父工作流的 `repair_decision` 和对应
+`repair_history[]` 项。系统不会因为子进程退出码为零、输出文件存在或指标数值变化就自动宣布
+工程通过；只有独立工程结果中的验收状态为 `passed` 才会触发成功停止。这样可以在继续尝试候选
+策略时保留完整父子证据，也能在回归或证据不足时及时交给工程师复核。

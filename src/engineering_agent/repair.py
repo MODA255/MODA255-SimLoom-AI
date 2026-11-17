@@ -16,6 +16,7 @@ from .models import ExecutionPlan, PlanStep
 from .worker_protocol import WorkerError
 
 SCHEMA = "simloom-ai/repair/v1"
+COMPARISON_SCHEMA = "simloom-ai/repair-comparison/v1"
 _RESERVED = {
     "input_model", "native_output", "step_output", "db_file", "result_output",
     "command_file", "scenario_file", "metrics_output", "report_output",
@@ -38,6 +39,200 @@ class RepairCandidate:
                 "step_id": self.step_id, "reason": self.reason,
                 "parameter_patch": copy.deepcopy(self.parameter_patch),
                 "evidence": copy.deepcopy(self.evidence), "max_attempts": self.max_attempts}
+
+
+def _envelope(evidence: dict[str, Any] | None) -> dict[str, Any]:
+    """Return the normalized evidence payload used for comparison.
+
+    Older adapters stored the result under ``vendor_validation`` while newer
+    workers expose ``engineering_result``.  Repair decisions must compare the
+    same fields regardless of which producer wrote the workflow state.
+    """
+    if not isinstance(evidence, dict):
+        return {}
+    values = [(key, evidence.get(key)) for key in ("engineering_result", "vendor_validation")]
+    # A legacy validator may be added beside an older ``engineering_result``
+    # envelope whose acceptance is still ``not_requested``.  Prefer the
+    # payload with actual independent metric evidence in that case.
+    for _key, value in values:
+        if isinstance(value, dict) and (
+                isinstance(value.get("metric_verdicts"), list) and value.get("metric_verdicts")
+                or value.get("engineering_acceptance") in {"passed", "failed"}):
+            return value
+    for _key, value in values:
+        if isinstance(value, dict):
+            return value
+    return {}
+
+
+def _metric_verdicts(evidence: dict[str, Any] | None) -> list[dict[str, Any]]:
+    payload = _envelope(evidence)
+    raw = payload.get("metric_verdicts")
+    if not isinstance(raw, list):
+        return []
+    return [item for item in raw[:256] if isinstance(item, dict) and isinstance(item.get("name"), str)]
+
+
+def _acceptance(evidence: dict[str, Any] | None) -> str:
+    value = _envelope(evidence).get("engineering_acceptance")
+    return value if value in {"passed", "failed", "unknown", "not_requested"} else "unknown"
+
+
+def _state_evidence(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Collect one bounded engineering evidence record for each plan step."""
+    result: dict[str, dict[str, Any]] = {}
+    report = state.get("report")
+    if not isinstance(report, dict):
+        return result
+    for item in report.get("results", []):
+        if not isinstance(item, dict) or not isinstance(item.get("step_id"), str):
+            continue
+        details = item.get("details") if isinstance(item.get("details"), dict) else {}
+        result[item["step_id"]] = {
+            "status": item.get("status"),
+            "engineering_result": details.get("engineering_result"),
+            "vendor_validation": details.get("vendor_validation"),
+            "verification": details.get("verification"),
+            "message": item.get("message"),
+        }
+    return result
+
+
+def _overall_acceptance(state: dict[str, Any]) -> str:
+    values = [_acceptance(item) for item in _state_evidence(state).values()]
+    if not values:
+        return "unknown"
+    if "failed" in values:
+        return "failed"
+    if all(value in {"passed", "not_requested"} for value in values) and "passed" in values:
+        return "passed"
+    if "unknown" in values:
+        return "unknown"
+    return "not_requested"
+
+
+def _metric_direction(operator: Any) -> str | None:
+    if operator in {"<", "<="}:
+        return "lower"
+    if operator in {">", ">="}:
+        return "higher"
+    if operator in {"=", "=="}:
+        return "closer"
+    return None
+
+
+def _metric_detail(parent: dict[str, Any] | None, child: dict[str, Any] | None) -> dict[str, Any]:
+    """Compare one metric without treating a missing value as a pass."""
+    parent = parent if isinstance(parent, dict) else {}
+    child = child if isinstance(child, dict) else {}
+    name = child.get("name") or parent.get("name")
+    operator = child.get("operator", parent.get("operator"))
+    target = child.get("target", parent.get("target"))
+    unit = child.get("unit", parent.get("unit", ""))
+    result: dict[str, Any] = {
+        "name": name,
+        "operator": operator,
+        "target": target,
+        "unit": unit,
+        "parent": {"value": parent.get("value"), "passed": parent.get("passed")},
+        "child": {"value": child.get("value"), "passed": child.get("passed")},
+        "trend": "unknown",
+        "comparable": True,
+    }
+    parent_unit, child_unit = parent.get("unit"), child.get("unit")
+    if parent_unit and child_unit and parent_unit != child_unit:
+        result["comparable"] = False
+        result["reason"] = "unit_mismatch"
+        return result
+    if parent.get("passed") is False and child.get("passed") is True:
+        result["trend"] = "improved"
+        return result
+    if parent.get("passed") is True and child.get("passed") is False:
+        result["trend"] = "regressed"
+        return result
+    try:
+        old_value, new_value = float(parent["value"]), float(child["value"])
+    except (KeyError, TypeError, ValueError):
+        if parent.get("passed") == child.get("passed") and parent.get("passed") in {True, False}:
+            result["trend"] = "unchanged"
+        return result
+    direction = _metric_direction(operator)
+    if direction == "lower":
+        result["delta"] = new_value - old_value
+        result["trend"] = "improved" if new_value < old_value else "regressed" if new_value > old_value else "unchanged"
+    elif direction == "higher":
+        result["delta"] = new_value - old_value
+        result["trend"] = "improved" if new_value > old_value else "regressed" if new_value < old_value else "unchanged"
+    elif direction == "closer":
+        try:
+            old_distance, new_distance = abs(old_value - float(target)), abs(new_value - float(target))
+        except (TypeError, ValueError):
+            return result
+        result["delta"] = new_value - old_value
+        result["distance_to_target"] = {"parent": old_distance, "child": new_distance}
+        result["trend"] = "improved" if new_distance < old_distance else "regressed" if new_distance > old_distance else "unchanged"
+    elif parent.get("passed") == child.get("passed") and parent.get("passed") in {True, False}:
+        result["trend"] = "unchanged"
+    return result
+
+
+def compare_repair_results(parent: dict[str, Any], child: dict[str, Any],
+                           candidate: RepairCandidate | dict[str, Any] | None = None) -> dict[str, Any]:
+    """Compare a repair child with its immutable parent using engineering evidence.
+
+    This comparison is intentionally descriptive.  It never changes thresholds,
+    treats process completion as engineering acceptance, or declares a result
+    valid when the child has no independent metric evidence.
+    """
+    parent_steps, child_steps = _state_evidence(parent), _state_evidence(child)
+    parent_metrics = {(step_id, item.get("name")): item
+                      for step_id, evidence in parent_steps.items() for item in _metric_verdicts(evidence)}
+    child_metrics = {(step_id, item.get("name")): item
+                     for step_id, evidence in child_steps.items() for item in _metric_verdicts(evidence)}
+    metrics: list[dict[str, Any]] = []
+    for key in sorted(set(parent_metrics) | set(child_metrics)):
+        item = _metric_detail(parent_metrics.get(key), child_metrics.get(key))
+        item["step_id"] = key[0]
+        metrics.append(item)
+    counts = {name: sum(item["trend"] == name for item in metrics)
+              for name in ("improved", "regressed", "unchanged", "unknown")}
+    parent_acceptance, child_acceptance = _overall_acceptance(parent), _overall_acceptance(child)
+    if child_acceptance == "passed" and parent_acceptance != "passed":
+        outcome, next_action = "accepted", "stop_success"
+    elif child_acceptance == "failed" and parent_acceptance == "passed":
+        outcome, next_action = "regressed", "manual_review"
+    elif child_acceptance == "failed" and counts["regressed"] > 0:
+        outcome, next_action = "regressed", "manual_review"
+    elif child_acceptance == "failed" and counts["improved"] > 0:
+        outcome, next_action = "improved", "evaluate_next_candidate"
+    elif child_acceptance == "failed" and metrics:
+        outcome, next_action = "unchanged", "evaluate_next_candidate"
+    else:
+        outcome, next_action = "needs_review", "manual_review"
+    return {
+        "schema_version": COMPARISON_SCHEMA,
+        "parent_workflow_id": parent.get("workflow_id"),
+        "child_workflow_id": child.get("workflow_id"),
+        "candidate": candidate.to_dict() if isinstance(candidate, RepairCandidate) else copy.deepcopy(candidate),
+        "parent": {"status": parent.get("status"), "engineering_acceptance": parent_acceptance},
+        "child": {"status": child.get("status"), "engineering_acceptance": child_acceptance},
+        "metrics": metrics[:256],
+        "counts": counts,
+        "outcome": outcome,
+        "next_action": next_action,
+        "should_continue": next_action == "evaluate_next_candidate",
+    }
+
+
+def decide_repair(comparison: dict[str, Any], remaining_candidates: int) -> dict[str, Any]:
+    """Apply explicit stop conditions after a child result is available."""
+    if comparison.get("outcome") == "accepted":
+        return {"status": "stopped", "reason": "engineering_acceptance_passed", "next_action": "stop_success"}
+    if comparison.get("outcome") == "regressed":
+        return {"status": "stopped", "reason": "child_regressed_against_parent", "next_action": "manual_review"}
+    if comparison.get("outcome") in {"improved", "unchanged"} and remaining_candidates > 0:
+        return {"status": "continue_allowed", "reason": "remaining_declared_candidates", "next_action": "evaluate_next_candidate"}
+    return {"status": "stopped", "reason": "no_safe_next_candidate_or_insufficient_evidence", "next_action": "manual_review"}
 
 
 def _error_code(entry: dict[str, Any], state: dict[str, Any]) -> str | None:
@@ -72,9 +267,7 @@ def _step_evidence(state: dict[str, Any], step_id: str) -> dict[str, Any]:
 
 
 def _failed_metrics(evidence: dict[str, Any]) -> list[dict[str, Any]]:
-    vendor = evidence.get("vendor_validation") or {}
-    return [item for item in vendor.get("metric_verdicts", [])
-            if isinstance(item, dict) and item.get("passed") is False]
+    return [item for item in _metric_verdicts(evidence) if item.get("passed") is False]
 
 
 def _matches(when: dict[str, Any], evidence: dict[str, Any], metric: dict[str, Any] | None) -> bool:

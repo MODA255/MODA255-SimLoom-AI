@@ -18,7 +18,8 @@ from .transactions import RunTransaction, _atomic_copy, _json_write, confined_pa
 from .validation import validate_plan, validate_report
 from .worker_jobs import job_id, request_digest
 from .worker_protocol import WorkerError, safe_file
-from .repair import RepairCandidate, build_repair_plan, propose_repairs
+from .repair import (RepairCandidate, build_repair_plan, compare_repair_results,
+                     decide_repair, propose_repairs)
 from .engineering_lifecycle import empty_lifecycle
 
 SCHEMA = 'simloom-ai/workflow/v1'
@@ -112,6 +113,7 @@ class WorkflowStore:
             'parent_workflow_id': state.get('parent_workflow_id'),
             'repair_attempt_id': state.get('repair_attempt_id'),
             'repair_history': copy.deepcopy(state.get('repair_history', [])),
+            'repair_decision': copy.deepcopy(state.get('repair_decision')),
             'repair_available': state.get('status') == 'completed' and repair_available,
             'steps': [{'id': s['id'], 'tool': s['tool'], 'action': s['action'],
                        'objective': s['objective'], 'status': state['steps'][s['id']]['status'],
@@ -248,6 +250,16 @@ class DurableWorkflow:
             history.append(item)
             self.store.save(parent)
 
+    def _remaining_repair_candidates(self, state, plan):
+        """Return declared candidates whose attempt budgets are not exhausted."""
+        attempts = {}
+        for item in state.get('repair_history', []):
+            strategy_id = (item.get('candidate') or {}).get('strategy_id')
+            if strategy_id:
+                attempts[strategy_id] = attempts.get(strategy_id, 0) + 1
+        return [candidate for candidate in propose_repairs(state, plan, self.agent)
+                if attempts.get(candidate.strategy_id, 0) < candidate.max_attempts]
+
     def repair(self, identifier):
         """Create one bounded child workflow from explicit binding strategies."""
         with RunTransaction(self.store.project) as txn:
@@ -282,9 +294,23 @@ class DurableWorkflow:
             child = self.create(repair_plan, txn, metadata)
             report = self.advance(child, txn)
             self._register_child(child, metadata)
+            child_state = self.store.read(child['workflow_id'])
+            parent_state = self.store.read(identifier)
+            comparison = compare_repair_results(parent_state, child_state, candidate)
+            remaining = self._remaining_repair_candidates(parent_state, plan)
+            decision = decide_repair(comparison, len(remaining))
+            history = parent_state.setdefault('repair_history', [])
+            history_item = next((item for item in reversed(history)
+                                 if item.get('child_workflow_id') == child['workflow_id']), None)
+            if history_item is not None:
+                history_item['comparison'] = copy.deepcopy(comparison)
+                history_item['decision'] = copy.deepcopy(decision)
+            parent_state['repair_decision'] = copy.deepcopy(decision)
+            self.store.save(parent_state)
             result = report.to_dict()
             result['repair'] = {'parent_workflow_id': identifier, 'child_workflow_id': child['workflow_id'],
-                                'candidate': candidate.to_dict()}
+                                'candidate': candidate.to_dict(), 'comparison': comparison,
+                                'decision': decision}
             return result
 
     @staticmethod
