@@ -97,7 +97,9 @@ def _step_preflight(adapter: Any, step: PlanStep, root: Path, *, probe: bool = F
             tool=step.tool.value, action=step.action, script=script, inputs=inputs,
             outputs=outputs, validation=validation,
             mode="bridge" if getattr(adapter, "bridge_url", None) else "local",
-            bridge=bool(getattr(adapter, "bridge_url", None)), workflow=workflow)
+            bridge=bool(getattr(adapter, "bridge_url", None)), workflow=workflow,
+            engineering_context=(binding.get("vendor_options") or {}).get("engineering_context")
+            if isinstance(binding.get("vendor_options"), dict) else None)
         result["outputs"] = outputs
     except Exception as exc:
         result["issues"].append({"code": getattr(exc, "code", "ACTION_CONTRACT_INVALID"), "message": str(exc)})

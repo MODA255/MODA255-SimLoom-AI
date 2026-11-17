@@ -46,11 +46,37 @@ def _validation_summary(validation: Any) -> dict[str, Any] | None:
     return result
 
 
+def _engineering_context_summary(value: Any) -> dict[str, Any] | None:
+    """Copy the declarative context that is part of an action binding.
+
+    This is a contract declaration, not a runtime attestation. Keep it small,
+    JSON-only and deterministic so it can participate in the definition digest.
+    Native values read during execution are reported separately in the result.
+    """
+    if not isinstance(value, dict):
+        return None
+    software = value.get("software") if isinstance(value.get("software"), dict) else {}
+    result: dict[str, Any] = {
+        "software": {key: software[key][:256] for key in ("name", "version", "build", "edition", "license_status")
+                     if isinstance(software.get(key), str) and software[key]},
+    }
+    for key in ("native_objects", "coordinate_systems", "load_cases", "model_references"):
+        records = value.get(key)
+        if isinstance(records, list):
+            # The runner applies the same 256-record limit. JSON round-trip
+            # rejects NaN and keeps the digest portable across platforms.
+            result[key] = json.loads(json.dumps(records[:256], ensure_ascii=False, allow_nan=False))
+    if not result["software"] and not any(result.get(key) for key in ("native_objects", "coordinate_systems", "load_cases", "model_references")):
+        return None
+    return result
+
+
 def build_operation_contract(*, tool: str, action: str, script: str | None,
                              inputs: list[str], outputs: list[str],
                              validation: dict[str, Any] | None,
                              mode: str = "local", bridge: bool = False,
-                             workflow: bool = False) -> dict[str, Any]:
+                             workflow: bool = False,
+                             engineering_context: dict[str, Any] | None = None) -> dict[str, Any]:
     """Build a stable operation definition and its digest."""
     definition: dict[str, Any] = {
         "schema_version": SCHEMA,
@@ -63,12 +89,16 @@ def build_operation_contract(*, tool: str, action: str, script: str | None,
         "lifecycle": {"stages": list(STAGES)},
         "recovery": {"request_id": True, "reconnect": bool(bridge), "workflow": bool(workflow)},
     }
+    context = _engineering_context_summary(engineering_context)
+    if context is not None:
+        definition["engineering_context"] = context
     encoded = json.dumps(definition, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
     return definition | {"definition_digest": hashlib.sha256(encoded.encode("utf-8")).hexdigest()}
 
 
 def validate_operation_contract(contract: Any, *, tool: str, action: str,
-                                 script: str, inputs: list[str], outputs: list[str]) -> dict[str, Any]:
+                                 script: str, inputs: list[str], outputs: list[str],
+                                 engineering_context: dict[str, Any] | None = None) -> dict[str, Any]:
     """Validate the immutable operation-definition portion of a request."""
     if not isinstance(contract, dict) or contract.get("schema_version") != SCHEMA:
         raise ValueError("SOFTWARE_OPERATION_CONTRACT_UNSUPPORTED")
@@ -82,18 +112,20 @@ def validate_operation_contract(contract: Any, *, tool: str, action: str,
                                         inputs=inputs, outputs=outputs,
                                         validation=None, mode=execution.get("mode", "local"),
                                         bridge=bool((contract.get("recovery") or {}).get("reconnect")),
-                                        workflow=bool((contract.get("recovery") or {}).get("workflow")))
+                                        workflow=bool((contract.get("recovery") or {}).get("workflow")),
+                                        engineering_context=engineering_context)
     # The validation section is intentionally omitted from the digest check;
     # worker evidence adds input hashes after preflight. Compare the stable
     # structural fields and the caller-provided digest separately.
-    for key in ("schema_version", "tool", "action", "execution", "artifacts", "lifecycle", "recovery"):
+    for key in ("schema_version", "tool", "action", "execution", "artifacts", "lifecycle", "recovery", "engineering_context"):
         if contract.get(key) != expected.get(key):
             raise ValueError("SOFTWARE_OPERATION_CONTRACT_MISMATCH")
     digest_source = build_operation_contract(
         tool=tool, action=action, script=script, inputs=inputs, outputs=outputs,
         validation=contract.get("validation"), mode=execution.get("mode", "local"),
         bridge=bool((contract.get("recovery") or {}).get("reconnect")),
-        workflow=bool((contract.get("recovery") or {}).get("workflow")))
+        workflow=bool((contract.get("recovery") or {}).get("workflow")),
+        engineering_context=engineering_context)
     if contract.get("definition_digest") != digest_source.get("definition_digest"):
         raise ValueError("SOFTWARE_OPERATION_CONTRACT_DIGEST_MISMATCH")
     return contract

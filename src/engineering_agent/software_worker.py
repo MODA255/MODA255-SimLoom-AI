@@ -118,7 +118,9 @@ def validate_job(payload, commands, transfer_store: ArtifactTransferStore | None
     if operation_contract is not None:
         try:
             validate_operation_contract(operation_contract, tool=tool, action=action,
-                                       script=script, inputs=inputs, outputs=outputs)
+                                       script=script, inputs=inputs, outputs=outputs,
+                                       engineering_context=(payload.get("vendor_options") or {}).get("engineering_context")
+                                       if isinstance(payload.get("vendor_options"), dict) else None)
         except ValueError as exc:
             raise WorkerError(str(exc)) from exc
     request_text = json.dumps({"schema_version": SCHEMA, "request_id": request_id,

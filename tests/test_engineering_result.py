@@ -60,6 +60,7 @@ def test_vendor_operation_schema_advertises_normalized_result():
         "validation", "recovery", "concurrency", "publication", "unknown"]
     assert envelope["properties"]["operation_contract"]["properties"]["definition_digest"]["type"] == "string"
     assert envelope["properties"]["engineering_context"]["properties"]["schema_version"]["const"] == "simloom-ai/engineering-context/v1"
+    assert envelope["properties"]["operation_contract"]["properties"]["engineering_context"]["type"] == ["object", "null"]
 
 
 def test_normalized_result_exposes_the_input_output_and_metric_contract():

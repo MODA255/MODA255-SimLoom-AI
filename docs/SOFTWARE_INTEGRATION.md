@@ -174,7 +174,8 @@ macOS/Linux 可以控制远程 Windows worker。pywin32 只用于 COM，不作�
 声称执行和验证已经完成。
 
 `operation_contract`（`simloom-ai/software-operation-contract/v1`）把 preflight 看到的动作脚本、
-项目相对输入/输出、验证声明、生命周期阶段和恢复能力固定下来，并计算 `definition_digest`。
+项目相对输入/输出、验证声明、生命周期阶段、恢复能力和动作绑定声明的
+`engineering_context` 固定下来，并计算 `definition_digest`。
 worker 请求会携带同一摘要，worker 在启动 runner 前校验工具、动作、脚本和文件列表；结果回收时
 再次暴露该摘要。这样 Agent 可以确认“预检查的动作”和“实际执行的动作”一致，而不把动态输入
 哈希混入定义摘要。

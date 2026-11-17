@@ -47,10 +47,12 @@ def project(tmp_path):
     return project
 
 
-def config(bridge_url=None, token=None):
+def config(bridge_url=None, token=None, engineering_context=None):
     tools = {}
     for tool, action in ACTIONS.items():
         tools[tool] = {"actions": {action: {"script": "scripts/runner.py", "command": COMMAND}}}
+        if engineering_context is not None:
+            tools[tool]["actions"][action]["vendor_options"] = {"engineering_context": engineering_context}
         if bridge_url:
             tools[tool].update(bridge_url=bridge_url, bridge_token=token)
     return {"generate_scripts": False, "tools": tools}
@@ -312,6 +314,38 @@ def test_worker_rejects_tampered_operation_contract_before_launch(project, tmp_p
     result = run_job(tmp_path / "worker", prepared, {"catia.create_or_update_model": COMMAND})
     assert result["status"] == "failed"
     assert result["error"]["code"] == "SOFTWARE_OPERATION_CONTRACT_DIGEST_MISMATCH"
+
+
+def test_preflight_and_worker_share_declared_engineering_context(project, tmp_path):
+    context = {
+        "software": {"build": "2025.1", "license_status": "available"},
+        "coordinate_systems": [{"id": "body", "kind": "cartesian"}],
+        "load_cases": [{"id": "gravity", "kind": "static"}],
+    }
+    configured = config(engineering_context=context)
+    agent = EngineeringAgent(configured)
+    preflight = agent.preflight("CATIA建模", project_dir=str(project))
+    declared = preflight["steps"][0]["operation_contract"]
+    assert declared["engineering_context"] == context
+    adapter = CatiaAdapter(configured["tools"]["catia"])
+    binding = configured["tools"]["catia"]["actions"][ACTIONS["catia"]]
+    prepared = adapter._prepare(step(load_n=1500), AdapterContext(project), binding)
+    assert prepared["operation_contract"]["definition_digest"] == declared["definition_digest"]
+    result = run_job(tmp_path / "worker-context", prepared, {"catia.create_or_update_model": COMMAND})
+    assert result["status"] == "completed"
+    assert result["engineering_result"]["operation_contract"]["engineering_context"] == context
+
+
+def test_worker_rejects_context_drift_before_launch(project, tmp_path):
+    context = {"software": {"build": "2025.1"}}
+    configured = config(engineering_context=context)
+    adapter = CatiaAdapter(configured["tools"]["catia"])
+    binding = configured["tools"]["catia"]["actions"][ACTIONS["catia"]]
+    prepared = adapter._prepare(step(load_n=1500), AdapterContext(project), binding)
+    prepared["vendor_options"]["engineering_context"]["software"]["build"] = "2026.1"
+    result = run_job(tmp_path / "worker-context-drift", prepared, {"catia.create_or_update_model": COMMAND})
+    assert result["status"] == "failed"
+    assert result["error"]["code"] in {"SOFTWARE_OPERATION_CONTRACT_MISMATCH", "SOFTWARE_OPERATION_CONTRACT_DIGEST_MISMATCH"}
 
 
 def test_failed_downstream_does_not_publish_first_step_or_replace_previous_outputs(project, monkeypatch):

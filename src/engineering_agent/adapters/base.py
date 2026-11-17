@@ -367,7 +367,9 @@ class CommandAdapter(ToolAdapter):
         operation_contract = build_operation_contract(
             tool=self.name.value, action=step.action, script=script, inputs=inputs,
             outputs=outputs, validation=validation,
-            mode="bridge" if self.bridge_url else "local", bridge=bool(self.bridge_url), workflow=bool(context.workflow))
+            mode="bridge" if self.bridge_url else "local", bridge=bool(self.bridge_url), workflow=bool(context.workflow),
+            engineering_context=(binding.get("vendor_options") or {}).get("engineering_context")
+            if isinstance(binding.get("vendor_options"), dict) else None)
         return {"schema_version": SCHEMA, "operation": "run", "request_id": uuid.uuid4().hex,
                 "tool": self.name.value, "action": step.action, "script": script,
                 "parameters": step.parameters, "inputs": inputs, "outputs": outputs, "files": files,
