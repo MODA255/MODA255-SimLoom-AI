@@ -36,6 +36,11 @@ SimLoom 原有的 CATIA / Ansys / Adams / VI-grade 工程链、B-Rep 和仿真�
 `cad.ray_create` 和 `cad.xline_create` 现已补齐：写入原生 DXF 构造线并对方向归一化、回读和
 零向量错误做验证，细节见 `CAD_CONSTRUCTION_LINES.md`。
 
+`project.asset_export` 现已补齐：把项目资产的 SVG 预览、修改记录和可选元数据打包成独立
+HTML，支持 CLI、Web 和 MCP 调用；生成和回读均经过事务、checkpoint、哈希和路径/外部资源
+检查，适合把 Agent 的中间结果交给工程师离线查看。它改善了分享和审计体验，但不等于
+AgentCAD 的完整实时 2D 交互，也不提供 CATIA、Ansys、Adams 或 VI-grade 的原生查看器。
+
 `cad.change_space` 现已补齐：可把选定实体事务化移动到模型空间或已有纸空间，并在原生 DXF
 回读时验证 layout 归属，细节见 `CAD_CHANGE_SPACE.md`。
 

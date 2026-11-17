@@ -354,6 +354,20 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
                 if not isinstance(operation, str) or not operation.startswith("cad."):
                     raise ValueError("CAD operation must use the cad.* namespace")
                 return self._send(200, agent.execute_operation(operation, arguments))
+            if path == "/api/asset-export":
+                root, _metadata, _project_id = self._project_input(body)
+                input_file, output_file = body.get("input_file"), body.get("output_file")
+                if not isinstance(input_file, str) or not input_file.strip():
+                    raise ValueError("input_file 是必填项")
+                if not isinstance(output_file, str) or not output_file.strip():
+                    raise ValueError("output_file 是必填项")
+                return self._send(200, agent.execute_operation("project.asset_export", {
+                    "project_dir": root,
+                    "input_file": input_file,
+                    "output_file": output_file,
+                    "title": body.get("title"),
+                    "include_metadata": body.get("include_metadata", True),
+                }))
             if path == "/api/version-visual-diff":
                 root, _metadata, _project_id = self._project_input(body)
                 left, right = body.get("left"), body.get("right")

@@ -223,6 +223,94 @@ def render_asset_svg(asset: dict[str, Any]) -> str:
     return "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 560 120'><text x='20' y='60' font-family='system-ui'>No visualizable geometry or metrics</text></svg>"
 
 
+def _export_summary(value: Any, *, key: str = "") -> Any:
+    """Keep a portable, bounded summary for offline viewer exports.
+
+    Asset objects may contain absolute source paths and large geometry arrays.
+    The downloadable HTML only needs enough metadata to explain what was
+    rendered; the SVG remains the visual source of truth.
+    """
+    if isinstance(value, dict):
+        result = {}
+        for name, item in value.items():
+            lowered = str(name).lower()
+            if lowered in {"path", "source_path", "absolute_path", "project_dir", "root"}:
+                if isinstance(item, str):
+                    result[name] = "<project-relative-path>"
+                continue
+            if name in {"entities", "vertices", "faces", "points", "indices", "geometry"}:
+                if name == "geometry" and isinstance(item, dict):
+                    result[name] = _export_summary({k: v for k, v in item.items()
+                                                    if k not in {"entities", "vertices", "faces", "points", "indices"}}, key=name)
+                elif isinstance(item, list):
+                    result[name] = {"count": len(item)}
+                else:
+                    result[name] = _export_summary(item, key=name)
+            else:
+                result[name] = _export_summary(item, key=name)
+        return result
+    if isinstance(value, list):
+        return [_export_summary(item, key=key) for item in value[:100]]
+    if isinstance(value, str) and ("/" in value or "\\" in value) and key.lower().endswith(("file", "filename")):
+        return "<project-relative-path>"
+    return value
+
+
+def render_asset_export_html(relative: str, view: dict[str, Any], *, title: str | None = None,
+                             include_metadata: bool = True) -> str:
+    """Create a self-contained, offline asset preview suitable for sharing."""
+    relative = Path(str(relative).replace("\\", "/")).as_posix()
+    display_title = title.strip() if isinstance(title, str) and title.strip() else Path(relative).name
+    asset = view.get("asset") or {}
+    summary = {
+        "schema_version": "simloom-ai/view-export/v1",
+        "path": relative,
+        "title": display_title,
+        "asset": _export_summary(asset),
+        "preview_note": view.get("preview_note", ""),
+        "cad_history": _export_summary(view.get("cad_history")) if view.get("cad_history") else None,
+    }
+    metadata = json.dumps(summary, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    # JSON inside a script element must remain JSON. HTML escaping would turn
+    # quotes into entities and make the embedded export metadata impossible to
+    # parse in a browser. Escape only characters that could terminate the
+    # element or introduce markup while preserving valid JSON text.
+    metadata_script = (metadata.replace("&", "\\u0026")
+                               .replace("<", "\\u003c")
+                               .replace(">", "\\u003e"))
+    metadata_block = f"<script type='application/json' id='simloom-export'>{metadata_script}</script>" if include_metadata else ""
+    svg = str(view.get("svg") or "")
+    if not svg.lstrip().startswith("<svg"):
+        svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 700 120'><text x='20' y='60'>预览不可用</text></svg>"
+    history = view.get("cad_history") or {}
+    records = history.get("records") if isinstance(history, dict) else []
+    if not isinstance(records, list):
+        records = []
+    timeline = "".join(
+        f"<li><strong>{escape(str(item.get('operation', item.get('tool', 'change'))))}</strong> "
+        f"<span>{escape(str(item.get('created_at', item.get('timestamp', ''))))}</span></li>"
+        for item in records[-100:] if isinstance(item, dict)
+    ) or "<li>没有可用的修改记录</li>"
+    return """<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>__TITLE__</title><style>
+:root{color-scheme:light dark}html,body{margin:0;background:#f5f7fb;color:#172033;font:14px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+main{max-width:1280px;margin:auto;padding:24px}header{display:flex;justify-content:space-between;gap:16px;align-items:baseline;border-bottom:1px solid #d9e0ec;padding-bottom:14px}
+h1{font-size:20px;margin:0}small{color:#64748b}.card{background:#fff;border:1px solid #d9e0ec;border-radius:12px;margin-top:18px;padding:16px;box-shadow:0 2px 10px #17203310}
+.canvas{overflow:hidden;border-radius:8px;background:#f8fafc;min-height:260px;cursor:grab}.canvas:active{cursor:grabbing}.canvas svg{display:block;width:100%;height:auto;min-height:260px;transform-origin:center;transition:transform .08s linear}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}.toolbar button{border:1px solid #c7d2e3;background:#fff;border-radius:7px;padding:6px 10px;cursor:pointer}.toolbar span{color:#64748b;padding:6px 0}
+details summary{cursor:pointer}pre{white-space:pre-wrap;overflow:auto;max-height:380px;background:#f8fafc;padding:12px;border-radius:8px}ul{margin:8px 0 0;padding-left:22px}li{margin:5px 0}body.dark{background:#101827;color:#e5edff}.dark .card{background:#162238;border-color:#30415e}.dark .canvas,.dark pre{background:#0d1524}
+</style></head><body><main><header><h1>__TITLE__</h1><small>SimLoom AI · 离线工程预览</small></header>
+<section class="card"><div class="toolbar"><button id="zoomOut">缩小</button><button id="zoomIn">放大</button><button id="reset">重置视图</button><button id="theme">切换主题</button><span id="status">滚轮缩放 · 拖动平移</span></div><div class="canvas" id="canvas">__SVG__</div></section>
+<section class="card"><h2>修改记录</h2><ul>__TIMELINE__</ul></section>__METADATA__
+</main><script>
+(()=>{const c=document.querySelector('#canvas'),s=c.querySelector('svg'),status=document.querySelector('#status');let z=1,x=0,y=0,p=null;
+function draw(){s.style.transform=`translate(${x}px,${y}px) scale(${z})`;status.textContent=`缩放 ${Math.round(z*100)}% · 滚轮缩放 · 拖动平移`}
+document.querySelector('#zoomIn').onclick=()=>{z=Math.min(8,z*1.2);draw()};document.querySelector('#zoomOut').onclick=()=>{z=Math.max(.2,z/1.2);draw()};document.querySelector('#reset').onclick=()=>{z=1;x=0;y=0;draw()};document.querySelector('#theme').onclick=()=>document.body.classList.toggle('dark');
+c.addEventListener('wheel',e=>{e.preventDefault();z=Math.max(.2,Math.min(8,z*Math.exp(-e.deltaY*.001)));draw()},{passive:false});c.addEventListener('pointerdown',e=>{p={x:e.clientX,y:e.clientY};c.setPointerCapture(e.pointerId)});c.addEventListener('pointermove',e=>{if(!p)return;x+=e.clientX-p.x;y+=e.clientY-p.y;p={x:e.clientX,y:e.clientY};draw()});['pointerup','pointercancel','lostpointercapture'].forEach(n=>c.addEventListener(n,()=>p=null));draw()})();
+</script></body></html>""".replace("__TITLE__", escape(display_title)).replace("__SVG__", svg).replace("__TIMELINE__", timeline).replace("__METADATA__", f"<section class='card'><h2>导出元数据</h2><details><summary>查看 JSON</summary><pre>{escape(metadata)}</pre></details>{metadata_block}</section>")
+
+
 def render_dxf_svg(geometry: dict[str, Any], width: int = 720, height: int = 460) -> str:
     """Render semantic DXF entities as a lightweight, dependency-free 2D view."""
     bbox = geometry.get("bbox") or {}

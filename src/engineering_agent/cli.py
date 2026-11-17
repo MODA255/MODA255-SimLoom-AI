@@ -162,6 +162,11 @@ def _parser() -> argparse.ArgumentParser:
     diff.add_argument("left")
     diff.add_argument("right")
     diff.add_argument("--root", default=".")
+    export_view = sub.add_parser("asset-export", help="导出独立离线 HTML 工程预览")
+    export_view.add_argument("input_file")
+    export_view.add_argument("output_file")
+    export_view.add_argument("--title")
+    export_view.add_argument("--no-metadata", action="store_true")
     watch_start = sub.add_parser("watch-start", help="记录外部工程文件的基线并开始可恢复监测")
     watch_start.add_argument("paths", nargs="+", help="项目内文件或目录")
     watch_start.add_argument("--root", default=".")
@@ -285,6 +290,16 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "diff":
         print(json.dumps(agent.diff_versions(args.root, args.left, args.right), ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "asset-export":
+        result = agent.execute_operation("project.asset_export", {
+            "project_dir": args.project_dir,
+            "input_file": args.input_file,
+            "output_file": args.output_file,
+            "title": args.title,
+            "include_metadata": not args.no_metadata,
+        })
+        print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     if args.command == "watch-start":
         print(json.dumps(agent.execute_operation("project.watch_start", {"project_dir": args.root, "paths": args.paths, "label": args.label}), ensure_ascii=False, indent=2))

@@ -118,7 +118,7 @@ PYTHONPATH=src python -m engineering_agent.cli \
 | 结果解析 | ✅ | JSON、CSV 和文本结果；支持指标路径和阈值判断 |
 | 事务与恢复 | ✅ | staging、锁、journal、checkpoint、commit、rollback、stale recovery |
 | 版本与 diff | ✅ | 不可变快照、字段级差异、资产路径匹配和时间线 |
-| Viewer | ✅ | DXF 选择、高亮、图层开关、直接编辑和跨会话撤销/重做；自包含 WebGL 网格/结果云图 viewer |
+| Viewer | ✅ | DXF 选择、高亮、图层开关、直接编辑和跨会话撤销/重做；自包含 WebGL 网格/结果云图 viewer；可导出不依赖服务的离线 HTML 预览 |
 | 可选 AutoCAD 后端 | ✅ 契约已实现 | `autocad.status`、`autocad.audit` 和事务化 `autocad.convert` 支持 Windows Core Console；没有 AutoCAD 时保持明确 unavailable，不伪造实机证据 |
 | MCP | ✅ 基础闭环 | tools、resources、prompts、分页、schema/error envelope；资产预览可返回结构化数据和 SVG image content；写操作后支持 resource update notification |
 | Web 控制台 | ✅ | 规划、任务队列、项目、artifact、资产预览和时间线 API |
@@ -478,6 +478,7 @@ Ansys → Adams → VI-grade 流程画布，右侧区域展示验证指标、任
 | `GET/POST` | `/api/projects` | 管理历史项目 |
 | `GET` | `/api/artifacts` | 列出工程产物 |
 | `GET` | `/api/asset-view` | 获取 SVG/WebGL 资产预览 |
+| `POST` | `/api/asset-export` | 将项目资产导出为自包含离线 HTML 预览 |
 | `GET` | `/api/cad/history-view` | 按 `root`、`path`、`revision_id`、`side=before/after` 只读查看已校验的 DXF 历史快照 |
 | `POST` | `/api/cad/operation` | 执行统一 `cad.*` 文档操作、原子 batch、自动修复和 Viewer 编辑 |
 | `GET` | `/api/timeline` | 获取版本时间线 |

@@ -38,6 +38,7 @@ from .file_watch import FileWatchStore
 from .dependencies import DependencyScanner
 from .autocad_backend import AutoCADError, backend_status, run_core_console
 from .dxf_validation import inspect_native
+from .viewer import asset_view, render_asset_export_html
 
 
 def _project_path(project_root: Path, value: str | Path, *, must_exist: bool = False,
@@ -468,6 +469,78 @@ class EngineeringAgent:
                     "visual_diff": visual_diff(left_geometry, right_geometry,
                                                 width=max(320, min(int(arguments.get("width", 900)), 2400)),
                                                 height=max(240, min(int(arguments.get("height", 560)), 1600)))}
+        if name == "project.asset_export":
+            project_root = Path(arguments.get("project_dir", ".")).resolve()
+            input_path = _project_path(project_root, arguments["input_file"], must_exist=True, require_file=True)
+            output_path = _project_path(project_root, arguments["output_file"])
+            if output_path.suffix.lower() not in {".html", ".htm"}:
+                raise ValueError("VIEW_EXPORT_OUTPUT_MUST_BE_HTML")
+            input_relative = input_path.relative_to(project_root).as_posix()
+            output_relative = output_path.relative_to(project_root).as_posix()
+            input_before = file_hash(input_path)
+            view = asset_view(project_root, input_relative)
+            if file_hash(input_path) != input_before:
+                raise RuntimeError("VIEW_EXPORT_INPUT_CHANGED")
+            html = render_asset_export_html(
+                input_relative,
+                view,
+                title=arguments.get("title"),
+                include_metadata=bool(arguments.get("include_metadata", True)),
+            )
+            if "simloom-ai/view-export/v1" not in html or "<svg" not in html:
+                raise ValueError("VIEW_EXPORT_RENDER_INVALID")
+            if str(project_root) in html:
+                raise ValueError("VIEW_EXPORT_LEAKED_PROJECT_PATH")
+            # The SVG namespace is intrinsic XML syntax; actual network-backed
+            # resource attributes are forbidden so the file remains portable.
+            import re
+            if re.search(r"(?is)(?:src|href)\s*=\s*['\"]https?://", html):
+                raise ValueError("VIEW_EXPORT_EXTERNAL_RESOURCE")
+            transaction = RunTransaction(project_root)
+            transaction.begin({"operation": name, "arguments": arguments,
+                               "input_sha256": input_before})
+            try:
+                staged = transaction.stage_dir / output_path.name
+                staged.parent.mkdir(parents=True, exist_ok=True)
+                staged.write_text(html, encoding="utf-8", newline="\n")
+                staged_hash = file_hash(staged)
+                validation = {
+                    "valid": True,
+                    "schema_version": "simloom-ai/view-export/v1",
+                    "has_svg": "<svg" in html,
+                    "has_timeline": "修改记录" in html,
+                    "has_metadata": bool(arguments.get("include_metadata", True)) and "simloom-export" in html,
+                    "self_contained": True,
+                    "input_sha256": input_before,
+                    "output_sha256": staged_hash,
+                }
+                transaction.record("viewer_staged_validation", validation)
+                transaction.checkpoint("after-view-export", validation)
+                persisted: dict[str, Any] = {}
+
+                def validate_persisted(committed_files: dict[str, str]):
+                    persisted_path = Path(committed_files[output_relative])
+                    content = persisted_path.read_text(encoding="utf-8")
+                    if file_hash(persisted_path) != staged_hash:
+                        raise RuntimeError("VIEW_EXPORT_OUTPUT_CHANGED")
+                    if "simloom-ai/view-export/v1" not in content or "<svg" not in content:
+                        raise ValueError("VIEW_EXPORT_PERSISTED_INVALID")
+                    if str(project_root) in content:
+                        raise ValueError("VIEW_EXPORT_LEAKED_PROJECT_PATH")
+                    persisted.update({"valid": True, "sha256": file_hash(persisted_path), "bytes": persisted_path.stat().st_size})
+                    transaction.record("viewer_persisted_validation", persisted)
+
+                committed = transaction.commit({output_relative: str(staged)}, destination_root=project_root,
+                                               validate=validate_persisted,
+                                               expected_before={output_relative: file_hash(output_path)})
+                return {"status": "completed", "output": committed[output_relative],
+                        "bytes": Path(committed[output_relative]).stat().st_size,
+                        "sha256": file_hash(Path(committed[output_relative])),
+                        "validation": {**validation, "persisted": persisted},
+                        "run_id": transaction.run_id}
+            except Exception as exc:
+                transaction.fail(str(exc))
+                raise
         if name.startswith("autocad."):
             return self._autocad_operation(name, arguments)
         if name == "artifact.write":
