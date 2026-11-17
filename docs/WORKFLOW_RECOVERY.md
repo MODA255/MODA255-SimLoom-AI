@@ -93,6 +93,19 @@ CLI 使用：
 engineering-agent --project-dir ./project workflow repair <workflow_id>
 ```
 
+如果希望工程链稳定完成后立即尝试一次已声明的修复策略，可以在执行入口打开有界自动修复：
+
+```sh
+engineering-agent --project-dir ./project run "Ansys 应力分析" --execute --auto-repair
+```
+
+Python 使用 `agent.run(..., dry_run=False, auto_repair=True)`，MCP `engineering_run` 使用
+`auto_repair=true`。自动修复只在多步骤远程工程链进入 `committed` 后触发一次；它创建独立的
+子工程链并把结果写入父报告的 `validation.auto_repair`，不会覆盖父工程链。等待中、失败、输入
+冲突或本机状态不明的工程链只返回 `deferred`，没有匹配策略或达到尝试上限则返回
+`needs_review`。这不是让模型自由修改载荷或放宽阈值，仍受每个动作的显式策略、契约字段和
+最大尝试次数约束。
+
 MCP full profile 使用 `engineering_workflow` 的 `action=repair`；safe profile 仍只读。修复策略必须
 写在对应软件动作的 `repair_strategies` 中，例如：
 

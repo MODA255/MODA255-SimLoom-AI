@@ -126,7 +126,7 @@ class EngineeringAgent:
         return result
 
     def run(self, prompt: str, *, project_dir: str = ".", parameters: dict[str, Any] | None = None,
-            dry_run: bool = True, on_event=None) -> RunReport:
+            dry_run: bool = True, on_event=None, auto_repair: bool = False) -> RunReport:
         progress = Progress(on_event)
         with progress.stage("planning", "生成并检查计划"):
             plan = self.plan(prompt, project_dir=project_dir, parameters=parameters)
@@ -135,7 +135,24 @@ class EngineeringAgent:
         if (not dry_run and plan_validation["valid"] and len(plan.steps) > 1
                 and any(getattr(self.adapters[s.tool], "bridge_url", None) for s in plan.steps)):
             from .workflows import DurableWorkflow
-            return DurableWorkflow(self, project_dir, on_event).start(plan)
+            workflow = DurableWorkflow(self, project_dir, on_event)
+            report = workflow.start(plan)
+            if auto_repair:
+                repair = {"requested": True, "parent_workflow_id": report.workflow_id}
+                if report.status != "committed":
+                    repair.update({"status": "deferred", "reason": f"工程链状态为 {report.status}，等待稳定结果后再修复"})
+                else:
+                    try:
+                        repair.update(workflow.repair(report.workflow_id))
+                    except Exception as exc:
+                        # Preserve the completed parent report. A repair error
+                        # must be visible to the caller without pretending the
+                        # original vendor run failed.
+                        repair.update({"status": "blocked", "error": {
+                            "code": getattr(exc, "code", "AUTO_REPAIR_FAILED"),
+                            "message": str(exc)}})
+                report.validation["auto_repair"] = repair
+            return report
         with RunTransaction(project_dir) as txn:
             txn.begin(plan.to_dict())
             txn.checkpoint("before-execution", {"plan_valid": plan_validation["valid"]})

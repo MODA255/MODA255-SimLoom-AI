@@ -415,6 +415,27 @@ def test_unified_engineering_result_can_drive_repair_without_legacy_vendor_field
     assert repaired['repair']['candidate']['strategy_id']=='from_unified_result'
 
 
+def test_run_auto_repair_records_bounded_child_result(workflow_setup,monkeypatch):
+    project,manager,config,plan,make=workflow_setup
+    from engineering_agent.models import RunReport
+    import engineering_agent.workflows as workflows
+
+    def fake_start(self, submitted_plan, metadata=None):
+        return RunReport(submitted_plan, [], run_id='parent-run', status='committed', workflow_id='a' * 32)
+
+    def fake_repair(self, identifier):
+        assert identifier == 'a' * 32
+        return {'status':'needs_review', 'workflow_id':identifier,
+                'message':'没有匹配的显式修复策略；未修改模型。'}
+
+    monkeypatch.setattr(workflows.DurableWorkflow, 'start', fake_start)
+    monkeypatch.setattr(workflows.DurableWorkflow, 'repair', fake_repair)
+    report=make().run('fixture',project_dir=str(project),dry_run=False,auto_repair=True)
+    assert report.status=='committed'
+    assert report.validation['auto_repair']['requested'] is True
+    assert report.validation['auto_repair']['status']=='needs_review'
+
+
 def test_repair_requires_explicit_strategy_and_does_not_change_thresholds(workflow_setup,tmp_path):
     project,manager,config,plan,make=workflow_setup
     (tmp_path/'gate').touch();config['timeouts']['step_seconds']=10

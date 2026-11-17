@@ -348,7 +348,7 @@ class MCPServer:
         tools = [
             {"name": "engineering_plan", "description": "Create a validated four-tool execution plan", "inputSchema": {"type": "object", "required": ["prompt"], "properties": {"prompt": {"type": "string"}, "project_dir": {"type": "string"}}}},
             {"name": "engineering_preflight", "description": "Check planned vendor action bindings, scripts, commands and output contracts without starting CATIA, Ansys, Adams or VI-grade", "inputSchema": {"type": "object", "required": ["prompt"], "properties": {"prompt": {"type": "string"}, "project_dir": {"type": "string"}, "parameters": {"type": "object"}, "probe": {"type": "boolean", "default": False}}}},
-            {"name": "engineering_run", "description": "Run a plan in dry-run or execution mode", "inputSchema": {"type": "object", "required": ["prompt"], "properties": {"prompt": {"type": "string"}, "project_dir": {"type": "string"}, "dry_run": {"type": "boolean"}}}},
+            {"name": "engineering_run", "description": "Run a plan in dry-run or execution mode; optionally create a bounded repair workflow from failed engineering metrics", "inputSchema": {"type": "object", "required": ["prompt"], "properties": {"prompt": {"type": "string"}, "project_dir": {"type": "string"}, "parameters": {"type": "object"}, "dry_run": {"type": "boolean"}, "auto_repair": {"type": "boolean", "description": "After a stable completed workflow, apply at most one explicitly configured repair strategy"}}}},
             {"name": "engineering_generate", "description": "Generate vendor scripts and scenario files", "inputSchema": {"type": "object", "properties": {"project_dir": {"type": "string"}, "model_spec": {"type": "object"}}}},
             {"name": "engineering_offline_run", "description": "Run the deterministic CATIA-to-VI-grade fixture chain without commercial software", "inputSchema": {"type": "object", "properties": {"project_dir": {"type": "string"}, "model_spec": {"type": "object"}, "rules": {"type": "array"}}}},
             {"name": "engineering_doctor", "description": "Inspect configured vendor backends and COM", "inputSchema": {"type": "object"}},
@@ -830,7 +830,9 @@ class MCPServer:
             return self.agent.preflight(arguments.get("prompt", ""), project_dir=arguments.get("project_dir", "."),
                                         parameters=arguments.get("parameters"), probe=bool(arguments.get("probe", False)))
         if name == "engineering_run":
-            return self.agent.run(arguments.get("prompt", ""), project_dir=arguments.get("project_dir", "."), parameters=arguments.get("parameters"), dry_run=arguments.get("dry_run", True)).to_dict()
+            return self.agent.run(arguments.get("prompt", ""), project_dir=arguments.get("project_dir", "."),
+                                  parameters=arguments.get("parameters"), dry_run=arguments.get("dry_run", True),
+                                  auto_repair=bool(arguments.get("auto_repair", False))).to_dict()
         if name == "engineering_generate":
             return self.agent.generate(arguments.get("project_dir", "."), arguments.get("model_spec") or {})
         if name == "engineering_offline_run":
