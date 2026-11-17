@@ -12,7 +12,7 @@ from typing import Any
 
 from .models import ExecutionPlan, PlanStep, ToolName
 from .worker_protocol import WorkerError, relative_path
-from .software_contract import build_operation_contract
+from .software_contract import build_operation_contract, normalize_capability_requirements
 
 
 PREFLIGHT_OUTPUT_SCHEMA = {
@@ -36,6 +36,10 @@ PREFLIGHT_OUTPUT_SCHEMA = {
                 "engineering_context": {"type": ["object", "null"]},
                 "validation": {"type": ["object", "null"]},
                 "lifecycle": {"type": "object"}, "recovery": {"type": "object"},
+                "requirements": {"type": ["object", "null"], "properties": {
+                    "adapter_capabilities": {"type": "array", "items": {"type": "string"}},
+                    "worker_features": {"type": "array", "items": {"type": "string"}},
+                }},
             }},
         }}},
         "skipped_steps": {"type": "array", "items": {"type": "string"}},
@@ -85,10 +89,22 @@ def _step_preflight(adapter: Any, step: PlanStep, root: Path, *, probe: bool = F
         "script": None,
         "command": None,
         "outputs": list(step.outputs),
+        "requirements": None,
     }
     if not isinstance(binding, dict):
         result["issues"].append({"code": "ACTION_BINDING_REQUIRED", "message": "未配置该软件动作"})
         return result
+
+    requirements = normalize_capability_requirements(binding.get("capability_requirements"))
+    result["requirements"] = {"declared": requirements, "status": "ready" if requirements else "not_requested"}
+    missing_adapter = sorted(set(requirements.get("adapter_capabilities", [])) - set(getattr(adapter, "capabilities", frozenset())))
+    if missing_adapter:
+        result["requirements"].update(status="missing", missing_adapter_capabilities=missing_adapter)
+        result["issues"].append({"code": "ADAPTER_CAPABILITY_MISSING", "message": ",".join(missing_adapter)})
+    worker_features = requirements.get("worker_features", [])
+    if worker_features and not getattr(adapter, "bridge_url", None):
+        result["requirements"].update(status="missing", missing_worker_features=worker_features)
+        result["issues"].append({"code": "WORKER_FEATURE_REQUIRES_BRIDGE", "message": ",".join(worker_features)})
 
     script_ok, script_code, script_path = _script_status(root, binding.get("script"))
     result["script"] = {"path": binding.get("script"), "resolved": script_path, "status": script_code}
@@ -103,14 +119,24 @@ def _step_preflight(adapter: Any, step: PlanStep, root: Path, *, probe: bool = F
                 health = adapter.doctor(probe=True)
                 result["connection"].update({"status": "reachable" if health.get("reachable") else "unreachable",
                                               "worker_platform": health.get("worker_platform"),
-                                              "worker_action_found": step.action in health.get("actions", [])})
+                                              "worker_action_found": step.action in health.get("actions", []),
+                                              "worker_features": health.get("worker_features", [])})
                 if not health.get("reachable"):
                     result["issues"].append({"code": "BRIDGE_UNREACHABLE", "message": "Windows worker 健康检查失败"})
                 elif step.action not in health.get("actions", []):
                     result["issues"].append({"code": "WORKER_ACTION_NOT_FOUND", "message": "worker 未声明该软件动作"})
+                if worker_features:
+                    advertised = set(health.get("worker_features", []) or [])
+                    missing_worker = sorted(set(worker_features) - advertised)
+                    result["requirements"].update(status="ready" if not missing_worker and not missing_adapter else "missing")
+                    if missing_worker:
+                        result["requirements"]["missing_worker_features"] = missing_worker
+                        result["issues"].append({"code": "WORKER_FEATURE_MISSING", "message": ",".join(missing_worker)})
             except Exception as exc:
                 result["connection"].update(status="unreachable", error=str(exc))
                 result["issues"].append({"code": "BRIDGE_UNREACHABLE", "message": str(exc)})
+        elif worker_features:
+            result["requirements"].update(status="not_probed", probe_required=True)
     else:
         command = binding.get("command")
         result["command"] = command
@@ -130,7 +156,8 @@ def _step_preflight(adapter: Any, step: PlanStep, root: Path, *, probe: bool = F
             mode="bridge" if getattr(adapter, "bridge_url", None) else "local",
             bridge=bool(getattr(adapter, "bridge_url", None)), workflow=workflow,
             engineering_context=(binding.get("vendor_options") or {}).get("engineering_context")
-            if isinstance(binding.get("vendor_options"), dict) else None)
+            if isinstance(binding.get("vendor_options"), dict) else None,
+            capability_requirements=requirements)
         result["outputs"] = outputs
     except Exception as exc:
         result["issues"].append({"code": getattr(exc, "code", "ACTION_CONTRACT_INVALID"), "message": str(exc)})

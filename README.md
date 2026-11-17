@@ -69,6 +69,7 @@ VI-grade 建模与求解仍由对应软件完成。
 内置软件入口现在提供参数/结果证据契约：CATIA 保存后重新开盘读回，Mechanical 严格检查完成与求值状态；Adams/VI-grade 对已配置的导出命令重读 JSON/CSV，并核对单位及阈值。执行成功与工程指标合格分别记录。通用导出接口不代表所有厂商原生格式或产品版本已接入。
 
 接入配置与限制见 [软件操作与 Windows worker](docs/SOFTWARE_INTEGRATION.md)。
+动作可以声明适配器能力和 Windows worker 特性；preflight、执行和结果契约会统一检查这些要求，见 [四软件动作能力要求](docs/SOFTWARE_CAPABILITY_REQUIREMENTS.md)。
 
 真正启动软件前，可以先运行 `preflight` 检查动作绑定、项目内 runner、启动命令和输出契约：
 

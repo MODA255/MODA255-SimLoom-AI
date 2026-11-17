@@ -13,6 +13,10 @@
           "validation": {
             "kind": "catia_parameters"
           },
+          "capability_requirements": {
+            "adapter_capabilities": ["parametric-geometry", "step-export"],
+            "worker_features": ["durable_jobs", "job_logs"]
+          },
           "vendor_options": {
             "prog_id": ""
           }
@@ -30,6 +34,10 @@
           ],
           "validation": {
             "kind": "mechanical_solve"
+          },
+          "capability_requirements": {
+            "adapter_capabilities": ["static-structural", "results"],
+            "worker_features": ["durable_jobs", "job_logs"]
           },
           "repair_strategies": [
             {
@@ -60,6 +68,10 @@
           "validation": {
             "kind": "adams_export"
           },
+          "capability_requirements": {
+            "adapter_capabilities": ["multibody", "dynamics"],
+            "worker_features": ["durable_jobs", "software_serialization"]
+          },
           "vendor_options": {
             "command": [],
             "timeout_seconds": 1800
@@ -78,6 +90,10 @@
           ],
           "validation": {
             "kind": "vi_grade_export"
+          },
+          "capability_requirements": {
+            "adapter_capabilities": ["vehicle-dynamics", "ride-handling"],
+            "worker_features": ["durable_jobs", "software_serialization"]
           },
           "vendor_options": {
             "command": [],

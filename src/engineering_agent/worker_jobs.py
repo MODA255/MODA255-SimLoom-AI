@@ -37,6 +37,9 @@ def request_digest(payload):
     normalized = {key: payload.get(key) for key in keys}
     if "vendor_options" in payload:
         normalized["vendor_options"] = payload["vendor_options"]
+    for key in ("capability_requirements", "operation_contract"):
+        if key in payload:
+            normalized[key] = payload[key]
     return hashlib.sha256(json.dumps(normalized, sort_keys=True, separators=(",", ":"),
                                      allow_nan=False).encode()).hexdigest()
 

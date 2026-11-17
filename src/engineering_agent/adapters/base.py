@@ -19,7 +19,7 @@ from ..worker_protocol import (SCHEMA, MAX_HTTP_BYTES, WorkerError, decode_files
 from ..vendor_validation import VendorValidationError, validate_report
 from ..vendor_evidence import SCHEMA as EVIDENCE_SCHEMA, build_contract, requirements, strict_json, validate_evidence
 from ..engineering_result import normalize_engineering_result
-from ..software_contract import build_operation_contract
+from ..software_contract import build_operation_contract, normalize_capability_requirements
 
 
 class AdapterError(RuntimeError):
@@ -164,7 +164,10 @@ class CommandAdapter(ToolAdapter):
                 health = self._post({"operation": "health", "schema_version": SCHEMA}, 3)
                 if health.get("ok") is not True:
                     raise WorkerError("BRIDGE_HEALTH_FAILED")
-                item.update(reachable=True, status="reachable", worker_platform=health.get("platform"), worker_features=health.get("features", {}))
+                features = health.get("features", {})
+                item.update(reachable=True, status="reachable", worker_platform=health.get("platform"),
+                            worker_features=sorted(features) if isinstance(features, dict) else list(features or []),
+                            worker_feature_details=features if isinstance(features, dict) else {})
                 checks = health.get("command_checks", {})
                 item["actions"] = sorted(name for name in bound
                                          if checks.get(f"{self.name.value}.{name}", {}).get("executable_found") is True)
@@ -189,6 +192,35 @@ class CommandAdapter(ToolAdapter):
         return (isinstance(command, list) and bool(command)
                 and all(isinstance(p, str) and p for p in command) and any("{script}" in p for p in command))
 
+    def _capability_requirements(self, binding: dict[str, Any]) -> dict[str, list[str]]:
+        return normalize_capability_requirements(binding.get("capability_requirements"))
+
+    def _check_capability_requirements(self, binding: dict[str, Any], *, probe_worker: bool = True) -> dict[str, Any]:
+        """Check declarative action requirements before launching a runner.
+
+        Adapter capabilities are local declarations about the operation
+        binding. Worker feature checks are only meaningful for a bridge; a
+        local action that asks for them is rejected instead of silently
+        pretending the feature exists.
+        """
+        requirements = self._capability_requirements(binding)
+        missing_adapter = sorted(set(requirements.get("adapter_capabilities", [])) - set(self.capabilities))
+        if missing_adapter:
+            raise WorkerError("ADAPTER_CAPABILITY_MISSING", ",".join(missing_adapter))
+        required_worker = requirements.get("worker_features", [])
+        if required_worker and not self.bridge_url:
+            raise WorkerError("WORKER_FEATURE_REQUIRES_BRIDGE", ",".join(required_worker))
+        worker = None
+        if required_worker and self.bridge_url and probe_worker:
+            worker = self.doctor(probe=True)
+            if worker.get("reachable") is not True:
+                raise WorkerError("BRIDGE_UNREACHABLE", "; ".join(str(item) for item in worker.get("evidence", [])[-3:]))
+            advertised = set(worker.get("worker_features", []) or [])
+            missing_worker = sorted(set(required_worker) - advertised)
+            if missing_worker:
+                raise WorkerError("WORKER_FEATURE_MISSING", ",".join(missing_worker))
+        return {"requirements": requirements, "worker": worker}
+
     def execute(self, step: PlanStep, context: AdapterContext) -> ToolResult:
         if context.dry_run:
             details = {"doctor": self.doctor(probe=False), "execution": "not_run"}
@@ -208,6 +240,7 @@ class CommandAdapter(ToolAdapter):
             return ToolResult(step.id, self.name, "unavailable", "Configure an action script and a runner command or worker URL",
                               details=details)
         try:
+            self._check_capability_requirements(binding, probe_worker=bool(self.bridge_url))
             payload = self._prepare(step, context, binding)
             workspace = context.workspace_dir
             if workspace is None:
@@ -369,10 +402,12 @@ class CommandAdapter(ToolAdapter):
             outputs=outputs, validation=validation,
             mode="bridge" if self.bridge_url else "local", bridge=bool(self.bridge_url), workflow=bool(context.workflow),
             engineering_context=(binding.get("vendor_options") or {}).get("engineering_context")
-            if isinstance(binding.get("vendor_options"), dict) else None)
+            if isinstance(binding.get("vendor_options"), dict) else None,
+            capability_requirements=binding.get("capability_requirements"))
         return {"schema_version": SCHEMA, "operation": "run", "request_id": uuid.uuid4().hex,
                 "tool": self.name.value, "action": step.action, "script": script,
                 "parameters": step.parameters, "inputs": inputs, "outputs": outputs, "files": files,
                 "validation": validation, "operation_contract": operation_contract,
+                "capability_requirements": normalize_capability_requirements(binding.get("capability_requirements")),
                 **({"vendor_options": json.loads(json.dumps(binding["vendor_options"], allow_nan=False))}
                    if "vendor_options" in binding else {})}

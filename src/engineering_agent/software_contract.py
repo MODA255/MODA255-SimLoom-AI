@@ -23,6 +23,29 @@ def _paths(values: Any) -> list[str]:
     return [value for value in values if isinstance(value, str) and value][:512]
 
 
+def normalize_capability_requirements(value: Any) -> dict[str, list[str]]:
+    """Normalize declarative capabilities required by one software action.
+
+    ``adapter_capabilities`` describe the vendor operation the configured
+    adapter promises to support. ``worker_features`` describe protocol
+    features that a remote Windows worker must advertise. These are planning
+    and configuration requirements; they never attest that a licensed vendor
+    application actually ran.
+    """
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, list[str]] = {}
+    for key in ("adapter_capabilities", "worker_features"):
+        values = value.get(key)
+        if not isinstance(values, list):
+            continue
+        normalized = sorted({item.strip() for item in values
+                             if isinstance(item, str) and item.strip()})[:128]
+        if normalized:
+            result[key] = normalized
+    return result
+
+
 def _validation_summary(validation: Any) -> dict[str, Any] | None:
     if not isinstance(validation, dict):
         return None
@@ -76,7 +99,8 @@ def build_operation_contract(*, tool: str, action: str, script: str | None,
                              validation: dict[str, Any] | None,
                              mode: str = "local", bridge: bool = False,
                              workflow: bool = False,
-                             engineering_context: dict[str, Any] | None = None) -> dict[str, Any]:
+                             engineering_context: dict[str, Any] | None = None,
+                             capability_requirements: dict[str, Any] | None = None) -> dict[str, Any]:
     """Build a stable operation definition and its digest."""
     definition: dict[str, Any] = {
         "schema_version": SCHEMA,
@@ -92,13 +116,17 @@ def build_operation_contract(*, tool: str, action: str, script: str | None,
     context = _engineering_context_summary(engineering_context)
     if context is not None:
         definition["engineering_context"] = context
+    requirements = normalize_capability_requirements(capability_requirements)
+    if requirements:
+        definition["requirements"] = requirements
     encoded = json.dumps(definition, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
     return definition | {"definition_digest": hashlib.sha256(encoded.encode("utf-8")).hexdigest()}
 
 
 def validate_operation_contract(contract: Any, *, tool: str, action: str,
                                  script: str, inputs: list[str], outputs: list[str],
-                                 engineering_context: dict[str, Any] | None = None) -> dict[str, Any]:
+                                 engineering_context: dict[str, Any] | None = None,
+                                 capability_requirements: dict[str, Any] | None = None) -> dict[str, Any]:
     """Validate the immutable operation-definition portion of a request."""
     if not isinstance(contract, dict) or contract.get("schema_version") != SCHEMA:
         raise ValueError("SOFTWARE_OPERATION_CONTRACT_UNSUPPORTED")
@@ -113,11 +141,12 @@ def validate_operation_contract(contract: Any, *, tool: str, action: str,
                                         validation=None, mode=execution.get("mode", "local"),
                                         bridge=bool((contract.get("recovery") or {}).get("reconnect")),
                                         workflow=bool((contract.get("recovery") or {}).get("workflow")),
-                                        engineering_context=engineering_context)
+                                        engineering_context=engineering_context,
+                                        capability_requirements=capability_requirements)
     # The validation section is intentionally omitted from the digest check;
     # worker evidence adds input hashes after preflight. Compare the stable
     # structural fields and the caller-provided digest separately.
-    for key in ("schema_version", "tool", "action", "execution", "artifacts", "lifecycle", "recovery", "engineering_context"):
+    for key in ("schema_version", "tool", "action", "execution", "artifacts", "lifecycle", "recovery", "engineering_context", "requirements"):
         if contract.get(key) != expected.get(key):
             raise ValueError("SOFTWARE_OPERATION_CONTRACT_MISMATCH")
     digest_source = build_operation_contract(
@@ -125,7 +154,8 @@ def validate_operation_contract(contract: Any, *, tool: str, action: str,
         validation=contract.get("validation"), mode=execution.get("mode", "local"),
         bridge=bool((contract.get("recovery") or {}).get("reconnect")),
         workflow=bool((contract.get("recovery") or {}).get("workflow")),
-        engineering_context=engineering_context)
+        engineering_context=engineering_context,
+        capability_requirements=capability_requirements)
     if contract.get("definition_digest") != digest_source.get("definition_digest"):
         raise ValueError("SOFTWARE_OPERATION_CONTRACT_DIGEST_MISMATCH")
     return contract

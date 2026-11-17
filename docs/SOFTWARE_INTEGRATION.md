@@ -185,6 +185,7 @@ macOS/Linux 可以控制远程 Windows worker。pywin32 只用于 COM，不作�
 worker 请求会携带同一摘要，worker 在启动 runner 前校验工具、动作、脚本和文件列表；结果回收时
 再次暴露该摘要。这样 Agent 可以确认“预检查的动作”和“实际执行的动作”一致，而不把动态输入
 哈希混入定义摘要。
+动作还可以在 `operation_contract.requirements` 中声明 `adapter_capabilities` 和 `worker_features`。preflight、执行入口和远程 worker 会使用同一份规范化要求；缺少能力时分别返回 `ADAPTER_CAPABILITY_MISSING`、`WORKER_FEATURE_REQUIRES_BRIDGE` 或 `WORKER_FEATURE_MISSING`，并归类为配置错误。详细配置见 `SOFTWARE_CAPABILITY_REQUIREMENTS.md`。
 
 当结果有错误时，`engineering_result.failure` 提供保守的下一步分类。`configuration` 和
 `input_contract` 通常先修配置或输入；`transport`、`collection` 和可恢复的 `recovery` 可以

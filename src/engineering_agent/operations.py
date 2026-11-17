@@ -64,6 +64,10 @@ ENGINEERING_RESULT_SCHEMA = {
                 "tool": {"type": "string"}, "action": {"type": "string"},
                 "definition_digest": {"type": "string"},
                 "execution": {"type": "object"}, "artifacts": {"type": "object"},
+                "requirements": {"type": ["object", "null"], "properties": {
+                    "adapter_capabilities": {"type": "array", "items": {"type": "string"}},
+                    "worker_features": {"type": "array", "items": {"type": "string"}},
+                }},
                 "engineering_context": {"type": ["object", "null"],
                                         "description": "Declarative context from the configured vendor action; not runtime or license attestation"},
                 "validation": {"type": ["object", "null"]}, "lifecycle": {"type": "object"},
