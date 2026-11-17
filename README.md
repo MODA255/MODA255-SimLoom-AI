@@ -11,6 +11,8 @@
 
 工程化路线见 [`docs/PRODUCT_ENGINEERING_ROADMAP.md`](docs/PRODUCT_ENGINEERING_ROADMAP.md)。
 
+开发过程中，代码、详尽文档、测试、提交和推送作为一个交付单元完成。具体规范见 [`docs/DEVELOPMENT_DOCUMENTATION.md`](docs/DEVELOPMENT_DOCUMENTATION.md)。
+
 </div>
 
 <div align="center">
