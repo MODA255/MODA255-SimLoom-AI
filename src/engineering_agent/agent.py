@@ -39,6 +39,7 @@ from .dependencies import DependencyScanner
 from .autocad_backend import AutoCADError, backend_status, run_core_console
 from .dxf_validation import inspect_native
 from .viewer import asset_view, render_asset_export_html
+from .capability_matrix import build_capability_matrix
 
 
 def _project_path(project_root: Path, value: str | Path, *, must_exist: bool = False,
@@ -825,8 +826,11 @@ class EngineeringAgent:
         software = [by_tool.get(name, {}) for name in ("catia", "ansys", "adams", "vi-grade")]
         connected = any(item.get("reachable") or item.get("execution_ready") for item in software)
         executable_ready = any(item.get("execution_ready") for item in software)
+        capability_matrix = build_capability_matrix(
+            diagnostics, tool_order=("catia", "ansys", "adams", "vi-grade"))
         return {
             "schema_version": "simloom-ai/capabilities/v1",
+            "capability_matrix": capability_matrix,
             "modes": [
                 {"id": "offline", "ready": True, "label": "离线体验", "reason": "不需要商业软件"},
                 {"id": "rehearsal", "ready": True, "label": "排练模式", "reason": "生成脚本并验证计划，不启动外部软件"},

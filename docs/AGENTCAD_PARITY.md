@@ -96,6 +96,11 @@ bulge 弧段、SPLINE 采样段和 HATCH 多段线边界检查自交/重叠；�
 
 ## 核心能力差距评估（2026-11-17）
 
+2026-11-17 后续：新增 `simloom-ai/capability-matrix/v1`。每个已声明的软件动作现在
+同时返回状态、规范化要求、缺失原因、发现状态、证据等级和实机验收标记；CLI、Web 和
+MCP 复用同一个矩阵，避免 Agent 从不同入口拼接 `doctor()` 字段。该改动改善了操作发现
+和调度可靠性，但不会增加四款商业软件的真实验收证据，详见 `CAPABILITY_MATRIX.md`。
+
 这里的“接近 AgentCAD”分成两个口径：一是 Agent-facing runtime 是否让模型能够可靠地发现、调用、观察、验证、恢复和复现工程操作；二是 SimLoom 的产品主线是否真的能操作 CATIA、Ansys、Adams 和 VI-grade。前一个口径可以在没有商业软件的机器上持续补齐，后一个口径必须依赖 Windows、软件版本、许可证和真实工程文件。
 
 按当前仓库状态，SimLoom 的 Agent-facing 基础已经具备：统一 operation registry、MCP/CLI/HTTP/Python 入口、事务锁、checkpoint、journal、rollback、版本 diff、分页 discovery、结构化 error envelope、离线 CAD/结果验证、任务队列、工作流恢复和有界修复。当前 operation registry 中有 224 个公开名称，其中 115 个是 `cad.*` typed operation；数量已经超过对照项目的 2D 操作规模，但数量不代表每个操作的语义、性能和真实工程兼容性都达到同一水平。

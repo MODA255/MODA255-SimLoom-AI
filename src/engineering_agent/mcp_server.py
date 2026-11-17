@@ -476,6 +476,11 @@ class MCPServer:
             "engineering_doctor": {"type": "object"},
             "engineering_capabilities": {"type": "object", "properties": {
                 "schema_version": {"type": "string", "const": "simloom-ai/capabilities/v1"},
+                "capability_matrix": {"type": "object", "properties": {
+                    "schema_version": {"type": "string", "const": "simloom-ai/capability-matrix/v1"},
+                    "actions": {"type": "array", "items": {"type": "object"}},
+                    "summary": {"type": "object"}, "tools": {"type": "object"},
+                }},
                 "modes": {"type": "array", "items": {"type": "object"}},
                 "components": {"type": "object"}, "tools": {"type": "object"},
             }},
