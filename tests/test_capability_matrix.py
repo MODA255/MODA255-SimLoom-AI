@@ -81,6 +81,8 @@ def test_capabilities_expose_one_shared_matrix_for_agent_clients():
     capabilities = EngineeringAgent(_config()).capabilities()
     matrix = capabilities["capability_matrix"]
     assert matrix["schema_version"] == SCHEMA
+    assert matrix["probe"] is True
+    assert len(matrix["matrix_digest"]) == 64
     assert matrix["summary"] == {
         "total": 1,
         "ready": 1,
@@ -162,6 +164,16 @@ def test_probe_flag_allows_offline_capability_discovery_without_network(monkeypa
     action = matrix["tools"]["catia"]["actions"][0]
     assert action["status"] == "not_probed"
     assert action["ready"] is False
+    assert matrix["probe"] is False
+
+
+def test_capability_digest_is_stable_and_changes_with_probe_mode():
+    agent = EngineeringAgent(_config())
+    first = agent.capabilities(probe=False)["capability_matrix"]
+    second = agent.capabilities(probe=False)["capability_matrix"]
+    probed = agent.capabilities(probe=True)["capability_matrix"]
+    assert first["matrix_digest"] == second["matrix_digest"]
+    assert first["matrix_digest"] != probed["matrix_digest"]
 
 
 def test_cli_exposes_explicit_no_probe_switch():

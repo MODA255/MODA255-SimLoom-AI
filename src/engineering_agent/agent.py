@@ -838,7 +838,7 @@ class EngineeringAgent:
         connected = any(item.get("reachable") or item.get("execution_ready") for item in software)
         executable_ready = any(item.get("execution_ready") for item in software)
         capability_matrix = build_capability_matrix(
-            diagnostics, tool_order=("catia", "ansys", "adams", "vi-grade"))
+            diagnostics, tool_order=("catia", "ansys", "adams", "vi-grade"), probe=probe)
         return {
             "schema_version": "simloom-ai/capabilities/v1",
             "capability_matrix": capability_matrix,

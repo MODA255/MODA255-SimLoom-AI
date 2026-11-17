@@ -17,6 +17,8 @@ Windows worker 在线、商业软件已安装或结果已经通过工程验收�
 ```json
 {
   "schema_version": "simloom-ai/capability-matrix/v1",
+  "probe": true,
+  "matrix_digest": "<sha256 of the canonical matrix without matrix_digest>",
   "summary": {
     "total": 1,
     "ready": 1,
@@ -83,6 +85,11 @@ Windows worker 在线、商业软件已安装或结果已经通过工程验收�
 `actions` 是跨软件的扁平列表，`tools[tool].actions` 是同一记录按软件分组的
 视图。两处数据必须相同；客户端不需要再根据 `doctor()` 的不同字段自行推导。
 `summary` 只做计数，不能替代逐动作判断。
+
+`matrix_digest` 是把矩阵去掉自身摘要字段后，按 UTF-8、排序键和紧凑 JSON 编码计算的
+SHA-256。它不包含时间戳，因此相同配置和同一探测模式会得到稳定值；worker 能力、动作
+绑定、实机 evidence 或 `probe` 模式改变时，摘要会改变。客户端可以把它和保存的计划或
+operation contract 一起记录，发现执行前置条件已经漂移时重新做 preflight。
 
 ## 状态和证据等级
 

@@ -11,6 +11,8 @@ VI-grade operation has produced an accepted engineering result.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 
 
@@ -135,7 +137,8 @@ def summarize_action_matrix(actions: list[dict[str, Any]]) -> dict[str, int]:
     return summary
 
 
-def build_capability_matrix(diagnostics: list[dict[str, Any]], *, tool_order: tuple[str, ...]) -> dict[str, Any]:
+def build_capability_matrix(diagnostics: list[dict[str, Any]], *, tool_order: tuple[str, ...],
+                            probe: bool = True) -> dict[str, Any]:
     """Build the shared matrix portion embedded in ``capabilities()``."""
     by_tool = {item.get("tool"): item for item in diagnostics if isinstance(item, dict) and item.get("tool")}
     tools: dict[str, dict[str, Any]] = {}
@@ -148,10 +151,15 @@ def build_capability_matrix(diagnostics: list[dict[str, Any]], *, tool_order: tu
             "summary": summarize_action_matrix(actions),
         }
         all_actions.extend(actions)
-    return {
+    matrix = {
         "schema_version": SCHEMA,
+        "probe": bool(probe),
         "actions": all_actions,
         "summary": summarize_action_matrix(all_actions),
         "tools": tools,
     }
+    encoded = json.dumps(matrix, ensure_ascii=False, sort_keys=True,
+                         separators=(",", ":"), allow_nan=False)
+    matrix["matrix_digest"] = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+    return matrix
 

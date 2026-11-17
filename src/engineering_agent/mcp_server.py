@@ -478,6 +478,7 @@ class MCPServer:
                 "schema_version": {"type": "string", "const": "simloom-ai/capabilities/v1"},
                 "capability_matrix": {"type": "object", "properties": {
                     "schema_version": {"type": "string", "const": "simloom-ai/capability-matrix/v1"},
+                    "probe": {"type": "boolean"}, "matrix_digest": {"type": "string"},
                     "actions": {"type": "array", "items": {"type": "object"}},
                     "summary": {"type": "object"}, "tools": {"type": "object"},
                 }},
