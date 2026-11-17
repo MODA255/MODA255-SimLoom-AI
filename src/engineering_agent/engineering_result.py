@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
+from .engineering_lifecycle import normalize_lifecycle
+
 
 SCHEMA = "simloom-ai/engineering-result/v1"
 ACCEPTANCE_STATES = {"not_requested", "passed", "failed", "unknown"}
@@ -95,14 +97,18 @@ def _contract_summary(contract: Any, input_artifacts: list[dict[str, Any]],
 def normalize_engineering_result(*, tool: str, action: str, status: str,
                                  message: str = "", outputs: Iterable[str] = (),
                                  details: dict[str, Any] | None = None,
-                                 contract: dict[str, Any] | None = None) -> dict[str, Any]:
+                                 contract: dict[str, Any] | None = None,
+                                 phase: str | None = None,
+                                 lifecycle: dict[str, Any] | None = None,
+                                 recoverable: bool = False) -> dict[str, Any]:
     """Build the common result envelope from an adapter/worker response.
 
     The function intentionally copies only bounded structured fields.  It does
     not infer engineering validity from a process exit code or from artifact
     hashes; those remain separate evidence fields. ``contract`` is included as
     a descriptive snapshot so a planner can compare attempts without parsing
-    vendor-specific payloads.
+    vendor-specific payloads. ``phase``/``lifecycle`` records which controller
+    stage was reached; uncertain stages remain explicitly unknown or unstarted.
     """
     details = details if isinstance(details, dict) else {}
     contract = contract if isinstance(contract, dict) else details.get("validation")
@@ -134,6 +140,17 @@ def normalize_engineering_result(*, tool: str, action: str, status: str,
     error = details.get("error")
     if not isinstance(error, dict):
         error = None
+    error_code = error.get("code") if isinstance(error, dict) and isinstance(error.get("code"), str) else None
+    effective_recoverable = bool(recoverable or (details.get("remote_job") or {}).get("requires_reconnect"))
+    lifecycle_value = normalize_lifecycle(
+        lifecycle if isinstance(lifecycle, dict) else details.get("lifecycle"),
+        phase=(phase or ("recover" if effective_recoverable else None)),
+        status=str(status),
+        validation_requested=contract is not None or isinstance(vendor_validation, dict),
+        error_code=error_code,
+        message=message,
+        recoverable=effective_recoverable,
+    )
     input_artifacts = _records(details.get("inputs"))
     output_artifacts = _records(details.get("output_manifest"))
     if not output_artifacts:
@@ -153,6 +170,7 @@ def normalize_engineering_result(*, tool: str, action: str, status: str,
         "observations": observations,
         "artifacts": {"inputs": input_artifacts, "outputs": output_artifacts},
         "contract": _contract_summary(contract, input_artifacts, output_artifacts),
+        "lifecycle": lifecycle_value,
         "evidence": {
             "request_id": details.get("request_id") if isinstance(details.get("request_id"), str) else None,
             "scope": scope if isinstance(scope, str) else None,

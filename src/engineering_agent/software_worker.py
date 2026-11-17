@@ -18,10 +18,12 @@ from .worker_protocol import SCHEMA, MAX_BYTES, WorkerError, decode_files, failu
 from .vendor_validation import VendorValidationError, read_report
 from .vendor_evidence import SCHEMA as EVIDENCE_SCHEMA, check_contract, strict_json, validate_evidence, requirements
 from .engineering_result import normalize_engineering_result
+from .engineering_lifecycle import build_lifecycle
 
 
 def _with_engineering_result(body: dict[str, Any], payload: dict[str, Any], *, status: str | None = None,
-                             message: str = "") -> dict[str, Any]:
+                             message: str = "", phase: str | None = None,
+                             recoverable: bool = False) -> dict[str, Any]:
     """Attach the common result envelope to every worker response."""
     body = dict(body)
     body.pop("engineering_result", None)
@@ -33,7 +35,15 @@ def _with_engineering_result(body: dict[str, Any], payload: dict[str, Any], *, s
         message = str(error.get("message", ""))
     body["engineering_result"] = normalize_engineering_result(
         tool=str(payload.get("tool", "")), action=str(payload.get("action", "")),
-        status=resolved_status, message=message, outputs=payload.get("outputs") or [], details=body, contract=payload.get("validation"))
+        status=resolved_status, message=message, outputs=payload.get("outputs") or [], details=body,
+        contract=payload.get("validation"), phase=phase,
+        lifecycle=(build_lifecycle(
+            phase, resolved_status,
+            validation_requested=payload.get("validation") is not None,
+            error_code=(error.get("code") if isinstance(error, dict) else None),
+            message=message, recoverable=recoverable)
+            if phase is not None else body.get("lifecycle")),
+    )
     return body
 
 
@@ -46,7 +56,7 @@ def run_job(root: Path, payload: dict[str, Any], commands: dict[str, Any], *, ti
     except Exception as exc:
         return _with_engineering_result(
             failure(exc, request_id if isinstance(request_id, str) else ""), payload,
-            status="failed", message=str(exc))
+            status="failed", message=str(exc), phase="preflight")
 
 
 def validate_job(payload, commands, transfer_store: ArtifactTransferStore | None = None):
@@ -182,11 +192,11 @@ def _run_job(root, payload, commands, timeout, environment, monitor=None, transf
             stream.seek(max(0, stream.tell() - 10000))
             details[name] = stream.read().decode("utf-8", errors="replace")
     if details.get("status") == "failed":
-        return _with_engineering_result(details, payload, status="failed")
+        return _with_engineering_result(details, payload, status="failed", phase="execute")
     if details["returncode"] != 0:
         return _with_engineering_result(
             details | failure(WorkerError("SOFTWARE_EXIT_FAILED", f"Runner exited with {details['returncode']}"), request_id),
-            payload, status="failed")
+            payload, status="failed", phase="execute")
     try:
         records, total = [], 0
         for name in outputs:
@@ -202,7 +212,7 @@ def _run_job(root, payload, commands, timeout, environment, monitor=None, transf
         if total > MAX_BYTES:
             records = [file_manifest(safe_file(job, name), name) | {"transfer_required": True} for name in outputs]
     except WorkerError as exc:
-        return _with_engineering_result(details | failure(exc, request_id), payload, status="failed")
+        return _with_engineering_result(details | failure(exc, request_id), payload, status="failed", phase="collect")
     validation = payload.get("validation")
     if validation is not None:
         try:
@@ -222,9 +232,11 @@ def _run_job(root, payload, commands, timeout, environment, monitor=None, transf
                                      required_checks=validation.get("required_checks", []))
         except (VendorValidationError, WorkerError) as exc:
             return _with_engineering_result(
-                details | failure(exc, request_id) | {"vendor_validation": "failed"}, payload, status="failed")
+                details | failure(exc, request_id) | {"vendor_validation": "failed"}, payload,
+                status="failed", phase="validate")
         details["verification"] = ("artifact_and_vendor_evidence" if validation.get("schema_version") == EVIDENCE_SCHEMA
                                    else "artifact_and_report_schema")
         details["vendor_validation"] = report
     return _with_engineering_result(details | {"status": "completed", "outputs": records}, payload,
-                                    status="completed", message="Worker completed and verified declared outputs")
+                                    status="completed", message="Worker completed and verified declared outputs",
+                                    phase="completed")

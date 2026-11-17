@@ -54,6 +54,7 @@ def test_vendor_operation_schema_advertises_normalized_result():
     envelope = details["properties"]["engineering_result"]
     assert envelope["properties"]["contract"]["properties"]["metric_rules"]["type"] == "array"
     assert envelope["properties"]["real_machine_verified"]["type"] == "boolean"
+    assert envelope["properties"]["lifecycle"]["properties"]["stages"]["properties"]["recover"]["properties"]["status"]["enum"][-1] == "deferred"
 
 
 def test_normalized_result_exposes_the_input_output_and_metric_contract():
@@ -88,4 +89,33 @@ def test_normalized_result_exposes_the_input_output_and_metric_contract():
         "metric_rules": [{"name": "equivalent_stress", "operator": "<=", "target": 80, "unit": "MPa"}],
     }
     assert result["error"]["code"] == "SOFTWARE_TIMEOUT"
+
+
+def test_lifecycle_marks_completed_validation_separately_from_execution():
+    result = normalize_engineering_result(
+        tool="ansys", action="solve_configured_model", status="completed",
+        details={"vendor_validation": {"engineering_acceptance": "failed", "metric_verdicts": []}},
+        contract={"schema_version": "simloom-ai/vendor-evidence/v2"},
+    )
+    lifecycle = result["lifecycle"]
+    assert lifecycle["schema_version"] == "simloom-ai/engineering-lifecycle/v1"
+    assert lifecycle["current_stage"] == "completed"
+    assert all(lifecycle["stages"][stage]["status"] == "passed"
+               for stage in ("preflight", "execute", "collect", "validate"))
+    assert lifecycle["stages"]["recover"]["status"] == "not_run"
+
+
+def test_lifecycle_does_not_claim_unknown_failure_was_validated():
+    result = normalize_engineering_result(
+        tool="catia", action="create_model", status="failed",
+        details={"error": {"code": "SOFTWARE_TIMEOUT", "message": "lost"},
+                 "remote_job": {"requires_reconnect": True}},
+    )
+    lifecycle = result["lifecycle"]
+    assert lifecycle["current_stage"] == "recover"
+    assert lifecycle["stages"]["execute"]["status"] == "not_run"
+    assert lifecycle["stages"]["validate"]["status"] == "not_run"
+    assert lifecycle["stages"]["recover"]["status"] == "deferred"
+    assert lifecycle["recoverable"] is True
+    assert lifecycle["next_action"] == "resume"
 

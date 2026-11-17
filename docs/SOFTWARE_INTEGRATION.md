@@ -158,6 +158,21 @@ VI-grade 场景等工程参数必须显式给出。规划入口的 `parameters` 
 只要一个软件动作具备启动条件，就可以尝试该软件；不要求先配置全部四款。
 macOS/Linux 可以控制远程 Windows worker。pywin32 只用于 COM，不作为其他启动方式的门槛。
 
+每个四软件结果还带有 `details.engineering_result.lifecycle`。控制端和 Agent 使用固定的
+`preflight → execute → collect → validate → recover` 阶段来判断下一步：
+
+| 阶段 | 成功证据 | 失败或不确定时的处理 |
+| --- | --- | --- |
+| `preflight` | 动作绑定、输入、输出和 evidence contract 已检查 | 不启动商业软件，返回配置或输入错误 |
+| `execute` | worker 已接受任务并取得明确终态，或本机 runner 已退出 | 超时/断线保留原 request ID，不自动重新提交 |
+| `collect` | 声明输出已传回且大小、哈希和路径契约通过 | 不发布部分结果，保留回收所需的远程任务记录 |
+| `validate` | 独立读取结果并通过单位、指标、原生报告契约 | 工程验收可为 `failed`，但执行状态仍可为 `completed` |
+| `recover` | 使用原 request ID 查询或恢复原工程链 | `deferred` 表示可继续观察；`unknown` 表示需要人工核实 |
+
+`lifecycle` 是阶段证据，不是软件成功的替代品。比如 `execute=passed` 只说明 runner 有明确
+执行结果，不能把 `engineering_acceptance=unknown` 自动变成通过；`recover=deferred` 也不会
+声称执行和验证已经完成。
+
 ## 当前边界与下一步
 
 - 文件传输保留小任务内联协议：最多 128 个文件、单次请求体上限 48 MiB；输入超过 32 MiB

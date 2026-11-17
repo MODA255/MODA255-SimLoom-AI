@@ -44,7 +44,8 @@ AgentCAD 的完整实时 2D 交互，也不提供 CATIA、Ansys、Adams 或 VI-g
 四款软件 runner 现已在旧的 `verification`、`vendor_validation` 和 `output_manifest` 字段
 旁边返回统一的 `details.engineering_result`（`simloom-ai/engineering-result/v1`）。该 envelope
 把执行状态、文件完整性、工程指标、观测值、产物哈希和工程验收结论分开，且明确标记
-`real_machine_verified`；现在还携带实际使用的输入/输出与指标契约摘要，便于 Agent 依据原始
+`real_machine_verified`；现在还携带实际使用的输入/输出与指标契约摘要，以及统一的
+`preflight → execute → collect → validate → recover` 生命周期状态，便于 Agent 依据原始
 规则做失败归因、修复候选比较和重规划；详见 `ENGINEERING_RESULT.md`。这减少了 Agent 为四款
 软件编写不同结果解析器的工作，但尚未替代真实软件的原生结果读取和 Windows 实机证据。
 

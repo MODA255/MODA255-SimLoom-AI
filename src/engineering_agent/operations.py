@@ -8,6 +8,7 @@ from typing import Any
 
 from .agentcad_compat import AGENTCAD_OPERATION_ALIASES, PARAMETER_ALIASES, resolve_operation
 from .cad_units import normalize_cad_arguments, quantity_schema
+from .engineering_lifecycle import SCHEMA as ENGINEERING_LIFECYCLE_SCHEMA, STAGES
 from .models import PlanStep, ToolName
 
 
@@ -37,6 +38,22 @@ ENGINEERING_RESULT_SCHEMA = {
                 "required_metrics": {"type": "array", "items": {"type": "string"}},
                 "metric_units": {"type": "object", "additionalProperties": {"type": "string"}},
                 "metric_rules": {"type": "array", "items": {"type": "object"}},
+            },
+        },
+        "lifecycle": {
+            "type": "object",
+            "description": f"{ENGINEERING_LIFECYCLE_SCHEMA} stage state",
+            "properties": {
+                "schema_version": {"type": "string", "const": ENGINEERING_LIFECYCLE_SCHEMA},
+                "current_stage": {"type": ["string", "null"], "enum": [*STAGES, "completed", "unknown", None]},
+                "stages": {"type": "object", "properties": {
+                    stage: {"type": "object", "properties": {
+                        "status": {"type": "string", "enum": ["not_run", "not_requested", "running", "passed", "failed", "unknown", "deferred"]},
+                        "error_code": {"type": "string"}, "message": {"type": "string"},
+                    }} for stage in STAGES
+                }},
+                "recoverable": {"type": "boolean"},
+                "next_action": {"type": ["string", "null"]},
             },
         },
         "artifacts": {"type": "object"},

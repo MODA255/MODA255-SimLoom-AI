@@ -29,6 +29,19 @@
     "metric_units": {"equivalent_stress": "MPa"},
     "metric_rules": [{"name": "equivalent_stress", "operator": "<=", "target": 80, "unit": "MPa"}]
   },
+  "lifecycle": {
+    "schema_version": "simloom-ai/engineering-lifecycle/v1",
+    "current_stage": "completed",
+    "stages": {
+      "preflight": {"status": "passed"},
+      "execute": {"status": "passed"},
+      "collect": {"status": "passed"},
+      "validate": {"status": "passed"},
+      "recover": {"status": "not_run"}
+    },
+    "recoverable": false,
+    "next_action": null
+  },
   "artifacts": {
     "inputs": [{"path": "inputs/model.mechdat", "bytes": 100, "sha256": "..."}],
     "outputs": [{"path": "artifacts/results.json", "bytes": 200, "sha256": "..."}]
@@ -50,6 +63,7 @@
 - `metrics` 是已按契约单位规范化的数值，`metric_verdicts` 保存每项规则的目标、运算符和通过状态。
 - `observations` 保存 runner 报告中的软件观察，例如 CATIA 参数回读、Ansys 解算状态或 Adams/VI-grade 返回码。
 - `contract` 是本次请求实际使用的输入、输出和验收契约摘要。它包括 evidence schema、报告路径、输入/输出路径、必须检查的指标、期望单位和原始规则。该摘要有长度限制，适合 Agent 做失败归因、修复候选比较和重规划；它不会替代原始报告，也不会因为契约存在就把结果判为通过。
+- `lifecycle` 是 `simloom-ai/engineering-lifecycle/v1` 阶段状态。五个阶段固定为 `preflight`、`execute`、`collect`、`validate`、`recover`。它记录控制端实际到达的阶段、阶段错误和是否可以用原任务 ID 恢复。`completed` 只在声明的输出已回收且验证契约通过后把 `validate` 标为 `passed`；断线或观测超时会把 `recover` 标为 `deferred`，不会把前面的阶段推断成成功。
 - `artifacts` 只包含项目相对路径、大小和 SHA-256，不包含本机绝对路径。
 
 ## 兼容策略
@@ -61,6 +75,8 @@
 统一结果会从 CATIA、Ansys、Adams 和 VI-grade 的 worker 响应及本地/远程 adapter 返回，并出现在工作流、CLI、Web 和 MCP 的结构化结果中。MCP operation schema 在 vendor operation 的 `details` 中声明了该 envelope。即使 worker 在启动前校验失败、runner 超时或输出契约不完整，也会返回 `status=failed` 的 envelope，并尽可能保留原始契约摘要，避免 Agent 只通过是否收到响应来判断状态。
 
 MCP discovery 会展开 `engineering_result.contract` 的字段结构。Agent 可以在调用前发现报告路径、输入/输出路径、必需指标、单位和原始规则，不必等待一次真实执行后再猜测返回格式。
+MCP discovery 同时展开 `engineering_result.lifecycle`，因此客户端可以根据 `current_stage`、`recoverable` 和
+`next_action` 选择继续查询原任务、读取结果或转入人工复核。
 
 ```bash
 .venv/bin/python -m pytest -q tests/test_engineering_result.py tests/test_four_vendor_runners.py tests/test_software_integration.py
