@@ -30,6 +30,12 @@ test 见 `WINDOWS_WORKER_SETUP.md`。
 启动条件”，不会启动 CATIA、Ansys、Adams 或 VI-grade，也不会把许可证、求解收敛或工程指标
 合格误报成已验证。
 
+MCP `tools/list` 会发布 `engineering_preflight` 的 `outputSchema`。每个 `steps[]` 项都声明
+`contract` 和 `operation_contract`，其中包含动作的 `definition_digest`、输入/输出清单、生命周期、
+恢复能力和可选的 `engineering_context`。Agent 可以先发现并保存这份结构，再决定是否提交任务；
+调用结果的实际 `operation_contract` 必须与 worker 校验的摘要一致。schema 只描述输出形状，不把
+`ready=true` 当成软件已安装、许可证可用或工程结果合格。
+
 这些能力用真实子进程和本地 HTTP 服务测试，fixture 明确标记为测试程序。
 目前没有 CATIA / Ansys / Adams / VI-grade 的许可证、版本及工程操作实机验收证据。
 

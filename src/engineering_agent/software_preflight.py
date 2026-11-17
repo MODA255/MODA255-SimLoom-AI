@@ -15,6 +15,37 @@ from .worker_protocol import WorkerError, relative_path
 from .software_contract import build_operation_contract
 
 
+PREFLIGHT_OUTPUT_SCHEMA = {
+    "type": "object",
+    "required": ["schema_version", "steps", "ready", "ready_count", "step_count"],
+    "properties": {
+        "schema_version": {"type": "string", "const": "simloom-ai/software-preflight/v1"},
+        "project_dir": {"type": "string"},
+        "probe_requested": {"type": "boolean"},
+        "plan": {"type": "object"},
+        "plan_validation": {"type": "object"},
+        "steps": {"type": "array", "items": {"type": "object", "properties": {
+            "step_id": {"type": "string"}, "tool": {"type": "string"}, "action": {"type": "string"},
+            "ready": {"type": "boolean"}, "issues": {"type": "array"},
+            "contract": {"type": ["object", "null"]},
+            "operation_contract": {"type": ["object", "null"], "properties": {
+                "schema_version": {"type": "string", "const": "simloom-ai/software-operation-contract/v1"},
+                "tool": {"type": "string"}, "action": {"type": "string"},
+                "definition_digest": {"type": "string"}, "execution": {"type": "object"},
+                "artifacts": {"type": "object"},
+                "engineering_context": {"type": ["object", "null"]},
+                "validation": {"type": ["object", "null"]},
+                "lifecycle": {"type": "object"}, "recovery": {"type": "object"},
+            }},
+        }}},
+        "skipped_steps": {"type": "array", "items": {"type": "string"}},
+        "ready_count": {"type": "integer", "minimum": 0},
+        "step_count": {"type": "integer", "minimum": 0},
+        "ready": {"type": "boolean"},
+    },
+}
+
+
 def _command_status(command: Any) -> tuple[bool, str, str | None]:
     if not isinstance(command, list) or not command or not all(isinstance(item, str) and item for item in command):
         return False, "COMMAND_ARGV_REQUIRED", None

@@ -230,8 +230,12 @@ def test_mcp_negotiates_requested_protocol_and_publishes_standard_output_schema(
 
     listed = server.handle({"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {"limit": 500}})
     plan = next(item for item in listed["result"]["tools"] if item["name"] == "engineering_plan")
+    preflight = next(item for item in listed["result"]["tools"] if item["name"] == "engineering_preflight")
     operation = next(item for item in listed["result"]["tools"] if item["name"] == "operation.cad.entity_move")
     assert plan["outputSchema"]["type"] == "object"
+    assert preflight["outputSchema"]["properties"]["schema_version"]["const"] == "simloom-ai/software-preflight/v1"
+    context_schema = preflight["outputSchema"]["properties"]["steps"]["items"]["properties"]["operation_contract"]["properties"]["engineering_context"]
+    assert context_schema["type"] == ["object", "null"]
     assert "schema_version" in plan["inputSchema"]["properties"]
     assert operation["outputSchema"]["type"] == "object"
     assert "document" in operation["outputSchema"]["properties"]

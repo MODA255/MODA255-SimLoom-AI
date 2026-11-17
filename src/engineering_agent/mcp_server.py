@@ -17,6 +17,7 @@ from .protocol import ErrorCode, ProtocolError, failure, parse_json_line
 from .validation import validate_plan
 from .versioning import VersionStore
 from .viewer import asset_view
+from .software_preflight import PREFLIGHT_OUTPUT_SCHEMA
 
 
 @dataclass(frozen=True)
@@ -467,7 +468,7 @@ class MCPServer:
         # structuredContent and can include vendor-specific details.
         builtin_outputs = {
             "engineering_plan": {"type": "object", "properties": {"plan": {"type": "object"}, "validation": {"type": "object"}}},
-            "engineering_preflight": {"type": "object"},
+            "engineering_preflight": PREFLIGHT_OUTPUT_SCHEMA,
             "engineering_run": {"type": "object"},
             "engineering_generate": {"type": "object"},
             "engineering_offline_run": {"type": "object"},
