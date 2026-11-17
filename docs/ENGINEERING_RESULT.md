@@ -46,7 +46,7 @@
 
 ## 入口和测试
 
-统一结果会从 CATIA、Ansys、Adams 和 VI-grade 的本地/远程 adapter 返回，并出现在工作流、CLI、Web 和 MCP 的结构化结果中。MCP operation schema 在 vendor operation 的 `details` 中声明了该 envelope。
+统一结果会从 CATIA、Ansys、Adams 和 VI-grade 的 worker 响应及本地/远程 adapter 返回，并出现在工作流、CLI、Web 和 MCP 的结构化结果中。MCP operation schema 在 vendor operation 的 `details` 中声明了该 envelope。即使 worker 在启动前校验失败、runner 超时或输出契约不完整，也会返回 `status=failed` 的 envelope，避免 Agent 只通过是否收到响应来判断状态。
 
 ```bash
 .venv/bin/python -m pytest -q tests/test_engineering_result.py tests/test_four_vendor_runners.py tests/test_software_integration.py

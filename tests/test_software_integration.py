@@ -132,9 +132,13 @@ def test_worker_rejects_replay_schema_mismatch_and_in_place_outputs(project, tmp
     commands = {"catia.create_or_update_model": COMMAND}
     first = run_job(tmp_path / "worker", request, commands)
     assert first["status"] == "completed"
+    assert first["engineering_result"]["schema_version"] == "simloom-ai/engineering-result/v1"
+    assert first["engineering_result"]["status"] == "completed"
     assert run_job(tmp_path / "worker", request, commands)["error"]["code"] == "JOB_ALREADY_EXISTS"
     request["schema_version"] = "simloom-ai/worker/v99"
-    assert run_job(tmp_path / "worker", request, commands)["error"]["code"] == "WORKER_SCHEMA_UNSUPPORTED"
+    mismatched = run_job(tmp_path / "worker", request, commands)
+    assert mismatched["error"]["code"] == "WORKER_SCHEMA_UNSUPPORTED"
+    assert mismatched["engineering_result"]["status"] == "failed"
     request["schema_version"] = SCHEMA
     request["outputs"] = ["scripts/runner.py"]
     assert run_job(tmp_path / "worker", request, commands)["error"]["code"] == "DUPLICATE_ARTIFACT_PATH"
