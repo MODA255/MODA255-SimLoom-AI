@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import shutil
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,7 @@ from .worker_protocol import WorkerError
 STATIC_DIR = Path(__file__).with_name("static")
 INDEX_HTML = (STATIC_DIR / "workspace.html").read_text(encoding="utf-8")
 WEB_SCHEMA_VERSION = "simloom-ai/web/v1"
+WEB_ERROR_SCHEMA_VERSION = "simloom-ai/error-envelope/v1"
 
 
 def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.0.1", port: int = 8787,
@@ -30,6 +32,13 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
     runner = TaskRunner(agent, queue)
 
     class Handler(BaseHTTPRequestHandler):
+        def _request_id(self) -> str:
+            """Return a bounded caller id or create one for this HTTP request."""
+            supplied = self.headers.get("X-Request-Id", "").strip()
+            if supplied and len(supplied) <= 128 and all(char.isprintable() and char not in "\r\n" for char in supplied):
+                return supplied
+            return uuid.uuid4().hex
+
         def _send(self, status: int, payload: Any, content_type: str = "application/json", filename=None):
             if isinstance(payload, bytes):
                 body = payload
@@ -46,6 +55,30 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
                 self.send_header("Content-Disposition", "attachment; filename*=UTF-8\'\'" + quote(filename))
             self.end_headers()
             self.wfile.write(body)
+
+        def _send_error(self, status: int, code: str, message: str, *, request_id: str,
+                        details: dict[str, Any] | None = None, retryable: bool = False):
+            """Send a versioned error while preserving the legacy Web shape.
+
+            ``error`` and ``code`` remain for existing integrations. New
+            clients should consume ``error_envelope`` so Web and MCP expose
+            the same machine-readable fields.
+            """
+            envelope = {
+                "schema_version": WEB_ERROR_SCHEMA_VERSION,
+                "code": str(code),
+                "message": str(message),
+                "request_id": request_id,
+                "details": details or {},
+                "retryable": bool(retryable),
+            }
+            self._send(status, {
+                "ok": False,
+                "request_id": request_id,
+                "error": str(message),
+                "code": str(code),
+                "error_envelope": envelope,
+            })
 
         def _json(self):
             if self.headers.get_content_type() != "application/json":
@@ -66,28 +99,36 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
                 raise PermissionError("只允许工作台页面发起此请求")
 
         def _handle(self, callback):
+            request_id = self._request_id()
             try:
                 self._guard_origin()
                 callback()
             except (BrokenPipeError, ConnectionResetError):
                 return
             except FileNotFoundError as exc:
-                self._send(404, {"error": str(exc), "code": "RESOURCE_NOT_FOUND"})
+                self._send_error(404, "RESOURCE_NOT_FOUND", str(exc), request_id=request_id,
+                                 details={"path": str(exc)})
             except FileExistsError as exc:
-                self._send(409, {"error": str(exc), "code": "PROJECT_EXISTS"})
+                self._send_error(409, "PROJECT_EXISTS", str(exc), request_id=request_id)
             except PermissionError as exc:
-                self._send(403, {"error": str(exc), "code": "ACCESS_DENIED"})
+                self._send_error(403, "ACCESS_DENIED", str(exc), request_id=request_id)
             except WorkerError as exc:
-                status = 409 if exc.code in {"PROJECT_OUTPUT_CHANGED", "PUBLISHED_RESULT_CHANGED", "JOB_STILL_ACTIVE", "JOB_NOT_COMPLETED", "JOB_ID_CONFLICT"} else 400
-                self._send(status, {"error": str(exc), "code": exc.code})
+                conflict_codes = {"PROJECT_OUTPUT_CHANGED", "PUBLISHED_RESULT_CHANGED", "JOB_STILL_ACTIVE",
+                                  "JOB_NOT_COMPLETED", "JOB_ID_CONFLICT"}
+                status = 409 if exc.code in conflict_codes else 400
+                self._send_error(status, exc.code, str(exc), request_id=request_id,
+                                 retryable=exc.code in {"JOB_STILL_ACTIVE", "JOB_NOT_COMPLETED"})
             except (ValueError, TypeError, KeyError) as exc:
-                self._send(400, {"error": str(exc), "code": "INVALID_ARGUMENTS"})
+                self._send_error(400, "INVALID_ARGUMENTS", str(exc), request_id=request_id)
             except RuntimeError as exc:
                 locked = "LOCKED" in str(exc) or "ALREADY_RUNNING" in str(exc)
                 conflict = "CONFLICT" in str(exc)
-                self._send(409 if locked or conflict else 500, {"error": str(exc), "code": "BUSY" if locked else "CONFLICT" if conflict else "RUNTIME_ERROR"})
+                self._send_error(409 if locked or conflict else 500,
+                                 "BUSY" if locked else "CONFLICT" if conflict else "RUNTIME_ERROR",
+                                 str(exc), request_id=request_id,
+                                 retryable=locked)
             except Exception as exc:
-                self._send(500, {"error": str(exc), "code": "INTERNAL_ERROR"})
+                self._send_error(500, "INTERNAL_ERROR", str(exc), request_id=request_id)
 
         def do_GET(self):
             self._handle(self._get)

@@ -99,6 +99,35 @@ def test_api_errors_do_not_disconnect_clients(service):
     assert call("/api/health")[1] == {"ok": True}
 
 
+def test_web_errors_publish_versioned_envelope_and_preserve_legacy_fields(service):
+    call, _, _ = service
+    request_id = "agent-request-42"
+    status, error = call("/api/projects", {"name": ""},
+                         headers={"Content-Type": "application/json", "X-Request-Id": request_id})
+    assert status == 400
+    assert error["ok"] is False
+    assert error["code"] == "INVALID_ARGUMENTS"
+    assert error["error"]
+    envelope = error["error_envelope"]
+    assert envelope == {
+        "schema_version": "simloom-ai/error-envelope/v1",
+        "code": "INVALID_ARGUMENTS",
+        "message": error["error"],
+        "request_id": request_id,
+        "details": {},
+        "retryable": False,
+    }
+    assert error["request_id"] == request_id
+
+
+def test_web_generates_request_id_for_errors(service):
+    call, _, _ = service
+    status, error = call("/api/projects", raw=b"[]")
+    assert status == 400
+    assert len(error["request_id"]) == 32
+    assert error["error_envelope"]["request_id"] == error["request_id"]
+
+
 def test_project_watch_http_reports_external_result_change(service, tmp_path):
     call, _, _ = service
     result = tmp_path / "solver.rst"
