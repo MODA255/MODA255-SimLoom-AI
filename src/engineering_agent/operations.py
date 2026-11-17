@@ -26,6 +26,22 @@ ENGINEERING_RESULT_SCHEMA = {
         "metrics": {"type": "object"},
         "metric_verdicts": {"type": "array", "items": {"type": "object"}},
         "observations": {"type": "object"},
+        "engineering_context": {
+            "type": ["object", "null"],
+            "description": "Bounded simloom-ai/engineering-context/v1 export of explicit native objects, coordinate systems, load cases and model references",
+            "properties": {
+                "schema_version": {"type": "string", "const": "simloom-ai/engineering-context/v1"},
+                "source": {"type": "string"},
+                "software": {"type": "object", "properties": {
+                    "name": {"type": "string"}, "version": {"type": "string"},
+                    "build": {"type": "string"}, "edition": {"type": "string"},
+                    "license_status": {"type": "string"}}},
+                "native_objects": {"type": "array", "items": {"type": "object"}},
+                "coordinate_systems": {"type": "array", "items": {"type": "object"}},
+                "load_cases": {"type": "array", "items": {"type": "object"}},
+                "model_references": {"type": "array", "items": {"type": "object"}},
+            },
+        },
         "contract": {
             "type": "object",
             "properties": {

@@ -18,6 +18,20 @@
     {"name": "equivalent_stress", "passed": false}
   ],
   "observations": {"solution_status": "Done"},
+  "engineering_context": {
+    "schema_version": "simloom-ai/engineering-context/v1",
+    "source": "explicit_vendor_export",
+    "software": {
+      "name": "ansys",
+      "version": "2026 R1",
+      "build": "2026.1",
+      "license_status": "licensed"
+    },
+    "native_objects": [{"id": "analysis-1", "kind": "analysis", "name": "Static Structural"}],
+    "coordinate_systems": [{"id": "cs-1", "kind": "cartesian", "origin": [0, 0, 0]}],
+    "load_cases": [{"id": "lc-1", "name": "Gravity", "model_reference": "analysis-1"}],
+    "model_references": [{"id": "mesh-1", "kind": "mesh", "path": "mesh.cdb"}]
+  },
   "contract": {
     "schema_version": "simloom-ai/vendor-evidence/v2",
     "kind": "mechanical_solve",
@@ -83,6 +97,7 @@
 - `real_machine_verified` 只有经过 Windows worker 的机器证据记录才可能为 `true`。本地 fixture、COM 探针和文件哈希不能填充这个字段。
 - `metrics` 是已按契约单位规范化的数值，`metric_verdicts` 保存每项规则的目标、运算符和通过状态。
 - `observations` 保存 runner 报告中的软件观察，例如 CATIA 参数回读、Ansys 解算状态或 Adams/VI-grade 返回码。
+- `engineering_context` 是 `simloom-ai/engineering-context/v1` 的有界原生对象摘要。它可以包含软件版本/构建/许可证状态、CATIA 参数树或文档对象、Ansys/Adams/VI-grade 的坐标系、工况、场景对象和模型引用。控制端只复制 runner 或 validator 明确导出的字段，不从文件名、进程退出码或工具名称推断原生对象；缺少独立导出时字段为 `null`，不会伪造实机证据。
 - `contract` 是本次请求实际使用的输入、输出和验收契约摘要。它包括 evidence schema、报告路径、输入/输出路径、必须检查的指标、期望单位和原始规则。该摘要有长度限制，适合 Agent 做失败归因、修复候选比较和重规划；它不会替代原始报告，也不会因为契约存在就把结果判为通过。
 - `lifecycle` 是 `simloom-ai/engineering-lifecycle/v1` 阶段状态。五个阶段固定为 `preflight`、`execute`、`collect`、`validate`、`recover`。它记录控制端实际到达的阶段、阶段错误和是否可以用原任务 ID 恢复。`completed` 只在声明的输出已回收且验证契约通过后把 `validate` 标为 `passed`；断线或观测超时会把 `recover` 标为 `deferred`，不会把前面的阶段推断成成功。
 - `failure` 是 `simloom-ai/engineering-failure/v1` 的保守分类，只在存在错误时出现。它把底层错误码归入配置、输入契约、传输、执行、回收、验证、恢复、并发、发布或未知类别，并给出 `retryable`、`requires_human` 和建议动作。未知错误默认要求人工复核；分类不会改变原始错误码，也不会把软件运行失败改成工程指标失败。
@@ -91,7 +106,7 @@
 
 ## 兼容策略
 
-旧客户端仍可读取 `details.verification`、`details.vendor_validation` 和 `details.output_manifest`。新 Agent 应优先读取 `details.engineering_result`，只有在 `schema_version` 不支持时才回退到旧字段。该 envelope 不会把未运行的软件伪装成已验证，也不会把失败的 vendor report 误判为工程指标失败；报告本身无效时，`engineering_acceptance` 为 `unknown`。
+旧客户端仍可读取 `details.verification`、`details.vendor_validation` 和 `details.output_manifest`。新 Agent 应优先读取 `details.engineering_result`，只有在 `schema_version` 不支持时才回退到旧字段。`engineering_context` 缺失不影响旧结果解析，也不代表原生对象不存在；它只在 runner 明确导出后出现。该 envelope 不会把未运行的软件伪装成已验证，也不会把失败的 vendor report 误判为工程指标失败；报告本身无效时，`engineering_acceptance` 为 `unknown`。
 
 ## 入口和测试
 

@@ -59,6 +59,7 @@ def test_vendor_operation_schema_advertises_normalized_result():
         "configuration", "input_contract", "transport", "execution", "collection",
         "validation", "recovery", "concurrency", "publication", "unknown"]
     assert envelope["properties"]["operation_contract"]["properties"]["definition_digest"]["type"] == "string"
+    assert envelope["properties"]["engineering_context"]["properties"]["schema_version"]["const"] == "simloom-ai/engineering-context/v1"
 
 
 def test_normalized_result_exposes_the_input_output_and_metric_contract():
@@ -142,4 +143,39 @@ def test_failure_classification_distinguishes_validation_from_recovery():
     assert recovery["failure"]["category"] == "recovery"
     assert recovery["failure"]["retryable"] is True
     assert recovery["failure"]["requires_human"] is False
+
+
+def test_normalized_result_carries_bounded_native_engineering_context():
+    result = normalize_engineering_result(
+        tool="ansys", action="solve_configured_model", status="completed",
+        details={
+            "software_version": "2026 R1",
+            "license_status": "licensed",
+            "engineering_context": {
+                "source": "mechanical_export",
+                "native_objects": [{"id": "analysis-1", "kind": "analysis", "name": "Static Structural"}],
+                "coordinate_systems": [{"id": "cs-1", "kind": "cartesian", "origin": [0, 0, 0]}],
+                "load_cases": [{"id": "lc-1", "name": "Gravity", "model_reference": "analysis-1"}],
+                "model_references": [{"id": "mesh-1", "kind": "mesh", "path": "mesh.cdb"}],
+            },
+        })
+    context = result["engineering_context"]
+    assert context["schema_version"] == "simloom-ai/engineering-context/v1"
+    assert context["software"] == {"name": "ansys", "version": "2026 R1", "license_status": "licensed"}
+    assert context["native_objects"][0]["id"] == "analysis-1"
+    assert context["coordinate_systems"][0]["origin"] == [0, 0, 0]
+    assert context["load_cases"][0]["model_reference"] == "analysis-1"
+    assert context["model_references"][0]["path"] == "mesh.cdb"
+
+
+def test_context_can_be_read_from_legacy_vendor_validation_fields():
+    result = normalize_engineering_result(
+        tool="catia", action="update_parameters", status="completed",
+        details={"vendor_validation": {
+            "engineering_context": {
+                "software": {"version": "V5-6R2024"},
+                "native_objects": [{"id": "PartBody", "kind": "body"}],
+            }}})
+    assert result["engineering_context"]["software"]["name"] == "catia"
+    assert result["engineering_context"]["software"]["version"] == "V5-6R2024"
 
