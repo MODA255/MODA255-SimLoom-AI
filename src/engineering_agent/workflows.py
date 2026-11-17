@@ -255,11 +255,14 @@ class DurableWorkflow:
         """Return declared candidates whose attempt budgets are not exhausted."""
         attempts = {}
         for item in state.get('repair_history', []):
-            strategy_id = (item.get('candidate') or {}).get('strategy_id')
-            if strategy_id:
-                attempts[strategy_id] = attempts.get(strategy_id, 0) + 1
+            candidate = item.get('candidate') or {}
+            strategy_id = candidate.get('strategy_id')
+            step_id = candidate.get('step_id')
+            if strategy_id and step_id:
+                key = (step_id, strategy_id)
+                attempts[key] = attempts.get(key, 0) + 1
         return [candidate for candidate in propose_repairs(state, plan, self.agent)
-                if attempts.get(candidate.strategy_id, 0) < candidate.max_attempts]
+                if attempts.get((candidate.step_id, candidate.strategy_id), 0) < candidate.max_attempts]
 
     def repair(self, identifier):
         """Create one bounded child workflow from explicit binding strategies."""
@@ -278,11 +281,14 @@ class DurableWorkflow:
                         'message': '没有匹配的显式修复策略；未修改模型，也未重新启动软件。'}
             attempts = {}
             for item in parent.get('repair_history', []):
-                strategy_id = item.get('candidate', {}).get('strategy_id')
-                if strategy_id:
-                    attempts[strategy_id] = attempts.get(strategy_id, 0) + 1
+                candidate_record = item.get('candidate') or {}
+                strategy_id = candidate_record.get('strategy_id')
+                step_id = candidate_record.get('step_id')
+                if strategy_id and step_id:
+                    key = (step_id, strategy_id)
+                    attempts[key] = attempts.get(key, 0) + 1
             candidate = next((item for item in candidates
-                              if attempts.get(item.strategy_id, 0) < item.max_attempts), None)
+                              if attempts.get((item.step_id, item.strategy_id), 0) < item.max_attempts), None)
             if candidate is None:
                 txn.rollback('All matching repair strategies have already been attempted')
                 return {'status': 'needs_review', 'workflow_id': identifier,

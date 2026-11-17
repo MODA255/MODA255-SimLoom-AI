@@ -111,7 +111,8 @@ Python 使用 `agent.run(..., dry_run=False, auto_repair=True)`，MCP `engineeri
 `repair_budget=2`～`8`，CLI 对应 `--repair-budget 2`。多次尝试由同一个父工程链串联，每次仍创建
 独立子工程链，并把完整尝试记录写入父报告的 `validation.auto_repair.repair_loop` 和工作流状态。
 也可以在配置文件中设置默认值：`{"repair": {"auto_budget": 2}}`；调用参数优先于配置值。
-只有上一轮比较允许 `evaluate_next_candidate` 时才会启动下一轮；通过、回归、证据不足、策略耗尽
+只有上一轮比较允许 `evaluate_next_candidate` 时才会启动下一轮；同一步骤的多条匹配策略按配置
+顺序逐条评估，每条策略单独计算自己的最大尝试次数。通过、回归、证据不足、策略耗尽
 或预算用完都会停止。等待中、失败、输入冲突或本机状态不明的工程链只返回 `deferred`，没有匹配
 策略或达到尝试上限则返回 `needs_review`。这不是让模型自由修改载荷或放宽阈值，仍受每个动作的
 显式策略、契约字段、单策略最大尝试次数和总预算约束。

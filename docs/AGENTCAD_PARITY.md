@@ -270,7 +270,7 @@ DXF，重新计算已生成尺寸并检查机械语义元数据。当前是 vend
 vendor-neutral P&ID 图模型，不等于 ISO/ISA 全部符号、厂商对象和工艺设计审查。
 
 2026-11-17 后续：有界修复增加 `repair-loop/v1`。CLI、Python 和 MCP 可以在 1～8 次预算内串联
-多个显式 repair strategy；每次尝试仍创建独立子工程链，并复用 `repair-comparison/v1` 的父子
+多个显式 repair strategy；同一步骤的多条匹配策略也会按声明顺序逐条评估，每次尝试仍创建独立子工程链，并复用 `repair-comparison/v1` 的父子
 指标比较。只有比较结果允许 `evaluate_next_candidate` 时才继续，验收通过、回归、证据不足和预算
 耗尽都会留下停止决策并转人工复核。这推进了 Agent-facing 的反馈闭环，但仍不是无策略约束的
 通用自主工程师。

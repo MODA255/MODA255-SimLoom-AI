@@ -301,9 +301,7 @@ def _validate_patch(patch: Any, step: PlanStep) -> dict[str, Any]:
 
 
 def propose_repairs(state: dict[str, Any], plan: ExecutionPlan, agent) -> list[RepairCandidate]:
-    """Return at most one candidate per failed step, in plan order."""
-    history = state.get("repair_history", [])
-    attempts = {item.get("parent_workflow_id", state.get("workflow_id")): 0 for item in history}
+    """Return all matching engineer-declared candidates, in plan order."""
     candidates: list[RepairCandidate] = []
     for step in plan.steps:
         evidence = _step_evidence(state, step.id)
@@ -330,7 +328,6 @@ def propose_repairs(state: dict[str, Any], plan: ExecutionPlan, agent) -> list[R
             candidates.append(RepairCandidate(raw["id"], step.id,
                                                str(raw.get("reason") or "按工程师声明的修复策略调整参数"),
                                                patch, evidence_copy, max_attempts))
-            break
     return candidates
 
 

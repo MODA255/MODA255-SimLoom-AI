@@ -592,3 +592,26 @@ def test_repair_strategy_attempt_limit_is_enforced(workflow_setup,tmp_path):
     second=make().workflow('repair',first.workflow_id,project_dir=str(project))
     assert second['status']=='needs_review'
     assert len((tmp_path/'repair-count').read_text().splitlines())==1
+
+
+def test_repair_moves_to_next_matching_strategy_after_first_is_exhausted(workflow_setup,tmp_path):
+    project,manager,config,plan,make=workflow_setup
+    (tmp_path/'gate').touch();config['timeouts']['step_seconds']=10
+    first=make().run('fixture',project_dir=str(project),dry_run=False)
+    parent=WorkflowStore(project).read(first.workflow_id)
+    target=next(item for item in parent['report']['results'] if item['step_id']=='solve')
+    target['details']['vendor_validation']={'engineering_acceptance':'failed','metric_verdicts':[
+        {'name':'equivalent_stress','value':120,'unit':'MPa','operator':'<=','target':80,'passed':False}]}
+    WorkflowStore(project).save(parent)
+    config['tools']['ansys']['actions']['mesh_and_solve']['repair_strategies']=[
+        {'id':'first_strategy','when':{'metric':'equivalent_stress','failed':True},
+         'parameter_patch':{'marker':str(tmp_path/'first-count')},'max_attempts':1},
+        {'id':'second_strategy','when':{'metric':'equivalent_stress','failed':True},
+         'parameter_patch':{'marker':str(tmp_path/'second-count')},'max_attempts':1},
+    ]
+    first_repair=make().workflow('repair',first.workflow_id,project_dir=str(project))
+    second_repair=make().workflow('repair',first.workflow_id,project_dir=str(project))
+    assert first_repair['repair']['candidate']['strategy_id']=='first_strategy'
+    assert second_repair['repair']['candidate']['strategy_id']=='second_strategy'
+    assert len((tmp_path/'first-count').read_text().splitlines())==1
+    assert len((tmp_path/'second-count').read_text().splitlines())==1
