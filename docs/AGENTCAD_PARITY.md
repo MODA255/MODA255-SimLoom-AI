@@ -41,6 +41,12 @@ HTML，支持 CLI、Web 和 MCP 调用；生成和回读均经过事务、checkp
 检查，适合把 Agent 的中间结果交给工程师离线查看。它改善了分享和审计体验，但不等于
 AgentCAD 的完整实时 2D 交互，也不提供 CATIA、Ansys、Adams 或 VI-grade 的原生查看器。
 
+四款软件 runner 现已在旧的 `verification`、`vendor_validation` 和 `output_manifest` 字段
+旁边返回统一的 `details.engineering_result`（`simloom-ai/engineering-result/v1`）。该 envelope
+把执行状态、文件完整性、工程指标、观测值、产物哈希和工程验收结论分开，且明确标记
+`real_machine_verified`；详见 `ENGINEERING_RESULT.md`。这减少了 Agent 为四款软件编写不同
+结果解析器的工作，但尚未替代真实软件的原生结果读取和 Windows 实机证据。
+
 `cad.change_space` 现已补齐：可把选定实体事务化移动到模型空间或已有纸空间，并在原生 DXF
 回读时验证 layout 归属，细节见 `CAD_CHANGE_SPACE.md`。
 

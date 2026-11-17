@@ -116,6 +116,7 @@ PYTHONPATH=src python -m engineering_agent.cli \
 | B-Rep 几何 | ✅ 可选 | box/cylinder/sphere/cone、fuse、cut、common、体积、表面积、拓扑和包围盒 |
 | DXF / OBJ / VTK / VTU / GLB | ✅ | 语义实体、图层、块、填充、坐标系、网格读取、显示网格导出与独立校验 |
 | 结果解析 | ✅ | JSON、CSV 和文本结果；支持指标路径和阈值判断 |
+| 统一工程结果 | ✅ 契约已实现 | CATIA/Ansys/Adams/VI-grade runner 统一返回状态、指标、证据、产物哈希和工程验收结论；保留旧字段兼容 |
 | 事务与恢复 | ✅ | staging、锁、journal、checkpoint、commit、rollback、stale recovery |
 | 版本与 diff | ✅ | 不可变快照、字段级差异、资产路径匹配和时间线 |
 | Viewer | ✅ | DXF 选择、高亮、图层开关、直接编辑和跨会话撤销/重做；自包含 WebGL 网格/结果云图 viewer；可导出不依赖服务的离线 HTML 预览 |

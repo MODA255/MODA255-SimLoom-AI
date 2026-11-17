@@ -76,7 +76,9 @@ class OperationSpec:
             outputs = {"step_id": {"type": "string"}, "tool": {"type": "string"},
                        "status": {"type": "string", "enum": ["planned", "completed", "failed", "unavailable"]},
                        "message": {"type": "string"}, "outputs": {"type": "array", "items": {"type": "string"}},
-                       "details": {"type": "object", "description": "File receipts, execution logs and transaction status; not proof of engineering validity"}}
+                       "details": {"type": "object", "description": "File receipts, execution logs and transaction status; not proof of engineering validity", "properties": {
+                           "engineering_result": {"type": "object", "description": "Unified simloom-ai/engineering-result/v1 envelope with metrics, artifacts, verification and engineering acceptance"}
+                       }}}
         return {
             "name": self.name,
             "tool": self.tool.value,

@@ -298,5 +298,6 @@ def validate_evidence(report, contract, outputs, *, request_id, tool, action):
         metrics, verdicts = evaluate_quantities(metrics, expected)
     return {'schema_version': SCHEMA, 'passed': True, 'kind': contract['kind'],
             'metrics': metrics, 'metric_verdicts': verdicts,
+            'observations': observation,
             'engineering_acceptance': ('failed' if any(not v['passed'] for v in verdicts) else 'passed') if verdicts else 'not_requested',
             'real_machine_verified': False, 'scope': 'file_identity_and_reported_observations'}

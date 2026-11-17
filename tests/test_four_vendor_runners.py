@@ -47,6 +47,10 @@ def test_export_preserves_failed_design_verdict_without_repeating_successful_sol
     assert result.status == 'completed', result.to_dict()
     verdict = result.details['vendor_validation']
     assert result.details['verification'] == 'artifact_and_vendor_evidence'
+    normalized = result.details['engineering_result']
+    assert normalized['schema_version'] == 'simloom-ai/engineering-result/v1'
+    assert normalized['tool'] == tool
+    assert normalized['engineering_acceptance'] == 'failed'
     assert verdict['engineering_acceptance'] == 'failed'
     assert verdict['metric_verdicts'][0]['value'] == 12.5
     assert not verdict['real_machine_verified']

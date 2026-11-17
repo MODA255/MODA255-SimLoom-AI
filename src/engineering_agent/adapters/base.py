@@ -18,6 +18,7 @@ from ..worker_protocol import (SCHEMA, MAX_HTTP_BYTES, WorkerError, decode_files
                                names, pack_file, safe_file)
 from ..vendor_validation import VendorValidationError, validate_report
 from ..vendor_evidence import SCHEMA as EVIDENCE_SCHEMA, build_contract, requirements, strict_json, validate_evidence
+from ..engineering_result import normalize_engineering_result
 
 
 class AdapterError(RuntimeError):
@@ -188,12 +189,21 @@ class CommandAdapter(ToolAdapter):
 
     def execute(self, step: PlanStep, context: AdapterContext) -> ToolResult:
         if context.dry_run:
+            details = {"doctor": self.doctor(probe=False), "execution": "not_run"}
+            details["engineering_result"] = normalize_engineering_result(
+                tool=self.name.value, action=step.action, status="planned",
+                message=f"dry-run: {self.name.value} {step.action}", outputs=step.outputs, details=details)
             return ToolResult(step.id, self.name, "planned", f"dry-run: {self.name.value} {step.action}",
-                              step.outputs, {"doctor": self.doctor(probe=False), "execution": "not_run"})
+                              step.outputs, details)
         binding = self.config.get("actions", {}).get(step.action)
         if not isinstance(binding, dict) or not binding.get("script") or (not self.bridge_url and not self._valid_command(binding.get("command"))):
+            details = {"error": {"code": "ACTION_BINDING_REQUIRED"}, "action": step.action}
+            details["engineering_result"] = normalize_engineering_result(
+                tool=self.name.value, action=step.action, status="unavailable",
+                message="Configure an action script and a runner command or worker URL",
+                outputs=step.outputs, details=details)
             return ToolResult(step.id, self.name, "unavailable", "Configure an action script and a runner command or worker URL",
-                              details={"error": {"code": "ACTION_BINDING_REQUIRED"}, "action": step.action})
+                              details=details)
         try:
             payload = self._prepare(step, context, binding)
             workspace = context.workspace_dir
@@ -213,14 +223,21 @@ class CommandAdapter(ToolAdapter):
             if self.bridge_url and "payload" in locals():
                 details["remote_job"] = {"request_id": payload["request_id"], "status": "unknown", "requires_reconnect": True,
                                          "receipt_path": str(ReceiptStore(context.project_dir).path(payload["request_id"]))}
+            details["engineering_result"] = normalize_engineering_result(
+                tool=self.name.value, action=step.action, status="failed", message=str(exc),
+                outputs=step.outputs, details=details)
             return ToolResult(step.id, self.name, "failed", str(exc), details=details)
 
     def collect_response(self, step, body, request_id, expected_outputs, workspace, validation=None):
         if body.get("schema_version") != SCHEMA or body.get("request_id") != request_id:
             raise WorkerError("WORKER_RESPONSE_MISMATCH")
         if body.get("status") == "failed":
-            return ToolResult(step.id, self.name, "failed", body.get("error", {}).get("message", "Worker execution failed"),
-                              details={k: v for k, v in body.items() if k != "outputs"})
+            details = {k: v for k, v in body.items() if k != "outputs"}
+            message = body.get("error", {}).get("message", "Worker execution failed")
+            details["engineering_result"] = normalize_engineering_result(
+                tool=self.name.value, action=step.action, status="failed", message=message,
+                outputs=expected_outputs, details=details)
+            return ToolResult(step.id, self.name, "failed", message, details=details)
         if body.get("status") != "completed" or type(body.get("returncode")) is not int or body["returncode"] != 0:
             raise WorkerError("INVALID_WORKER_COMPLETION")
         if body.get("tool") != self.name.value or body.get("action") != step.action:
@@ -275,6 +292,10 @@ class CommandAdapter(ToolAdapter):
         details.update(output_manifest=manifest(body["outputs"]), output_files=output_files,
                        verification=details.get("verification", "artifact_integrity"),
                        vendor_validation=details.get("vendor_validation", "not_run"))
+        details["engineering_result"] = normalize_engineering_result(
+            tool=self.name.value, action=step.action, status="completed",
+            message="Runner completed; declared output files collected and hashes verified",
+            outputs=list(output_files), details=details)
         return ToolResult(step.id, self.name, "completed", "Runner completed; declared output files collected and hashes verified",
                           list(output_files), details)
 
