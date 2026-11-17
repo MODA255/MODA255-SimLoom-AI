@@ -210,6 +210,40 @@ worker 请求会携带同一摘要，worker 在启动 runner 前校验工具、�
 控制端只传工程参数。启动软件的命令与 CATIA ProgID 来自动作配置的 `vendor_options`；
 Adams/VI-grade 请求里的旧 `vendor_command` 会明确报错，需迁移到配置。
 
+### 四个 runner 的工程上下文导出
+
+四个入口都会在 `observations.engineering_context` 写出
+`simloom-ai/engineering-context/v1` 所需的显式字段。控制端随后把它规范化到结果顶层的
+`engineering_context`，因此 Agent、Web 页面和 MCP 客户端可以用同一个对象查看当前软件、原生对象、
+工况和模型文件引用。这个对象只记录 runner 从厂商 API、动作参数或导出文件中明确拿到的内容；
+不会根据退出码、文件名、动作名称或命令行猜测工程语义。
+
+| runner | `software` | `native_objects` | `load_cases` | `model_references` |
+| --- | --- | --- | --- | --- |
+| `catia_parameter_export.py` | CATIA 的 `Application.Version`（如果 API 提供） | 每个成功读回的 CATPart 参数，含 `after_reopen` 值 | 空数组；当前动作没有求解工况 | `input_model`、`native_output`、`step_output` |
+| `ansys_mechanical_solve.py` | Mechanical App 的 `version` | 请求的唯一分析对象 | 同一分析对象及其最终 `solution_status` | `db_file`、`native_output`、`result_output` |
+| `adams_command_runner.py` | `adams` | 空数组，除非后续导出契约增加原生对象 | 空数组；导出 runner 不把指标冒充载荷工况 | `command_file`、`result_output` |
+| `vi_grade_scenario_runner.py` | `vi-grade` | 空数组，除非后续场景契约增加原生对象 | 空数组；场景指标仍须由导出文件明确声明 | `scenario_file`、`metrics_output` |
+
+`model_references` 的每项包含稳定的 `id`、`kind=file`、项目相对 `path` 和 `role`。同一角色在
+一个请求中可能出现多次时，runner 会保留出现顺序；客户端不得依赖数组下标来关联文件。没有版本或
+原生对象证据时字段保持空值，不能填充 `unknown` 之外的推断值。对 Adams 和 VI-grade 而言，
+solver、工况、车辆模型等语义必须由命令生成的 JSON/CSV 报告扩展契约后再加入；当前 runner
+只负责执行受配置保护的导出命令、重读指标并验证单位。
+
+结果验收仍分成两层：`engineering_context` 描述“本次动作明确接触了什么”，
+`vendor_validation` 描述输出文件和工程指标是否满足契约。上下文存在不能证明许可证、网格质量、
+求解收敛或几何拓扑正确；`real_machine_verified` 仍只能来自 Windows 工作站上登记的有效
+`machine-evidence/v1` 记录。单元测试中的假 COM、假 Mechanical 和受控导出程序只验证协议和
+错误处理，不会生成真实软件证据。
+
+新增或修改 runner 时，必须同时完成以下清单：
+
+1. 在入口函数中显式构造上下文，来源只能是厂商 API 或已校验的请求/结果字段。
+2. 为四个字段分别补充成功、缺省和错误路径测试，确认失败时不会发布半成品报告。
+3. 更新本节表格和相应 runner 的示例参数，说明尚未实机验证的边界。
+4. 运行专项回归和全量测试，再提交代码与文档；本地 fixture 的通过结果不得写成商业软件已验证。
+
 | 入口 | 具体行为 | 尚未证明 |
 | --- | --- | --- |
 | `catia_parameter_export.py` | 连接已运行的 CATIA；只对本轮 CATPart 副本修改明确命名的数字参数；保存、关闭、重新打开；比较请求值和两次读回值；用重新打开的文档导出 STEP | 实机版本兼容、几何尺寸与全部拓扑正确 |

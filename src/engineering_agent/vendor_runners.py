@@ -18,6 +18,31 @@ def _write(path, data):
     path.write_text(json.dumps(data, ensure_ascii=False, allow_nan=False, indent=2), encoding='utf-8')
 
 
+def _software_context(job, *, version=None, native_objects=None, load_cases=None):
+    """Build explicit context exported by a runner without inferring vendor state."""
+    params = job.params
+    references = []
+    for key, role in (
+            ('input_model', 'input_model'), ('db_file', 'input_model'),
+            ('command_file', 'command_file'), ('scenario_file', 'scenario_file'),
+            ('native_output', 'native_output'), ('step_output', 'step_output'),
+            ('result_output', 'result_output'), ('metrics_output', 'metrics_output')):
+        value = params.get(key)
+        if isinstance(value, str) and value:
+            references.append({'id': role, 'kind': 'file', 'path': value, 'role': role})
+    software = {'name': str(job.request.get('tool', ''))}
+    if isinstance(version, str) and version.strip():
+        software['version'] = version.strip()[:256]
+    return {
+        'source': 'explicit_vendor_runner_export',
+        'software': software,
+        'native_objects': list(native_objects or []),
+        'coordinate_systems': [],
+        'load_cases': list(load_cases or []),
+        'model_references': references,
+    }
+
+
 class Job:
     def __init__(self, request, root):
         self.request, self.root = request, Path(root).resolve()
@@ -154,6 +179,15 @@ def run_catia(job, connect=None):
         for name, item in readback.items():
             observations[name]['after_reopen'] = _value(item)
         reopened.ExportData(str(job.path(p['step_output'])), 'stp')
+        version = getattr(app, 'Version', None)
+        if callable(version):
+            version = version()
+        observations['engineering_context'] = _software_context(
+            job, version=str(version) if version is not None else None,
+            native_objects=[{'id': name, 'kind': 'parameter', 'name': name,
+                             'properties': {'after_reopen': values.get('after_reopen')}}
+                            for name, values in observations.items()
+                            if name != 'engineering_context'])
         reopened.Close()
         owned.remove(reopened)
         return job.report({'reopened_from_disk': True, 'parameters': observations})
@@ -203,8 +237,15 @@ def run_mechanical(job, app_factory=None):
             metrics[name], units[name], evaluated[name] = q['value'], q['unit'], True
         app.save_as(str(job.path(p['native_output'])), overwrite=False)
         _write(job.path(p['result_output']), {'metrics': metrics, 'units': units})
+        application_version = str(app.version)
         observation = {'analysis_name': p['analysis_name'], 'solution_status': status,
-                       'evaluated': evaluated, 'application_version': str(app.version)}
+                       'evaluated': evaluated, 'application_version': application_version,
+                       'engineering_context': _software_context(
+                           job, version=application_version,
+                           native_objects=[{'id': p['analysis_name'], 'kind': 'analysis',
+                                            'name': p['analysis_name']}],
+                           load_cases=[{'id': p['analysis_name'], 'kind': 'analysis',
+                                        'name': p['analysis_name'], 'status': status}])}
     finally:
         # This embedded app belongs to the runner; never attach to a user's session.
         app.exit()
@@ -239,7 +280,8 @@ def run_export(job):
     path = job.path(result_path)
     read_export(path.read_bytes(), path.suffix, p)
     return job.report({'returncode': process.returncode, 'result_format': path.suffix,
-                       'solver_convergence': 'not_verified'})
+                       'solver_convergence': 'not_verified',
+                       'engineering_context': _software_context(job)})
 
 
 def main(kind, request_path):

@@ -54,6 +54,9 @@ def test_export_preserves_failed_design_verdict_without_repeating_successful_sol
     assert verdict['engineering_acceptance'] == 'failed'
     assert verdict['metric_verdicts'][0]['value'] == 12.5
     assert not verdict['real_machine_verified']
+    context = normalized['engineering_context']
+    assert context['software']['name'] == tool
+    assert context['model_references']
 
 
 @pytest.mark.parametrize('contents', [

@@ -162,6 +162,8 @@ def test_mechanical_uses_native_quantity_and_keeps_failed_engineering_verdict(tm
     assert verdict['metrics']['total_deformation'] == {'value': 2, 'unit': 'mm'}
     assert verdict['metrics']['equivalent_stress'] == {'value': 5, 'unit': 'MPa'}
     assert verdict['engineering_acceptance'] == 'failed'
+    assert verdict['observations']['engineering_context']['native_objects'][0]['kind'] == 'analysis'
+    assert verdict['observations']['engineering_context']['load_cases'][0]['status'] == 'Done'
     assert app.events == ['open','clear',('solve',True),'evaluate','save','exit']
 
 
