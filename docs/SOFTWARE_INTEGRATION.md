@@ -173,6 +173,11 @@ macOS/Linux 可以控制远程 Windows worker。pywin32 只用于 COM，不作�
 执行结果，不能把 `engineering_acceptance=unknown` 自动变成通过；`recover=deferred` 也不会
 声称执行和验证已经完成。
 
+当结果有错误时，`engineering_result.failure` 提供保守的下一步分类。`configuration` 和
+`input_contract` 通常先修配置或输入；`transport`、`collection` 和可恢复的 `recovery` 可以
+继续使用原 request ID；`validation` 表示需要检查工程报告或指标，不应盲目重跑；未知类别会
+标记 `requires_human=true`。这个分类只是 Agent 的路由提示，原始 `error.code` 和日志仍是审计依据。
+
 ## 当前边界与下一步
 
 - 文件传输保留小任务内联协议：最多 128 个文件、单次请求体上限 48 MiB；输入超过 32 MiB

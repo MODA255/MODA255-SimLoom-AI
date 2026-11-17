@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
+from .engineering_failure import classify_failure
 from .engineering_lifecycle import normalize_lifecycle
 
 
@@ -179,4 +180,10 @@ def normalize_engineering_result(*, tool: str, action: str, status: str,
     }
     if error is not None:
         result["error"] = error
+        result["failure"] = classify_failure(
+            error_code,
+            status=str(status),
+            lifecycle=lifecycle_value,
+            message=error.get("message") if isinstance(error.get("message"), str) else message,
+        )
     return result

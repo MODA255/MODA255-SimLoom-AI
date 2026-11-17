@@ -55,6 +55,9 @@ def test_vendor_operation_schema_advertises_normalized_result():
     assert envelope["properties"]["contract"]["properties"]["metric_rules"]["type"] == "array"
     assert envelope["properties"]["real_machine_verified"]["type"] == "boolean"
     assert envelope["properties"]["lifecycle"]["properties"]["stages"]["properties"]["recover"]["properties"]["status"]["enum"][-1] == "deferred"
+    assert envelope["properties"]["failure"]["properties"]["category"]["enum"] == [
+        "configuration", "input_contract", "transport", "execution", "collection",
+        "validation", "recovery", "concurrency", "publication", "unknown"]
 
 
 def test_normalized_result_exposes_the_input_output_and_metric_contract():
@@ -118,4 +121,24 @@ def test_lifecycle_does_not_claim_unknown_failure_was_validated():
     assert lifecycle["stages"]["recover"]["status"] == "deferred"
     assert lifecycle["recoverable"] is True
     assert lifecycle["next_action"] == "resume"
+
+
+def test_failure_classification_distinguishes_validation_from_recovery():
+    validation = normalize_engineering_result(
+        tool="ansys", action="solve_configured_model", status="failed",
+        details={"error": {"code": "VENDOR_REPORT_INVALID", "message": "bad report"}},
+    )
+    assert validation["failure"]["category"] == "validation"
+    assert validation["failure"]["retryable"] is False
+    assert validation["failure"]["recommended_action"] == "review_engineering_result"
+
+    recovery = normalize_engineering_result(
+        tool="ansys", action="solve_configured_model", status="failed",
+        details={"error": {"code": "REMOTE_JOB_PENDING", "message": "observe later"},
+                 "remote_job": {"requires_reconnect": True}},
+        recoverable=True,
+    )
+    assert recovery["failure"]["category"] == "recovery"
+    assert recovery["failure"]["retryable"] is True
+    assert recovery["failure"]["requires_human"] is False
 

@@ -42,6 +42,16 @@
     "recoverable": false,
     "next_action": null
   },
+  "failure": {
+    "schema_version": "simloom-ai/engineering-failure/v1",
+    "category": "validation",
+    "retryable": false,
+    "requires_human": false,
+    "recommended_action": "review_engineering_result",
+    "confidence": "high",
+    "error_code": "VENDOR_REPORT_INVALID",
+    "message": "bad report"
+  },
   "artifacts": {
     "inputs": [{"path": "inputs/model.mechdat", "bytes": 100, "sha256": "..."}],
     "outputs": [{"path": "artifacts/results.json", "bytes": 200, "sha256": "..."}]
@@ -64,6 +74,7 @@
 - `observations` 保存 runner 报告中的软件观察，例如 CATIA 参数回读、Ansys 解算状态或 Adams/VI-grade 返回码。
 - `contract` 是本次请求实际使用的输入、输出和验收契约摘要。它包括 evidence schema、报告路径、输入/输出路径、必须检查的指标、期望单位和原始规则。该摘要有长度限制，适合 Agent 做失败归因、修复候选比较和重规划；它不会替代原始报告，也不会因为契约存在就把结果判为通过。
 - `lifecycle` 是 `simloom-ai/engineering-lifecycle/v1` 阶段状态。五个阶段固定为 `preflight`、`execute`、`collect`、`validate`、`recover`。它记录控制端实际到达的阶段、阶段错误和是否可以用原任务 ID 恢复。`completed` 只在声明的输出已回收且验证契约通过后把 `validate` 标为 `passed`；断线或观测超时会把 `recover` 标为 `deferred`，不会把前面的阶段推断成成功。
+- `failure` 是 `simloom-ai/engineering-failure/v1` 的保守分类，只在存在错误时出现。它把底层错误码归入配置、输入契约、传输、执行、回收、验证、恢复、并发、发布或未知类别，并给出 `retryable`、`requires_human` 和建议动作。未知错误默认要求人工复核；分类不会改变原始错误码，也不会把软件运行失败改成工程指标失败。
 - `artifacts` 只包含项目相对路径、大小和 SHA-256，不包含本机绝对路径。
 
 ## 兼容策略

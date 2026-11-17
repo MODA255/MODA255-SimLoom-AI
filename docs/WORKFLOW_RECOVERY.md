@@ -61,6 +61,11 @@ MCP 的 `engineering_workflow` 在 safe profile 中仅有 `list/status`，full p
 | publishing | 完成记录已写入但整组发布尚未确认 | 等待原事务或由恢复流程处理 |
 | completed | 所有步骤结果和记录已提交 | 查看结果及独立的工程验收结论 |
 
+每个步骤结果还包含 `engineering_result.failure`（`simloom-ai/engineering-failure/v1`）。它把错误
+分成配置、输入契约、传输、执行、回收、验证、恢复、并发、发布和未知类别，并给出是否可重试、是否
+需要人工以及建议动作。`REMOTE_JOB_PENDING` 等可恢复错误会建议用原 request ID 继续查询；
+`VENDOR_REPORT_INVALID` 会建议检查结果契约；未知错误不会自动重跑。
+
 远程 worker 已确认存在的任务后来返回 `JOB_NOT_FOUND`，会报 `REMOTE_JOB_HISTORY_LOST`，
 不会悄悄重新提交求解。已持久接收但尚未启动的任务可在查询时继续启动；运行过或监督进程
 丢失的任务不走这条恢复路径。worker 必须保留其任务数据库；数据库丢失、尤其尚未收到确认
