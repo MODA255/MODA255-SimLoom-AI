@@ -560,6 +560,7 @@ class MCPServer:
     def _resources(self, params: dict[str, Any]) -> list[dict[str, Any]]:
         root = params.get("root", ".")
         resources = [
+            {"uri": "engineering://capabilities", "name": "Software capability matrix", "mimeType": "application/json"},
             {"uri": "engineering://operations", "name": "Operation schemas", "mimeType": "application/json"},
             {"uri": f"engineering://versions?root={root}", "name": "Project versions", "mimeType": "application/json"},
             {"uri": f"engineering://project?root={root}", "name": "Canonical project object", "mimeType": "application/json"},
@@ -584,6 +585,7 @@ class MCPServer:
     @staticmethod
     def _resource_templates() -> list[dict[str, Any]]:
         return [
+            {"uriTemplate": "engineering://capabilities", "name": "Software capability matrix", "mimeType": "application/json"},
             {"uriTemplate": "engineering://project?root={root}", "name": "Canonical project object", "mimeType": "application/json"},
             {"uriTemplate": "engineering://versions?root={root}", "name": "Project versions and timeline", "mimeType": "application/json"},
             {"uriTemplate": "engineering://dependencies?root={root}", "name": "Project dependency graph", "mimeType": "application/json"},
@@ -600,7 +602,9 @@ class MCPServer:
             raise ProtocolError(ErrorCode.RESOURCE_NOT_FOUND, "unsupported resource URI")
         query = parse_qs(parsed.query)
         root = query.get("root", ["."])[0]
-        if parsed.netloc == "operations":
+        if parsed.netloc == "capabilities":
+            value = self.agent.capabilities()
+        elif parsed.netloc == "operations":
             value = self._operation_discovery({"detail": self.toolset == "all", "limit": 500})
         elif parsed.netloc == "versions":
             value = {"versions": VersionStore(root).list(), "timeline": VersionStore(root).timeline(), "schemaVersion": self.schema_version}

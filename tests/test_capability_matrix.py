@@ -1,6 +1,7 @@
 """Regression tests for the shared agent-facing capability matrix."""
 from __future__ import annotations
 
+import json
 import sys
 
 from engineering_agent import EngineeringAgent
@@ -130,4 +131,18 @@ def test_mcp_runtime_returns_the_same_matrix_as_python_api():
         "params": {"name": "engineering_capabilities", "arguments": {}},
     })
     assert response["result"]["structuredContent"]["capability_matrix"] == agent.capabilities()["capability_matrix"]
+
+
+def test_mcp_capability_resource_is_read_only_and_matches_tool_output():
+    agent = EngineeringAgent(_config())
+    server = MCPServer(agent, profile="safe")
+    listed = server.handle({"jsonrpc": "2.0", "id": 1, "method": "resources/list", "params": {}})
+    assert any(item["uri"] == "engineering://capabilities" for item in listed["result"]["resources"])
+    templates = server.handle({"jsonrpc": "2.0", "id": 2, "method": "resources/templates/list", "params": {}})
+    assert any(item["uriTemplate"] == "engineering://capabilities"
+               for item in templates["result"]["resourceTemplates"])
+    resource = server.handle({"jsonrpc": "2.0", "id": 3, "method": "resources/read",
+                              "params": {"uri": "engineering://capabilities"}})
+    value = json.loads(resource["result"]["contents"][0]["text"])
+    assert value["capability_matrix"] == agent.capabilities()["capability_matrix"]
 

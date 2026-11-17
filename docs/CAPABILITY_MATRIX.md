@@ -120,9 +120,10 @@ engineering-agent --config ./configs/vendor-actions.example.json \
   capabilities
 ```
 
-MCP 客户端使用 `engineering_capabilities`。Web 客户端读取
-`GET /api/capabilities`；三者的 `capability_matrix.schema_version` 和动作记录
-字段相同。
+MCP 客户端可以调用 `engineering_capabilities`，也可以读取只读资源
+`engineering://capabilities`。后者适合先做发现、再决定是否调用动作；资源模板也会在
+`resources/templates/list` 中出现。Web 客户端读取 `GET /api/capabilities`；三者的
+`capability_matrix.schema_version` 和动作记录字段相同。
 
 ## 边界和验收
 
