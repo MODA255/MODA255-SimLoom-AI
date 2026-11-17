@@ -10,6 +10,7 @@ from engineering_agent.capability_matrix import (
     build_action_matrix,
     summarize_action_matrix,
 )
+from engineering_agent.cli import _parser
 from engineering_agent.mcp_server import MCPServer
 
 
@@ -145,4 +146,25 @@ def test_mcp_capability_resource_is_read_only_and_matches_tool_output():
                               "params": {"uri": "engineering://capabilities"}})
     value = json.loads(resource["result"]["contents"][0]["text"])
     assert value["capability_matrix"] == agent.capabilities()["capability_matrix"]
+
+
+def test_probe_flag_allows_offline_capability_discovery_without_network(monkeypatch):
+    config = _config({"worker_features": ["durable_jobs"]})
+    config["tools"]["catia"]["bridge_url"] = "http://worker.invalid"
+    agent = EngineeringAgent(config)
+    adapter = agent.adapters[next(name for name in agent.adapters if name.value == "catia")]
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("probe=False must not call the remote worker")
+
+    monkeypatch.setattr(adapter, "_post", fail_if_called)
+    matrix = agent.capabilities(probe=False)["capability_matrix"]
+    action = matrix["tools"]["catia"]["actions"][0]
+    assert action["status"] == "not_probed"
+    assert action["ready"] is False
+
+
+def test_cli_exposes_explicit_no_probe_switch():
+    args = _parser().parse_args(["capabilities", "--no-probe"])
+    assert args.command == "capabilities" and args.probe is False
 

@@ -352,8 +352,8 @@ class MCPServer:
             {"name": "engineering_run", "description": "Run a plan in dry-run or execution mode; optionally evaluate a bounded sequence of explicitly configured repair strategies", "inputSchema": {"type": "object", "required": ["prompt"], "properties": {"prompt": {"type": "string"}, "project_dir": {"type": "string"}, "parameters": {"type": "object"}, "dry_run": {"type": "boolean"}, "auto_repair": {"type": "boolean", "description": "After a stable completed workflow, evaluate declared repair strategies"}, "repair_budget": {"type": "integer", "minimum": 1, "maximum": 8, "description": "Maximum number of independent repair child workflows"}}}},
             {"name": "engineering_generate", "description": "Generate vendor scripts and scenario files", "inputSchema": {"type": "object", "properties": {"project_dir": {"type": "string"}, "model_spec": {"type": "object"}}}},
             {"name": "engineering_offline_run", "description": "Run the deterministic CATIA-to-VI-grade fixture chain without commercial software", "inputSchema": {"type": "object", "properties": {"project_dir": {"type": "string"}, "model_spec": {"type": "object"}, "rules": {"type": "array"}}}},
-            {"name": "engineering_doctor", "description": "Inspect configured vendor backends and COM", "inputSchema": {"type": "object"}},
-            {"name": "engineering_capabilities", "description": "Return the offline, rehearsal, software connection, execution and real-machine readiness matrix", "inputSchema": {"type": "object"}},
+            {"name": "engineering_doctor", "description": "Inspect configured vendor backends and COM", "inputSchema": {"type": "object", "properties": {"probe": {"type": "boolean", "default": True, "description": "Probe configured remote worker health and capabilities"}}}},
+            {"name": "engineering_capabilities", "description": "Return the offline, rehearsal, software connection, execution and real-machine readiness matrix", "inputSchema": {"type": "object", "properties": {"probe": {"type": "boolean", "default": True, "description": "Probe configured remote worker health and capabilities"}}}},
             {"name": "engineering_operations", "description": "List typed operations and schemas", "inputSchema": {"type": "object"}},
             {"name": "engineering_ingest", "description": "Read STEP/CSV/JSON into the canonical object model", "inputSchema": {"type": "object", "required": ["path"], "properties": {"path": {"type": "string"}, "kind": {"type": "string"}}}},
             {"name": "engineering_project", "description": "Inspect all supported artifacts in a project", "inputSchema": {"type": "object", "properties": {"project_dir": {"type": "string"}}}},
@@ -603,7 +603,8 @@ class MCPServer:
         query = parse_qs(parsed.query)
         root = query.get("root", ["."])[0]
         if parsed.netloc == "capabilities":
-            value = self.agent.capabilities()
+            probe = query.get("probe", ["true"])[0].strip().lower() not in {"0", "false", "no", "off"}
+            value = self.agent.capabilities(probe=probe)
         elif parsed.netloc == "operations":
             value = self._operation_discovery({"detail": self.toolset == "all", "limit": 500})
         elif parsed.netloc == "versions":
@@ -858,9 +859,9 @@ class MCPServer:
         if name == "engineering_offline_run":
             return self.agent.run_offline_vehicle_chain(arguments.get("project_dir", "."), arguments.get("model_spec") or {}, arguments.get("rules"))
         if name == "engineering_doctor":
-            return {"tools": self.agent.doctor()}
+            return {"tools": self.agent.doctor(probe=bool(arguments.get("probe", True)))}
         if name == "engineering_capabilities":
-            return self.agent.capabilities()
+            return self.agent.capabilities(probe=bool(arguments.get("probe", True)))
         if name == "engineering_operations":
             visible = self._visible_operation_names()
             return {"operations": [item for item in self.operations.list()

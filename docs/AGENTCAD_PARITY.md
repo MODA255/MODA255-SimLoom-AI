@@ -100,6 +100,8 @@ bulge 弧段、SPLINE 采样段和 HATCH 多段线边界检查自交/重叠；�
 同时返回状态、规范化要求、缺失原因、发现状态、证据等级和实机验收标记；CLI、Web 和
 MCP 复用同一个矩阵，避免 Agent 从不同入口拼接 `doctor()` 字段。该改动改善了操作发现
 和调度可靠性，但不会增加四款商业软件的真实验收证据，详见 `CAPABILITY_MATRIX.md`。
+能力矩阵现在还支持 `probe=false` 的离线发现，并通过 MCP
+`engineering://capabilities` resource 提供给先发现后调用的客户端。
 
 这里的“接近 AgentCAD”分成两个口径：一是 Agent-facing runtime 是否让模型能够可靠地发现、调用、观察、验证、恢复和复现工程操作；二是 SimLoom 的产品主线是否真的能操作 CATIA、Ansys、Adams 和 VI-grade。前一个口径可以在没有商业软件的机器上持续补齐，后一个口径必须依赖 Windows、软件版本、许可证和真实工程文件。
 

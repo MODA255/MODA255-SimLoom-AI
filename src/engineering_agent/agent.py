@@ -813,12 +813,23 @@ class EngineeringAgent:
         data = parse_result_file(result_file)
         return [verdict.to_dict() for verdict in evaluate_metrics(data, rules)]
 
-    def doctor(self) -> list[dict[str, Any]]:
-        return [self.adapters[name].doctor() for name in self.adapters] + [{"tool": "windows-com", **self.windows.doctor()}, {"tool": "windows-backends", **self.windows.validate_backends(self.config.get("tools", {}))}, {"tool": "step-brep", **brep_doctor()}]
+    def doctor(self, *, probe: bool = True) -> list[dict[str, Any]]:
+        """Inspect configured backends, optionally probing remote workers.
 
-    def capabilities(self) -> dict[str, Any]:
-        """Return a user-facing readiness matrix without probing vendor solves."""
-        diagnostics = self.doctor()
+        ``probe=False`` is useful for offline discovery and never sends a
+        health request to a configured Windows worker. It still reports the
+        local binding and marks worker-dependent actions as ``not_probed``.
+        """
+        return [self.adapters[name].doctor(probe=probe) for name in self.adapters] + [{"tool": "windows-com", **self.windows.doctor()}, {"tool": "windows-backends", **self.windows.validate_backends(self.config.get("tools", {}))}, {"tool": "step-brep", **brep_doctor()}]
+
+    def capabilities(self, *, probe: bool = True) -> dict[str, Any]:
+        """Return a readiness matrix without launching vendor software.
+
+        ``probe`` controls only remote worker health/capability discovery; it
+        never starts CATIA, Ansys, Adams or VI-grade. Keeping it explicit lets
+        a disconnected MCP client inspect local declarations offline.
+        """
+        diagnostics = self.doctor(probe=probe)
         by_tool = {item.get("tool"): item for item in diagnostics if item.get("tool")}
         windows = by_tool.get("windows-com", {})
         brep = by_tool.get("step-brep", {})

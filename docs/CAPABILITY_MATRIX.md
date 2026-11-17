@@ -100,6 +100,21 @@ Windows worker 在线、商业软件已安装或结果已经通过工程验收�
 `real_machine_verified` 只在 worker 的 evidence 记录明确包含该动作时为 `true`。
 fixture runner、fake COM、命令存在和 worker 在线都不会提升这个字段。
 
+## 探测策略
+
+默认的 `probe=true` 会对已配置的远程 worker 做认证后的 health/capabilities 请求，
+但不会启动任何商业软件。需要离线查看本地动作声明时使用 `probe=false`：
+
+```bash
+engineering-agent --config ./configs/vendor-actions.example.json \
+  capabilities --no-probe
+```
+
+MCP 工具 `engineering_capabilities` 和 `engineering_doctor` 接收布尔参数 `probe`；
+能力资源也支持 `engineering://capabilities?probe=false`。Web 使用
+`/api/capabilities?probe=false` 或 `/api/doctor?probe=false`。未探测时，依赖 worker
+特性的动作返回 `status=not_probed`，不会被计入 `ready`。
+
 ## Agent 调用规则
 
 Agent 在准备执行时应按以下顺序处理：

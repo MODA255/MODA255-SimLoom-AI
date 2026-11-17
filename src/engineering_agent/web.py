@@ -168,9 +168,11 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
             if parsed.path == "/api/templates":
                 return self._send(200, {"templates": TEMPLATES, "schemaVersion": WEB_SCHEMA_VERSION})
             if parsed.path == "/api/doctor":
-                return self._send(200, agent.doctor())
+                probe = query.get("probe", ["true"])[0].strip().lower() not in {"0", "false", "no", "off"}
+                return self._send(200, agent.doctor(probe=probe))
             if parsed.path == "/api/capabilities":
-                return self._send(200, agent.capabilities())
+                probe = query.get("probe", ["true"])[0].strip().lower() not in {"0", "false", "no", "off"}
+                return self._send(200, agent.capabilities(probe=probe))
             if parsed.path == "/api/tasks":
                 tasks = queue.list(project_id=query.get("project_id", [None])[0])
                 return self._send(200, tasks)

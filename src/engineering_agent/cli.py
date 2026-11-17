@@ -67,8 +67,12 @@ def _parser() -> argparse.ArgumentParser:
     workflow.add_argument("action", choices=["list", "status", "resume", "repair"])
     workflow.add_argument("workflow_id", nargs="?")
     workflow.add_argument("--repair-budget", type=int, help="repair 动作最多连续尝试的子工程链数量（1～8）")
-    sub.add_parser("doctor", help="检查四个工具的连接配置")
-    sub.add_parser("capabilities", help="输出离线、排练、连接、执行和实机验收能力矩阵")
+    doctor = sub.add_parser("doctor", help="检查四个工具的连接配置")
+    doctor.add_argument("--no-probe", dest="probe", action="store_false", default=True,
+                        help="不探测远程 Windows worker，只读取本地声明")
+    capabilities = sub.add_parser("capabilities", help="输出离线、排练、连接、执行和实机验收能力矩阵")
+    capabilities.add_argument("--no-probe", dest="probe", action="store_false", default=True,
+                              help="不探测远程 Windows worker，只读取本地声明")
     job = sub.add_parser("software-job", help="查看、取消或回收已有远程软件任务，不重新启动求解")
     job.add_argument("tool", choices=["catia", "ansys", "adams", "vi-grade"])
     job.add_argument("action", choices=["list", "receipts", "status", "logs", "events", "cancel", "release", "collect"])
@@ -225,10 +229,10 @@ def main(argv: list[str] | None = None) -> int:
         from .desktop import launch
         return launch(agent, data_dir=args.data_dir, mode=args.mode, port=args.port)
     if args.command == "doctor":
-        print(json.dumps(agent.doctor(), ensure_ascii=False, indent=2))
+        print(json.dumps(agent.doctor(probe=args.probe), ensure_ascii=False, indent=2))
         return 0
     if args.command == "capabilities":
-        print(json.dumps(agent.capabilities(), ensure_ascii=False, indent=2))
+        print(json.dumps(agent.capabilities(probe=args.probe), ensure_ascii=False, indent=2))
         return 0
     if args.command == "preflight":
         result = agent.preflight(args.prompt, project_dir=args.project_dir,
