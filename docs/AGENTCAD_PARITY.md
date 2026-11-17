@@ -83,7 +83,24 @@ bulge 弧段、SPLINE 采样段和 HATCH 多段线边界检查自交/重叠；�
 | 对照验收与真实项目数据 | 当前主要为生成 fixture 和本地功能测试 | 用固定任务、相同输入、明确成功标准与参考系统对照；记录失败和不支持项，不借用上游自评分 |
 | 四款商业工程软件后端 | 脚本、桥接与离线验证链已有实现；本机无对应真实软件 | Windows 上 CATIA/Ansys/Adams/VI-grade 的建模、求解、结果回读、错误恢复逐项实测 |
 
-## 按产品定位调整后的优先顺序（2026-11-11）
+## 核心能力差距评估（2026-11-17）
+
+这里的“接近 AgentCAD”分成两个口径：一是 Agent-facing runtime 是否让模型能够可靠地发现、调用、观察、验证、恢复和复现工程操作；二是 SimLoom 的产品主线是否真的能操作 CATIA、Ansys、Adams 和 VI-grade。前一个口径可以在没有商业软件的机器上持续补齐，后一个口径必须依赖 Windows、软件版本、许可证和真实工程文件。
+
+按当前仓库状态，SimLoom 的 Agent-facing 基础已经具备：统一 operation registry、MCP/CLI/HTTP/Python 入口、事务锁、checkpoint、journal、rollback、版本 diff、分页 discovery、结构化 error envelope、离线 CAD/结果验证、任务队列、工作流恢复和有界修复。当前 operation registry 中有 224 个公开名称，其中 115 个是 `cad.*` typed operation；数量已经超过对照项目的 2D 操作规模，但数量不代表每个操作的语义、性能和真实工程兼容性都达到同一水平。
+
+真正的核心差距按影响排序如下：
+
+1. **真实软件闭环仍是最大缺口。** 四款软件的动作绑定、脚本、文件传输、worker、结果契约和 evidence schema 已具备，但当前机器没有 Windows 和商业软件，四款软件的 `real_machine_verified` 仍为 false。没有真实运行证据，就不能确认 CATIA 参数树、Ansys 求解数据库、Adams 结果曲线或 VI-grade 场景的脚本语义、许可证状态、GUI 占用、版本差异和异常恢复。
+2. **工程结果的统一语义还不够深。** 现在能可靠解析 JSON、CSV、文本和声明式 vendor report；真实软件的原生数据库、结果对象、单位、坐标系、工况和模型引用仍主要依赖每个动作的绑定脚本导出。下一步应优先把四款软件的输入、输出、指标、单位、坐标系、错误和证据收敛到同一 `EngineeringResult` / `EngineeringEvidence` 结构。
+3. **自主闭环目前是“有界修复”，还不是通用自主工程师。** 工作流可以恢复，失败指标可以匹配工程师声明的 repair strategy，并生成子工作流；但系统不会在没有显式策略时推断新的载荷、边界条件、求解设置或建模动作。需要继续补“失败分类 → 可解释候选动作 → 预算内重规划 → 结果比较 → 停止/人工复核”的统一循环。
+4. **Agent 操作契约仍需继续收敛。** MCP 已有分页、订阅、profile、schema 版本和 error envelope，但 vendor operation 的参数和输出仍比 CAD operation 更依赖配置。后续应让 preflight、execute、collect、validate、recover 使用同一份可版本化的 operation contract，并能由 Agent 直接读取每一步的输入、输出、指标和恢复条件。
+5. **产品化和可重复部署还有差距。** 本地 Web、CLI、MCP 和测试已经可用，但干净 Windows 安装、worker 配置向导、版本升级、许可证诊断、真实软件路径发现和正式发布包还没有完成一轮端到端验收。
+6. **对照项目的细节体验仍有差距。** SimLoom 的 2D CAD 和 Viewer 已经很丰富，并且额外覆盖了 B-Rep、结果查看和四软件流程；但 AgentCAD 的优势在于围绕单一图纸 runtime 形成了很紧凑的 agent contract、独立验证和可复现工作流。SimLoom 需要继续减少跨模块的特殊分支，让 Agent 面对 CAD、仿真结果和厂商任务时都得到一致的调用和失败反馈。
+
+因此，当前不能用“CAD operation 数量”概括距离。若只比较 Agent-facing runtime 的基础设施，项目已经接近可用；若比较 SimLoom 的核心使命——真实操作四款工程软件并根据结果自主闭环——仍处于实机联调前阶段。下一轮开发应优先补统一工程结果契约、四软件 preflight/execute/collect/recover 的统一状态机和有界自主重规划；2D CAD、Viewer 和离线导出作为这些核心能力的验证载体继续维护。
+
+## 按产品定位调整后的优先顺序（2026-11-17）
 
 用户明确：主要操作 CATIA、Ansys、Adams、VI-grade，而非替代这些软件。
 AgentCAD 对齐用于衡量 AI 操作、反馈、验证、追溯的可靠性，不再以扩展本地 CAD 内核为主线。
@@ -91,11 +108,12 @@ SimLoom 的产品主线仍是操作 CATIA、Ansys、Adams、VI-grade；AgentCAD 
 交互和可靠性参考，不能把本地 CAD 能力的增加误认为四款软件已经接入。
 上表保留已有能力和未完成项，但不表示所有二维 CAD 功能具有相同开发优先级。
 
-1. 修通软件动作、脚本、输入传递、结果回收与明确的失败状态。
-2. 建立逐软件连接配置与实机证据；一款软件可独立接入，远程控制端无需 Windows。
-3. 在软件内完成最小任务，读回原生模型和结果，检查工程指标。
-4. 将真实结果和失败信息提供给 AI，支持有界重规划、重试与人工查看。
-5. 围绕真实任务补充版本比较、可视化与工程交付；本地几何编辑按实际辅助需求推进。
+1. 统一四款软件的 operation contract、结果对象、指标单位和证据 envelope。
+2. 修通软件动作、脚本、输入传递、结果回收、锁冲突和明确的失败状态。
+3. 建立逐软件连接配置与实机证据；一款软件可独立接入，远程控制端无需 Windows。
+4. 在软件内完成最小任务，读回原生模型和结果，检查工程指标。
+5. 将真实结果和失败信息提供给 AI，支持预算受限的有界重规划、重试与人工查看。
+6. 围绕真实任务补充版本比较、可视化与工程交付；本地 2D CAD 和 B-Rep 能力服务于输入准备、审计和回放。
 
 本轮修正了 adapter / worker 协议、脚本绑定、文件传输、输出完整性与事务发布。
 受控程序测试不能代表商业软件验收，详见 `SOFTWARE_INTEGRATION.md`。
