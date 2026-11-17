@@ -76,7 +76,8 @@
     "engineering_context": {"software": {"build": "2025.1", "license_status": "available"}},
     "validation": {"kind": "mechanical_solve", "report": "artifacts/report.json"},
     "lifecycle": {"stages": ["preflight", "execute", "collect", "validate", "recover"]},
-    "recovery": {"request_id": true, "reconnect": true, "workflow": true}
+    "recovery": {"request_id": true, "reconnect": true, "workflow": true,
+                  "policy": {"on_timeout": "require_human", "max_retries": 1}}
   },
   "artifacts": {
     "inputs": [{"path": "inputs/model.mechdat", "bytes": 100, "sha256": "..."}],
@@ -103,7 +104,7 @@
 - `contract` 是本次请求实际使用的输入、输出和验收契约摘要。它包括 evidence schema、报告路径、输入/输出路径、必须检查的指标、期望单位和原始规则。该摘要有长度限制，适合 Agent 做失败归因、修复候选比较和重规划；它不会替代原始报告，也不会因为契约存在就把结果判为通过。
 - `lifecycle` 是 `simloom-ai/engineering-lifecycle/v1` 阶段状态。五个阶段固定为 `preflight`、`execute`、`collect`、`validate`、`recover`。它记录控制端实际到达的阶段、阶段错误和是否可以用原任务 ID 恢复。`completed` 只在声明的输出已回收且验证契约通过后把 `validate` 标为 `passed`；断线或观测超时会把 `recover` 标为 `deferred`，不会把前面的阶段推断成成功。
 - `failure` 是 `simloom-ai/engineering-failure/v1` 的保守分类，只在存在错误时出现。它把底层错误码归入配置、输入契约、传输、执行、回收、验证、恢复、并发、发布或未知类别，并给出 `retryable`、`requires_human` 和建议动作。未知错误默认要求人工复核；分类不会改变原始错误码，也不会把软件运行失败改成工程指标失败。
-- `operation_contract` 是 `simloom-ai/software-operation-contract/v1` 的稳定动作定义。preflight、worker 请求、结果回收和工作流状态引用同一份 `definition_digest`；它只包含项目相对路径、声明式验收契约和可选的动作绑定 `engineering_context`，不包含本机绝对路径。上下文声明用于执行前对齐对象和部署信息，不是运行时实机证据；输入文件的实际 SHA-256 仍由 evidence contract 单独记录。
+- `operation_contract` 是 `simloom-ai/software-operation-contract/v1` 的稳定动作定义。preflight、worker 请求、结果回收和工作流状态引用同一份 `definition_digest`；它只包含项目相对路径、声明式验收契约、可选的动作绑定 `engineering_context` 和可选的 `recovery.policy`，不包含本机绝对路径。上下文声明用于执行前对齐对象和部署信息，不是运行时实机证据；恢复策略只约束 Agent 的下一步边界，不授权对不确定的软件状态自动重跑；输入文件的实际 SHA-256 仍由 evidence contract 单独记录。
 如果动作配置了 `capability_requirements`，同一对象还包含规范化的 `requirements.adapter_capabilities` 和 `requirements.worker_features`。它们是调度和协议前置条件，不会提升 `real_machine_verified`，也不代替厂商许可证或工程结果证据。
 - `artifacts` 只包含项目相对路径、大小和 SHA-256，不包含本机绝对路径。
 

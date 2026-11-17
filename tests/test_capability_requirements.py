@@ -129,3 +129,51 @@ def test_worker_rejects_requirement_drift_before_runner(tmp_path):
     result = run_job(tmp_path / "worker", prepared, {f"catia.{ACTION}": COMMAND})
     assert result["status"] == "failed"
     assert result["error"]["code"] == "SOFTWARE_OPERATION_CONTRACT_MISMATCH"
+
+
+def test_recovery_policy_is_shared_by_preflight_and_worker(tmp_path):
+    root = _project(tmp_path)
+    config = _config({"adapter_capabilities": ["step-export"]})
+    policy = {
+        "on_timeout": "require_human",
+        "on_disconnect": "reconnect",
+        "on_output_conflict": "abort",
+        "max_retries": 2,
+        "requires_stop_confirmation": True,
+        "retryable_errors": ["REMOTE_JOB_PENDING", "REMOTE_JOB_PENDING"],
+    }
+    config["tools"]["catia"]["actions"][ACTION]["recovery_policy"] = policy
+    adapter = CatiaAdapter(config["tools"]["catia"])
+    planned = preflight_plan({ToolName.CATIA: adapter},
+                             ExecutionPlan(AgentRequest("test", str(root), {}), [_step()], []), root)
+    contract = planned["steps"][0]["operation_contract"]
+    expected = {
+        "on_timeout": "require_human",
+        "on_disconnect": "reconnect",
+        "on_output_conflict": "abort",
+        "max_retries": 2,
+        "requires_stop_confirmation": True,
+        "retryable_errors": ["REMOTE_JOB_PENDING"],
+    }
+    assert contract["recovery"]["policy"] == expected
+
+    prepared = adapter._prepare(_step(), AdapterContext(root), config["tools"]["catia"]["actions"][ACTION])
+    assert prepared["recovery_policy"] == expected
+    result = run_job(tmp_path / "worker", prepared, {f"catia.{ACTION}": COMMAND})
+    assert result["status"] == "completed"
+    assert result["engineering_result"]["operation_contract"]["recovery"]["policy"] == expected
+
+    prepared["recovery_policy"] = {**expected, "max_retries": 3}
+    drift = run_job(tmp_path / "drift-worker", prepared, {f"catia.{ACTION}": COMMAND})
+    assert drift["status"] == "failed"
+    assert drift["error"]["code"] == "SOFTWARE_OPERATION_CONTRACT_MISMATCH"
+
+
+def test_invalid_recovery_policy_is_rejected_before_runner(tmp_path):
+    root = _project(tmp_path)
+    config = _config({})
+    config["tools"]["catia"]["actions"][ACTION]["recovery_policy"] = {"max_retries": 99}
+    adapter = CatiaAdapter(config["tools"]["catia"])
+    result = adapter.execute(_step(), AdapterContext(root, dry_run=False, workspace_dir=tmp_path / "stage"))
+    assert result.status == "failed"
+    assert result.details["error"]["code"] == "INVALID_RECOVERY_POLICY"

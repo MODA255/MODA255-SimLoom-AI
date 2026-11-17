@@ -113,6 +113,10 @@ MCP 复用同一个矩阵，避免 Agent 从不同入口拼接 `doctor()` 字段
 2. **工程结果的统一语义还不够深。** 现在能可靠解析 JSON、CSV、文本和声明式 vendor report；`EngineeringResult/v1` 已统一暴露输入/输出路径、报告路径、必需指标、单位、原始规则和可选的 `engineering-context/v1` 原生对象摘要。四个 runner 现在还支持从动作绑定的 `vendor_options.engineering_context` 补充 build、edition、许可证状态、坐标系、工况和模型引用；真实软件的原生数据库、结果对象和这些映射仍依赖每个动作的绑定脚本明确导出，且还没有 Windows 实机样本证明映射正确。
 3. **自主闭环目前是“有界修复”，还不是通用自主工程师。** 工作流可以恢复，统一 envelope 中的失败指标可以匹配工程师声明的 repair strategy，并由 CLI、MCP 或 Python 入口在总预算内串联多个独立子工作流；每轮生成 `repair-comparison/v1`，比较父子指标并在验收通过、回归、无改善、证据不足或预算耗尽时停止或转人工。仍然不会在没有显式策略时推断新的载荷、边界条件、求解设置或建模动作。
 4. **Agent 操作契约仍需继续收敛。** MCP 已有分页、订阅、profile、schema 版本和 error envelope，vendor operation 现在也会展开 `engineering_result.contract`、`lifecycle` 和 `failure`；preflight、worker 请求、结果回收和工作流状态已经共享 `software-operation-contract/v1` 与 `definition_digest`。剩余差距是把真实软件原生对象、坐标系、工况和恢复条件继续纳入同一份可版本化 contract，并补更多外部 MCP 客户端互操作。
+
+2026-11-17 后续：`software-operation-contract/v1` 增加可选 `recovery.policy`，统一记录
+超时、断线、输出冲突、重试预算、停止确认和可重试错误码。它约束 Agent 的恢复边界，
+不会把不确定的软件状态自动判定为可重跑；真实软件会话仍需 Windows 实机验证。
 5. **产品化和可重复部署还有差距。** 本地 Web、CLI、MCP 和测试已经可用，但干净 Windows 安装、worker 配置向导、版本升级、许可证诊断、真实软件路径发现和正式发布包还没有完成一轮端到端验收。
 6. **对照项目的细节体验仍有差距。** SimLoom 的 2D CAD 和 Viewer 已经很丰富，并且额外覆盖了 B-Rep、结果查看和四软件流程；但 AgentCAD 的优势在于围绕单一图纸 runtime 形成了很紧凑的 agent contract、独立验证和可复现工作流。SimLoom 需要继续减少跨模块的特殊分支，让 Agent 面对 CAD、仿真结果和厂商任务时都得到一致的调用和失败反馈。
 

@@ -121,7 +121,8 @@ def validate_job(payload, commands, transfer_store: ArtifactTransferStore | None
                                        script=script, inputs=inputs, outputs=outputs,
                                        engineering_context=(payload.get("vendor_options") or {}).get("engineering_context")
                                        if isinstance(payload.get("vendor_options"), dict) else None,
-                                       capability_requirements=payload.get("capability_requirements"))
+                                       capability_requirements=payload.get("capability_requirements"),
+                                       recovery_policy=payload.get("recovery_policy"))
         except ValueError as exc:
             raise WorkerError(str(exc)) from exc
     request_text = json.dumps({"schema_version": SCHEMA, "request_id": request_id,

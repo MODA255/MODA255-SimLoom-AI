@@ -15,6 +15,15 @@ from typing import Any
 
 SCHEMA = "simloom-ai/software-operation-contract/v1"
 STAGES = ["preflight", "execute", "collect", "validate", "recover"]
+_RECOVERY_ACTIONS = {"reconnect", "require_human", "abort"}
+
+
+class SoftwareContractError(ValueError):
+    """Typed contract error that can cross adapter and preflight boundaries."""
+
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(code)
 
 
 def _paths(values: Any) -> list[str]:
@@ -43,6 +52,49 @@ def normalize_capability_requirements(value: Any) -> dict[str, list[str]]:
                              if isinstance(item, str) and item.strip()})[:128]
         if normalized:
             result[key] = normalized
+    return result
+
+
+def normalize_recovery_policy(value: Any) -> dict[str, Any]:
+    """Normalize explicitly declared recovery decisions for one action.
+
+    The policy is descriptive and versioned with the operation definition. It
+    never authorizes a retry by itself: an uncertain vendor process still
+    requires the normal request-id lookup and, when applicable, stop
+    confirmation. Unknown fields and invalid values are rejected so a typo
+    cannot silently widen recovery behavior.
+    """
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise SoftwareContractError("INVALID_RECOVERY_POLICY")
+    allowed = {"on_timeout", "on_disconnect", "on_output_conflict",
+               "max_retries", "requires_stop_confirmation", "retryable_errors"}
+    if any(key not in allowed for key in value):
+        raise SoftwareContractError("INVALID_RECOVERY_POLICY")
+    result: dict[str, Any] = {}
+    for key in ("on_timeout", "on_disconnect", "on_output_conflict"):
+        if key not in value:
+            continue
+        action = value[key]
+        if not isinstance(action, str) or action not in _RECOVERY_ACTIONS:
+            raise SoftwareContractError("INVALID_RECOVERY_POLICY")
+        result[key] = action
+    if "max_retries" in value:
+        retries = value["max_retries"]
+        if isinstance(retries, bool) or not isinstance(retries, int) or not 0 <= retries <= 8:
+            raise SoftwareContractError("INVALID_RECOVERY_POLICY")
+        result["max_retries"] = retries
+    if "requires_stop_confirmation" in value:
+        confirmation = value["requires_stop_confirmation"]
+        if not isinstance(confirmation, bool):
+            raise SoftwareContractError("INVALID_RECOVERY_POLICY")
+        result["requires_stop_confirmation"] = confirmation
+    if "retryable_errors" in value:
+        errors = value["retryable_errors"]
+        if not isinstance(errors, list) or not all(isinstance(item, str) and item.strip() for item in errors):
+            raise SoftwareContractError("INVALID_RECOVERY_POLICY")
+        result["retryable_errors"] = sorted(set(item.strip() for item in errors))[:128]
     return result
 
 
@@ -100,7 +152,8 @@ def build_operation_contract(*, tool: str, action: str, script: str | None,
                              mode: str = "local", bridge: bool = False,
                              workflow: bool = False,
                              engineering_context: dict[str, Any] | None = None,
-                             capability_requirements: dict[str, Any] | None = None) -> dict[str, Any]:
+                             capability_requirements: dict[str, Any] | None = None,
+                             recovery_policy: dict[str, Any] | None = None) -> dict[str, Any]:
     """Build a stable operation definition and its digest."""
     definition: dict[str, Any] = {
         "schema_version": SCHEMA,
@@ -113,6 +166,9 @@ def build_operation_contract(*, tool: str, action: str, script: str | None,
         "lifecycle": {"stages": list(STAGES)},
         "recovery": {"request_id": True, "reconnect": bool(bridge), "workflow": bool(workflow)},
     }
+    policy = normalize_recovery_policy(recovery_policy)
+    if policy:
+        definition["recovery"]["policy"] = policy
     context = _engineering_context_summary(engineering_context)
     if context is not None:
         definition["engineering_context"] = context
@@ -126,7 +182,8 @@ def build_operation_contract(*, tool: str, action: str, script: str | None,
 def validate_operation_contract(contract: Any, *, tool: str, action: str,
                                  script: str, inputs: list[str], outputs: list[str],
                                  engineering_context: dict[str, Any] | None = None,
-                                 capability_requirements: dict[str, Any] | None = None) -> dict[str, Any]:
+                                 capability_requirements: dict[str, Any] | None = None,
+                                 recovery_policy: dict[str, Any] | None = None) -> dict[str, Any]:
     """Validate the immutable operation-definition portion of a request."""
     if not isinstance(contract, dict) or contract.get("schema_version") != SCHEMA:
         raise ValueError("SOFTWARE_OPERATION_CONTRACT_UNSUPPORTED")
@@ -142,7 +199,8 @@ def validate_operation_contract(contract: Any, *, tool: str, action: str,
                                         bridge=bool((contract.get("recovery") or {}).get("reconnect")),
                                         workflow=bool((contract.get("recovery") or {}).get("workflow")),
                                         engineering_context=engineering_context,
-                                        capability_requirements=capability_requirements)
+                                        capability_requirements=capability_requirements,
+                                        recovery_policy=recovery_policy)
     # The validation section is intentionally omitted from the digest check;
     # worker evidence adds input hashes after preflight. Compare the stable
     # structural fields and the caller-provided digest separately.
@@ -155,7 +213,8 @@ def validate_operation_contract(contract: Any, *, tool: str, action: str,
         bridge=bool((contract.get("recovery") or {}).get("reconnect")),
         workflow=bool((contract.get("recovery") or {}).get("workflow")),
         engineering_context=engineering_context,
-        capability_requirements=capability_requirements)
+        capability_requirements=capability_requirements,
+        recovery_policy=recovery_policy)
     if contract.get("definition_digest") != digest_source.get("definition_digest"):
         raise ValueError("SOFTWARE_OPERATION_CONTRACT_DIGEST_MISMATCH")
     return contract

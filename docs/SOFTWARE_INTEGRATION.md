@@ -187,6 +187,29 @@ worker 请求会携带同一摘要，worker 在启动 runner 前校验工具、�
 哈希混入定义摘要。
 动作还可以在 `operation_contract.requirements` 中声明 `adapter_capabilities` 和 `worker_features`。preflight、执行入口和远程 worker 会使用同一份规范化要求；缺少能力时分别返回 `ADAPTER_CAPABILITY_MISSING`、`WORKER_FEATURE_REQUIRES_BRIDGE` 或 `WORKER_FEATURE_MISSING`，并归类为配置错误。详细配置见 `SOFTWARE_CAPABILITY_REQUIREMENTS.md`。
 
+动作绑定还可以声明 `recovery_policy`，并由 preflight、worker 请求和结果中的
+`operation_contract.recovery.policy` 共享：
+
+```json
+{
+  "recovery_policy": {
+    "on_timeout": "require_human",
+    "on_disconnect": "reconnect",
+    "on_output_conflict": "abort",
+    "max_retries": 2,
+    "requires_stop_confirmation": true,
+    "retryable_errors": ["REMOTE_JOB_PENDING"]
+  }
+}
+```
+
+三个 `on_*` 字段只能使用 `reconnect`、`require_human` 或 `abort`；重试次数限制为
+0～8，错误码列表最多 128 项。未知字段、错误值和错误类型会在启动 runner 前返回
+`INVALID_RECOVERY_POLICY`。策略只是动作的声明和审计契约：`reconnect` 仍然必须使用
+原始 request ID 查询远程任务，输出冲突或软件会话状态不明时不会因为策略存在而自动
+重跑。这样 Agent 可以在规划和恢复时看到工程师允许的边界，同时保留人工停止确认和
+独立结果验证。
+
 当结果有错误时，`engineering_result.failure` 提供保守的下一步分类。`configuration` 和
 `input_contract` 通常先修配置或输入；`transport`、`collection` 和可恢复的 `recovery` 可以
 继续使用原 request ID；`validation` 表示需要检查工程报告或指标，不应盲目重跑；未知类别会

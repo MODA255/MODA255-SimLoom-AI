@@ -35,7 +35,10 @@ PREFLIGHT_OUTPUT_SCHEMA = {
                 "artifacts": {"type": "object"},
                 "engineering_context": {"type": ["object", "null"]},
                 "validation": {"type": ["object", "null"]},
-                "lifecycle": {"type": "object"}, "recovery": {"type": "object"},
+                "lifecycle": {"type": "object"}, "recovery": {"type": "object", "properties": {
+                    "request_id": {"type": "boolean"}, "reconnect": {"type": "boolean"},
+                    "workflow": {"type": "boolean"}, "policy": {"type": ["object", "null"]},
+                }},
                 "requirements": {"type": ["object", "null"], "properties": {
                     "adapter_capabilities": {"type": "array", "items": {"type": "string"}},
                     "worker_features": {"type": "array", "items": {"type": "string"}},
@@ -157,7 +160,8 @@ def _step_preflight(adapter: Any, step: PlanStep, root: Path, *, probe: bool = F
             bridge=bool(getattr(adapter, "bridge_url", None)), workflow=workflow,
             engineering_context=(binding.get("vendor_options") or {}).get("engineering_context")
             if isinstance(binding.get("vendor_options"), dict) else None,
-            capability_requirements=requirements)
+            capability_requirements=requirements,
+            recovery_policy=binding.get("recovery_policy"))
         result["outputs"] = outputs
     except Exception as exc:
         result["issues"].append({"code": getattr(exc, "code", "ACTION_CONTRACT_INVALID"), "message": str(exc)})

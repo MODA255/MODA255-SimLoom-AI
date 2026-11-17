@@ -425,11 +425,13 @@ class CommandAdapter(ToolAdapter):
             mode="bridge" if self.bridge_url else "local", bridge=bool(self.bridge_url), workflow=bool(context.workflow),
             engineering_context=(binding.get("vendor_options") or {}).get("engineering_context")
             if isinstance(binding.get("vendor_options"), dict) else None,
-            capability_requirements=binding.get("capability_requirements"))
+            capability_requirements=binding.get("capability_requirements"),
+            recovery_policy=binding.get("recovery_policy"))
         return {"schema_version": SCHEMA, "operation": "run", "request_id": uuid.uuid4().hex,
                 "tool": self.name.value, "action": step.action, "script": script,
                 "parameters": step.parameters, "inputs": inputs, "outputs": outputs, "files": files,
                 "validation": validation, "operation_contract": operation_contract,
                 "capability_requirements": normalize_capability_requirements(binding.get("capability_requirements")),
+                "recovery_policy": operation_contract.get("recovery", {}).get("policy", {}),
                 **({"vendor_options": json.loads(json.dumps(binding["vendor_options"], allow_nan=False))}
                    if "vendor_options" in binding else {})}

@@ -33,7 +33,7 @@ def job_id(value):
 
 
 def request_digest(payload):
-    keys = ("schema_version", "request_id", "tool", "action", "script", "parameters", "inputs", "outputs", "files", "validation")
+    keys = ("schema_version", "request_id", "tool", "action", "script", "parameters", "inputs", "outputs", "files", "validation", "recovery_policy")
     normalized = {key: payload.get(key) for key in keys}
     if "vendor_options" in payload:
         normalized["vendor_options"] = payload["vendor_options"]

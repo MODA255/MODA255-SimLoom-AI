@@ -71,7 +71,10 @@ ENGINEERING_RESULT_SCHEMA = {
                 "engineering_context": {"type": ["object", "null"],
                                         "description": "Declarative context from the configured vendor action; not runtime or license attestation"},
                 "validation": {"type": ["object", "null"]}, "lifecycle": {"type": "object"},
-                "recovery": {"type": "object"},
+                "recovery": {"type": "object", "properties": {
+                    "request_id": {"type": "boolean"}, "reconnect": {"type": "boolean"},
+                    "workflow": {"type": "boolean"}, "policy": {"type": ["object", "null"]},
+                }},
             },
         },
         "lifecycle": {
