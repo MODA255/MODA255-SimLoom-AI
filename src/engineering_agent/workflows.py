@@ -94,11 +94,18 @@ class WorkflowStore:
             if publication is None or not publication.is_file() or json.loads(publication.read_text())["state"] != "committed":
                 state["status"] = "publishing"
         report = state.get("report") or {}
-        repair_available = any(
-            isinstance((item.get("details") or {}).get("vendor_validation"), dict)
-            and (item.get("details") or {}).get("vendor_validation", {}).get("engineering_acceptance") == "failed"
-            for item in report.get("results", []) if isinstance(item, dict)
-        )
+        def failed_engineering_result(item):
+            details = item.get("details") or {}
+            evidence = details.get("vendor_validation")
+            if not isinstance(evidence, dict):
+                evidence = details.get("engineering_result")
+            return (isinstance(evidence, dict)
+                    and evidence.get("engineering_acceptance") == "failed"
+                    and any(isinstance(metric, dict) and metric.get("passed") is False
+                            for metric in evidence.get("metric_verdicts", [])))
+
+        repair_available = any(failed_engineering_result(item)
+                               for item in report.get("results", []) if isinstance(item, dict))
         return {key: state[key] for key in ('workflow_id', 'status', 'created_at', 'updated_at')} | {
             'prompt': state['plan']['request']['prompt'], 'error': state.get('error'),
             'parent_workflow_id': state.get('parent_workflow_id'),

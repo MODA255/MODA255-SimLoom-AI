@@ -386,6 +386,35 @@ def test_failed_engineering_metric_creates_child_repair_workflow_without_overwri
     assert parent_after['repair_history'][0]['child_workflow_id']==child_id
 
 
+def test_unified_engineering_result_can_drive_repair_without_legacy_vendor_field(workflow_setup,tmp_path):
+    project,manager,config,plan,make=workflow_setup
+    (tmp_path/'gate').touch();config['timeouts']['step_seconds']=10
+    first=make().run('fixture',project_dir=str(project),dry_run=False)
+    parent=WorkflowStore(project).read(first.workflow_id)
+    target=next(item for item in parent['report']['results'] if item['step_id']=='solve')
+    target['details'].pop('vendor_validation', None)
+    target['details']['engineering_result']={
+        'schema_version':'simloom-ai/engineering-result/v1',
+        'engineering_acceptance':'failed',
+        'metric_verdicts':[{'name':'equivalent_stress','value':120,'unit':'MPa',
+                            'operator':'<=','target':80,'passed':False}],
+        'contract':{'required_metrics':['equivalent_stress'],
+                    'metric_units':{'equivalent_stress':'MPa'},
+                    'metric_rules':[{'name':'equivalent_stress','operator':'<=',
+                                     'target':80,'unit':'MPa'}]},
+    }
+    WorkflowStore(project).save(parent)
+    config['tools']['ansys']['actions']['mesh_and_solve']['repair_strategies']=[{
+        'id':'from_unified_result','when':{'metric':'equivalent_stress','failed':True},
+        'parameter_patch':{'marker':str(tmp_path/'repair-count')},
+        'reason':'依据统一工程结果中的失败指标切换备用工况。','max_attempts':1}]
+    summary=WorkflowStore(project).summary(WorkflowStore(project).read(first.workflow_id))
+    assert summary['repair_available'] is True
+    repaired=make().workflow('repair',first.workflow_id,project_dir=str(project))
+    assert repaired['status']=='committed',repaired
+    assert repaired['repair']['candidate']['strategy_id']=='from_unified_result'
+
+
 def test_repair_requires_explicit_strategy_and_does_not_change_thresholds(workflow_setup,tmp_path):
     project,manager,config,plan,make=workflow_setup
     (tmp_path/'gate').touch();config['timeouts']['step_seconds']=10

@@ -54,12 +54,20 @@ def _step_evidence(state: dict[str, Any], step_id: str) -> dict[str, Any]:
         if result.get("step_id") == step_id:
             details = result.get("details") or {}
             vendor = details.get("vendor_validation")
+            normalized = details.get("engineering_result")
+            # New workers may expose only the unified envelope.  Present it
+            # through the historical evidence slot so existing strategy
+            # matching remains compatible while agents can migrate gradually.
+            if not isinstance(vendor, dict) and isinstance(normalized, dict):
+                vendor = normalized
             return {"status": entry.get("status"), "error_code": _error_code(entry, state),
                     "vendor_validation": vendor if isinstance(vendor, dict) else None,
+                    "engineering_result": normalized if isinstance(normalized, dict) else None,
                     "verification": details.get("verification"),
                     "message": result.get("message")}
     return {"status": entry.get("status"), "error_code": _error_code(entry, state),
             "vendor_validation": None, "verification": None,
+            "engineering_result": None,
             "message": entry.get("error", {}).get("message") if isinstance(entry.get("error"), dict) else None}
 
 

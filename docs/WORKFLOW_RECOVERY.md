@@ -83,7 +83,10 @@ MCP 的 `engineering_workflow` 在 safe profile 中仅有 `list/status`，full p
 
 ## 基于证据的修复与重规划
 
-完成的工程链如果保存了 `vendor_validation.metric_verdicts`，工作台可以显示“按失败证据尝试修复”。
+完成的工程链如果保存了统一 `engineering_result.metric_verdicts`（或兼容字段
+`vendor_validation.metric_verdicts`），工作台可以显示“按失败证据尝试修复”。修复器优先使用统一
+envelope 中的工程验收结论、失败指标和原始 contract；这样 worker 升级后即使不再重复旧字段，
+恢复和重规划仍能读取同一份证据。
 CLI 使用：
 
 ```sh
