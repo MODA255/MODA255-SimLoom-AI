@@ -13,6 +13,7 @@ from typing import Any
 from .models import ExecutionPlan, PlanStep, ToolName
 from .worker_protocol import WorkerError, relative_path
 from .software_contract import build_operation_contract, normalize_capability_requirements
+from .vendor_evidence import build_contract
 
 
 PREFLIGHT_OUTPUT_SCHEMA = {
@@ -224,9 +225,18 @@ def _step_preflight(adapter: Any, step: PlanStep, root: Path, *, probe: bool = F
         script, inputs, outputs, validation, kind = adapter.file_contract(step, binding)
         result["contract"] = {"script": script, "inputs": inputs, "outputs": outputs,
                                "validation_kind": kind, "validation": validation}
+        # Typed vendor contracts contain input hashes at execution time.  The
+        # operation definition intentionally excludes those hashes, so use
+        # deterministic placeholders here to produce the same digest that the
+        # adapter will build after it reads the real files.
+        contract_validation = validation
+        if kind:
+            placeholder_records = [{"path": name, "sha256": "0" * 64} for name in inputs]
+            contract_validation = build_contract(kind, step.parameters, placeholder_records,
+                                                 outputs, step.tool.value, step.action)
         result["operation_contract"] = build_operation_contract(
             tool=step.tool.value, action=step.action, script=script, inputs=inputs,
-            outputs=outputs, validation=validation,
+            outputs=outputs, validation=contract_validation,
             mode="bridge" if getattr(adapter, "bridge_url", None) else "local",
             bridge=bool(getattr(adapter, "bridge_url", None)), workflow=workflow,
             engineering_context=(binding.get("vendor_options") or {}).get("engineering_context")

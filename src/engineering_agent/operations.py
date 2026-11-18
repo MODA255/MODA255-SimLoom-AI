@@ -189,6 +189,7 @@ class OperationSpec:
                 "dry_run": {"type": "boolean", "default": True},
                 "inputs": {"type": "array", "items": {"type": "string"}, "description": "Project-relative files transferred to the software worker"},
                 "outputs": {"type": "array", "items": {"type": "string"}, "description": "Required result files; defaults to configured action outputs"},
+                "operation_contract": {"type": "object", "description": "Optional operation contract returned by preflight; execution rejects a stale definition_digest"},
                 "validation": {"type": "object", "description": "Custom report contract or built-in evidence kind; configured binding takes precedence", "properties": {"kind": {"type": "string", "enum": ["catia_parameters", "mechanical_solve", "adams_export", "vi_grade_export"]}, "report": {"type": "string"}, "required_checks": {"type": "array", "items": {"type": "string"}}}},
             })
             outputs = {"step_id": {"type": "string"}, "tool": {"type": "string"},

@@ -12,8 +12,9 @@ import pytest
 
 from engineering_agent import EngineeringAgent
 from engineering_agent.adapters.base import AdapterContext
-from engineering_agent.adapters.vendor import CatiaAdapter
-from engineering_agent.models import PlanStep, ToolName
+from engineering_agent.adapters.vendor import AnsysAdapter, CatiaAdapter
+from engineering_agent.models import AgentRequest, ExecutionPlan, PlanStep, ToolName
+from engineering_agent.software_preflight import preflight_plan
 from engineering_agent.software_worker import run_job
 from engineering_agent.windows_bridge import WindowsBridge, create_bridge_server
 from engineering_agent.windows_control import WindowsAutomation
@@ -329,6 +330,37 @@ def test_preflight_reports_action_readiness_before_launch(project):
     assert all(item["operation_contract"]["definition_digest"] for item in result["steps"])
     assert all(item["operation_contract"]["recovery"]["workflow"] is True
                for item in result["steps"])
+
+
+def test_typed_preflight_contract_digest_is_accepted_and_stale_digest_is_rejected(project):
+    (project / "inputs").mkdir()
+    (project / "inputs" / "model.mechdat").write_text("fixture model", encoding="utf-8")
+    configured = {"generate_scripts": False, "tools": {"ansys": {"actions": {
+        "solve_configured_model": {"script": "scripts/runner.py", "command": COMMAND}
+    }}}}
+    adapter = AnsysAdapter(configured["tools"]["ansys"])
+    parameters = {
+        "db_file": "inputs/model.mechdat", "analysis_name": "Static Structural",
+        "native_output": "artifacts/solved.mechdat", "result_output": "artifacts/results.json",
+        "report_output": "artifacts/report.json", "required_metrics": ["equivalent_stress"],
+        "metric_units": {"equivalent_stress": "MPa"},
+        "metric_rules": [{"name": "equivalent_stress", "operator": "<=", "target": 80, "unit": "MPa"}],
+    }
+    plan_step = PlanStep("solve", ToolName.ANSYS, "solve_configured_model", "solve", parameters=parameters)
+    plan = ExecutionPlan(AgentRequest("solve", str(project), parameters), [plan_step], [])
+    preflight = preflight_plan({ToolName.ANSYS: adapter}, plan, project)
+    declared = preflight["steps"][0]["operation_contract"]
+
+    accepted_step = PlanStep("solve", ToolName.ANSYS, "solve_configured_model", "solve",
+                             parameters={**parameters, "operation_contract": declared})
+    prepared = adapter._prepare(accepted_step, AdapterContext(project), configured["tools"]["ansys"]["actions"]["solve_configured_model"])
+    assert prepared["operation_contract"]["definition_digest"] == declared["definition_digest"]
+
+    stale = {**declared, "definition_digest": "f" * 64}
+    rejected_step = PlanStep("solve", ToolName.ANSYS, "solve_configured_model", "solve",
+                             parameters={**parameters, "operation_contract": stale})
+    with pytest.raises(WorkerError, match="SOFTWARE_OPERATION_CONTRACT_STALE"):
+        adapter._prepare(rejected_step, AdapterContext(project), configured["tools"]["ansys"]["actions"]["solve_configured_model"])
 
 
 def test_preflight_identifies_unbound_vendor_action(project):

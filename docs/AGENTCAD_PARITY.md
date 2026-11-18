@@ -361,6 +361,11 @@ Agent 在数值改善、回归或证据不足时定位原始结果。它增强�
 compact MCP 客户端可以先加载轻量目录，再只请求当前任务需要的参数契约，减少上下文和互操作压力；资源
 仍然是只读发现，不代表对应 runner 或商业软件已可执行。
 
+同日又把 preflight contract digest 接入执行入口：typed software operation 可以携带 preflight 返回的
+`operation_contract`，控制端会在创建本机进程或提交 Windows worker 前重新计算并拒绝过期摘要，返回
+`SOFTWARE_OPERATION_CONTRACT_STALE`。这把配置漂移从“结果回收后才发现”提前到执行前，仍不代表商业软件
+本身已安装、求解成功或通过工程验收。
+
 2026-11-17 后续：`EngineeringResult/v1` 增加可选 `engineering-context/v1`。runner 可以明确导出
 软件版本/构建/许可证状态、原生对象、坐标系、工况和模型引用；控制端只做有界字段归一化，不从
 退出码、文件名或工具名称推断原生语义。MCP operation schema 与结果文档同步发布，真实 Windows

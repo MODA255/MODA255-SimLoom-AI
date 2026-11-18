@@ -40,6 +40,11 @@ MCP `tools/list` 会发布 `engineering_preflight` 的 `outputSchema`。每个 `
 调用结果的实际 `operation_contract` 必须与 worker 校验的摘要一致。schema 只描述输出形状，不把
 `ready=true` 当成软件已安装、许可证可用或工程结果合格。
 
+执行入口也可以把 preflight 返回的 `operation_contract` 原样放入 typed software operation 的
+`operation_contract` 参数。控制端会重新按当前动作绑定、输入输出和验证契约计算 digest；如果配置或
+契约在 preflight 后发生变化，会在启动 runner 前返回 `SOFTWARE_OPERATION_CONTRACT_STALE`，不会提交
+本机进程或 Windows worker 任务。这样 Agent 不会把旧的 preflight 结果误用于另一份动作配置。
+
 同一份步骤级和计划级输出字段也发布在 typed operation `project.preflight` 的
 `output_schema` 中，包括 `schema_version`、`plan_validation`、`next_actions` 和完整的
 `operation_contract`。因此 Python `EngineeringAgent.preflight()`、MCP 内置工具和

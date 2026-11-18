@@ -431,6 +431,12 @@ class CommandAdapter(ToolAdapter):
             if isinstance(binding.get("vendor_options"), dict) else None,
             capability_requirements=binding.get("capability_requirements"),
             recovery_policy=binding.get("recovery_policy"))
+        expected_contract = step.parameters.get("operation_contract")
+        if expected_contract is not None:
+            if not isinstance(expected_contract, dict) or not isinstance(expected_contract.get("definition_digest"), str):
+                raise WorkerError("SOFTWARE_OPERATION_CONTRACT_REQUIRED")
+            if expected_contract["definition_digest"] != operation_contract["definition_digest"]:
+                raise WorkerError("SOFTWARE_OPERATION_CONTRACT_STALE")
         return {"schema_version": SCHEMA, "operation": "run", "request_id": uuid.uuid4().hex,
                 "tool": self.name.value, "action": step.action, "script": script,
                 "parameters": step.parameters, "inputs": inputs, "outputs": outputs, "files": files,
