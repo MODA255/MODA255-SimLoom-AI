@@ -441,9 +441,13 @@ class MCPServer:
                 input_schema["allOf"] = [{"anyOf": [{"required": [key]} for key in group]}
                                          for group in operation["parameter_alternatives"]]
             output_properties = operation.get("output_schema") or {}
+            output_required = operation.get("output_required") or []
+            output_contract = {"type": "object", "properties": output_properties}
+            if output_required:
+                output_contract["required"] = output_required
             tools.append({"name": "operation." + operation["name"], "description": operation["description"],
                           "inputSchema": input_schema,
-                          "outputSchema": {"type": "object", "properties": output_properties}})
+                          "outputSchema": output_contract})
         if toolset == "compact":
             # Keep the operation index and generic dispatcher small enough for
             # MCP clients that load every advertised tool schema into context.

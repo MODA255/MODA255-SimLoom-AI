@@ -113,6 +113,9 @@ bulge 弧段、SPLINE 采样段和 HATCH 多段线边界检查自交/重叠；�
 `operation.project.preflight` 都发布相同的步骤级/计划级建议和 operation contract 字段；这减少
 Agent 为不同入口维护特殊解析器的差距，但仍不构成四款商业软件实机验收。
 
+其后又为 typed operation 发布 `outputSchema.required`，Agent 可以在调度前对 preflight
+响应做严格结构校验，减少把旧客户端缓存或不完整响应误当成可执行条件的风险。
+
 2026-11-17 后续：新增 `simloom-ai/capability-matrix/v1`。每个已声明的软件动作现在
 同时返回状态、规范化要求、缺失原因、发现状态、证据等级和实机验收标记；CLI、Web 和
 MCP 复用同一个矩阵，避免 Agent 从不同入口拼接 `doctor()` 字段。该改动改善了操作发现

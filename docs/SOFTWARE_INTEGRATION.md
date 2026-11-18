@@ -41,6 +41,9 @@ MCP `tools/list` 会发布 `engineering_preflight` 的 `outputSchema`。每个 `
 `operation_contract`。因此 Python `EngineeringAgent.preflight()`、MCP 内置工具和
 `operation.project.preflight` 不会让 Agent 针对不同入口维护三套字段映射；如果某个入口缺少
 `next_actions` 或 contract 字段，应视为客户端缓存了旧 schema，而不是把 preflight 结果降级成可执行。
+typed operation 还发布 `outputSchema.required`，当前必填项是 `schema_version`、`steps`、
+`ready`、`ready_count`、`step_count` 和 `next_actions`。客户端可以先做结构校验，再读取
+`next_actions`；这比只检查 HTTP/MCP 调用成功更可靠，也能在输出契约漂移时立即停止调度。
 
 这些能力用真实子进程和本地 HTTP 服务测试，fixture 明确标记为测试程序。
 目前没有 CATIA / Ansys / Adams / VI-grade 的许可证、版本及工程操作实机验收证据。
