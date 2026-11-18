@@ -93,6 +93,11 @@ MCP 的 `engineering_workflow` 在 safe profile 中仅有 `list/status`，full p
 `vendor_validation.metric_verdicts`），工作台可以显示“按失败证据尝试修复”。修复器优先使用统一
 envelope 中的工程验收结论、失败指标和原始 contract；这样 worker 升级后即使不再重复旧字段，
 恢复和重规划仍能读取同一份证据。
+
+如果结果同时保存 `engineering_result.metric_evidence`，父子修复比较会在每项指标下保留
+`evidence.parent` 和 `evidence.child`。JSON 结果记录 `metrics.<name>`/`units.<name>` selector，
+CSV 结果记录列名、归约方式和行数，CATIA 参数记录 reopen 后的参数 selector。来源只用于审计和
+人工复核，不参与“改善/回归”判定，也不会因为存在来源记录而把工程结果判为通过。
 CLI 使用：
 
 ```sh

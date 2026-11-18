@@ -298,6 +298,10 @@ vendor-neutral P&ID 图模型，不等于 ISO/ISA 全部符号、厂商对象和
 
 2026-11-17 后续：四软件动作增加 `capability_requirements`。适配器能力和远程 worker 特性会进入统一 operation contract；preflight 可以在不启动软件时指出缺失能力，doctor/CLI/Web/MCP 能力矩阵会把未探测或不满足要求的动作从 `ready_actions` 中排除，执行前也会拒绝不满足的绑定。该机制改善 Agent 的调度和失败分类，但它仍是配置/协议证据，不是商业软件实机验收。详见 `SOFTWARE_CAPABILITY_REQUIREMENTS.md`。
 
+2026-11-18 后续：`EngineeringResult/v1` 增加可选 `metric_evidence`，记录每个指标来自 JSON
+selector、CSV 列和 reducer，或 CATIA reopen 参数路径；修复比较会把父子来源一起保留，方便
+Agent 在数值改善、回归或证据不足时定位原始结果。它增强可审计性，不会把来源记录当作工程验收。
+
 2026-11-17 后续：`EngineeringResult/v1` 增加可选 `engineering-context/v1`。runner 可以明确导出
 软件版本/构建/许可证状态、原生对象、坐标系、工况和模型引用；控制端只做有界字段归一化，不从
 退出码、文件名或工具名称推断原生语义。MCP operation schema 与结果文档同步发布，真实 Windows

@@ -73,6 +73,15 @@ def _metric_verdicts(evidence: dict[str, Any] | None) -> list[dict[str, Any]]:
     return [item for item in raw[:256] if isinstance(item, dict) and isinstance(item.get("name"), str)]
 
 
+def _metric_evidence(evidence: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Return bounded metric provenance without making it a pass/fail signal."""
+    payload = _envelope(evidence)
+    raw = payload.get("metric_evidence")
+    if not isinstance(raw, list):
+        return []
+    return [item for item in raw[:256] if isinstance(item, dict) and isinstance(item.get("name"), str)]
+
+
 def _acceptance(evidence: dict[str, Any] | None) -> str:
     value = _envelope(evidence).get("engineering_acceptance")
     return value if value in {"passed", "failed", "unknown", "not_requested"} else "unknown"
@@ -121,7 +130,9 @@ def _metric_direction(operator: Any) -> str | None:
     return None
 
 
-def _metric_detail(parent: dict[str, Any] | None, child: dict[str, Any] | None) -> dict[str, Any]:
+def _metric_detail(parent: dict[str, Any] | None, child: dict[str, Any] | None,
+                   parent_evidence: dict[str, Any] | None = None,
+                   child_evidence: dict[str, Any] | None = None) -> dict[str, Any]:
     """Compare one metric without treating a missing value as a pass."""
     parent = parent if isinstance(parent, dict) else {}
     child = child if isinstance(child, dict) else {}
@@ -136,6 +147,8 @@ def _metric_detail(parent: dict[str, Any] | None, child: dict[str, Any] | None) 
         "unit": unit,
         "parent": {"value": parent.get("value"), "passed": parent.get("passed")},
         "child": {"value": child.get("value"), "passed": child.get("passed")},
+        "evidence": {"parent": copy.deepcopy(parent_evidence),
+                     "child": copy.deepcopy(child_evidence)},
         "trend": "unknown",
         "comparable": True,
     }
@@ -189,9 +202,14 @@ def compare_repair_results(parent: dict[str, Any], child: dict[str, Any],
                       for step_id, evidence in parent_steps.items() for item in _metric_verdicts(evidence)}
     child_metrics = {(step_id, item.get("name")): item
                      for step_id, evidence in child_steps.items() for item in _metric_verdicts(evidence)}
+    parent_sources = {(step_id, item.get("name")): item
+                      for step_id, evidence in parent_steps.items() for item in _metric_evidence(evidence)}
+    child_sources = {(step_id, item.get("name")): item
+                     for step_id, evidence in child_steps.items() for item in _metric_evidence(evidence)}
     metrics: list[dict[str, Any]] = []
     for key in sorted(set(parent_metrics) | set(child_metrics)):
-        item = _metric_detail(parent_metrics.get(key), child_metrics.get(key))
+        item = _metric_detail(parent_metrics.get(key), child_metrics.get(key),
+                              parent_sources.get(key), child_sources.get(key))
         item["step_id"] = key[0]
         metrics.append(item)
     counts = {name: sum(item["trend"] == name for item in metrics)

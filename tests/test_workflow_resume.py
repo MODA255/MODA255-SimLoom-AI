@@ -401,16 +401,20 @@ def test_repair_comparison_marks_improvement_and_allows_next_declared_candidate(
         'workflow_id':'parent', 'status':'completed',
         'report':{'results':[{'step_id':'solve','status':'completed','message':'failed','details':{
             'engineering_result':{'engineering_acceptance':'failed','metric_verdicts':[
-                {'name':'stress','value':120,'operator':'<=','target':80,'unit':'MPa','passed':False}]}}}]}}
+                {'name':'stress','value':120,'operator':'<=','target':80,'unit':'MPa','passed':False}],
+                'metric_evidence':[{'name':'stress','source':{'path':'parent.json','format':'json','value_selector':'metrics.stress'}}]}}}]}}
     child={
         'workflow_id':'child', 'status':'completed',
         'report':{'results':[{'step_id':'solve','status':'completed','message':'improved','details':{
             'engineering_result':{'engineering_acceptance':'failed','metric_verdicts':[
-                {'name':'stress','value':95,'operator':'<=','target':80,'unit':'MPa','passed':False}]}}}]}}
+                {'name':'stress','value':95,'operator':'<=','target':80,'unit':'MPa','passed':False}],
+                'metric_evidence':[{'name':'stress','source':{'path':'child.json','format':'json','value_selector':'metrics.stress'}}]}}}]}}
     comparison=compare_repair_results(parent, child, {'strategy_id':'reduce_load'})
     assert comparison['outcome']=='improved'
     assert comparison['counts']['improved']==1
     assert comparison['metrics'][0]['delta']==-25
+    assert comparison['metrics'][0]['evidence']['parent']['source']['path']=='parent.json'
+    assert comparison['metrics'][0]['evidence']['child']['source']['path']=='child.json'
     assert comparison['should_continue'] is True
     decision=decide_repair(comparison, 1)
     assert decision=={'status':'continue_allowed','reason':'remaining_declared_candidates','next_action':'evaluate_next_candidate'}
