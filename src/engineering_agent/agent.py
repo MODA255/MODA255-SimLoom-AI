@@ -40,6 +40,7 @@ from .autocad_backend import AutoCADError, backend_status, run_core_console
 from .dxf_validation import inspect_native
 from .viewer import asset_view, render_asset_export_html
 from .capability_matrix import build_capability_matrix
+from .runtime_config import merge as merge_runtime_config
 
 
 def _project_path(project_root: Path, value: str | Path, *, must_exist: bool = False,
@@ -111,6 +112,21 @@ class EngineeringAgent:
         self.reader = ArtifactReader()
         self.operations = OperationRegistry()
         self.cad = CadOperationEngine(self.config)
+
+    def apply_runtime_config(self, override: dict[str, Any]) -> dict[str, Any]:
+        """Apply validated connection overrides and rebuild dependent adapters.
+
+        Runtime settings are intentionally limited to non-secret connection
+        fields.  Rebuilding the planner, adapters and Windows helper makes a
+        saved Web setting effective for the current process without requiring
+        a restart; action bindings and policy remain in the original config.
+        """
+        self.config = merge_runtime_config(self.config, override)
+        self.planner = AutonomousPlanner(self.config)
+        self.adapters = build_adapters(self.config)
+        self.windows = WindowsAutomation(self.config.get("windows", {}))
+        self.cad = CadOperationEngine(self.config)
+        return self.config
 
     def plan(self, prompt: str, *, project_dir: str = ".", parameters: dict[str, Any] | None = None) -> ExecutionPlan:
         return self.planner.plan(AgentRequest(prompt, project_dir, parameters or {}))

@@ -6,6 +6,10 @@ SimLoom AI 的主要职责是操作 CATIA、Ansys、Adams、VI-grade，再读回
 Mac 控制端与 Windows 工作站的部署、`/capabilities` 发现接口、交互式用户会话和逐款 smoke
 test 见 `WINDOWS_WORKER_SETUP.md`。
 
+工作台可以保存不含密钥的连接覆盖（worker 地址、端口、令牌环境变量和诊断用程序路径），字段、
+合并规则和安全边界见 [`CONNECTION_SETTINGS.md`](CONNECTION_SETTINGS.md)。这只改善控制面配置，
+不会把健康检查或路径声明当成商业软件实机验收。
+
 这里的接入目标是“让 SimLoom 驱动已安装的软件完成一次可核验的工程动作”，不是把厂商
 软件替换成 SimLoom 自己的实现。CATIA、Ansys、Adams 和 VI-grade 的原生模型、网格、求解
 状态和结果文件仍是权威来源；SimLoom 只负责控制面、文件契约、任务生命周期、独立检查

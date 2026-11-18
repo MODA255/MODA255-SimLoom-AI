@@ -156,7 +156,7 @@ function choosePanel(id) {
   document.querySelectorAll('[data-panel]').forEach(button=>button.classList.toggle('active',button.dataset.panel===id));
   if(id==='projects') { refreshProjects().catch(reportError); refreshVersions().catch(reportError); }
   if(id==='assets') { refreshAssets().catch(reportError); refreshCadRuns().catch(reportError); }
-  if(id==='settings') refreshDoctor().catch(reportError);
+  if(id==='settings') { refreshSettings().catch(reportError); refreshDoctor().catch(reportError); }
 }
 function wizardPage(page) {
   state.page=page;
@@ -701,6 +701,33 @@ async function refreshDoctor() {
   renderVendorCapabilities(capabilities.tools||{});
   $('#doctor').innerHTML=items.map(item=>`<div class="status-card"><strong>${escapeHTML(item.tool||item.name||'环境')}</strong><p class="muted">${escapeHTML(item.message||item.reason||item.status||'查看详情')}</p><span class="pill ${item.available?'green':'amber'}">${item.execution_ready?'启动程序已找到 · 实机待验收':item.reachable?'连接正常 · 需绑定动作':item.available?'可用':'未就绪 / 需配置'}</span><details><summary>诊断详情</summary><pre class="json">${escapeHTML(JSON.stringify(item,null,2))}</pre></details></div>`).join('');
 }
+const settingsTools=['catia','ansys','adams','vi-grade'];
+const settingsToolLabels={catia:'CATIA',ansys:'Ansys',adams:'Adams','vi-grade':'VI-grade'};
+function renderSettings(settings) {
+  const tools=settings?.tools||{};
+  const bridge=settings?.windows_bridge||{};
+  $('#settingsForm').innerHTML=`<div class="settings-grid">${settingsTools.map(name=>{
+    const item=tools[name]||{};
+    return `<fieldset class="settings-tool"><legend>${escapeHTML(settingsToolLabels[name])}</legend><label>Windows worker 地址<input data-setting-tool="${name}" data-setting-field="bridge_url" value="${escapeHTML(item.bridge_url||'')}" placeholder="http://192.168.1.20:8099"></label><label>本机启动程序提示<input data-setting-tool="${name}" data-setting-field="executable" value="${escapeHTML(item.executable||'')}" placeholder="可选，仅作诊断提示"></label><label>令牌环境变量<input data-setting-tool="${name}" data-setting-field="bridge_token_env" value="${escapeHTML(item.bridge_token_env||'SIMLOOM_BRIDGE_TOKEN')}" placeholder="SIMLOOM_BRIDGE_TOKEN"></label></fieldset>`;
+  }).join('')}</div><fieldset class="settings-worker"><legend>Windows worker 默认参数</legend><div class="settings-worker-grid"><label>监听地址<input data-setting-bridge="host" value="${escapeHTML(bridge.host||'127.0.0.1')}" placeholder="127.0.0.1"></label><label>端口<input data-setting-bridge="port" type="number" min="1" max="65535" value="${escapeHTML(bridge.port??8099)}"></label><label>工作目录<input data-setting-bridge="root_dir" value="${escapeHTML(bridge.root_dir||'')}" placeholder="C:/SimLoom/jobs"></label><label>超时（秒）<input data-setting-bridge="timeout_seconds" type="number" min="1" max="86400" value="${escapeHTML(bridge.timeout_seconds??1800)}"></label></div></fieldset>`;
+}
+function collectSettings() {
+  const value={schema_version:'simloom-ai/runtime-config/v1',tools:{},windows_bridge:{}};
+  settingsTools.forEach(name=>{ value.tools[name]={}; document.querySelectorAll(`[data-setting-tool="${name}"]`).forEach(input=>{ value.tools[name][input.dataset.settingField]=input.value.trim(); }); });
+  document.querySelectorAll('[data-setting-bridge]').forEach(input=>{ const key=input.dataset.settingBridge; value.windows_bridge[key]=input.type==='number'?Number(input.value):input.value.trim(); });
+  return value;
+}
+async function refreshSettings() {
+  const response=await request('/api/settings');
+  renderSettings(response.settings||{});
+  $('#settingsStatus').textContent=response.path?`保存到本机运行目录：${response.path}`:'连接设置已读取。';
+}
+async function saveSettings() {
+  const button=$('#saveSettings'); button.disabled=true; $('#settingsStatus').textContent='正在保存连接设置…';
+  try { const response=await request('/api/settings',collectSettings()); renderSettings(response.settings||{}); $('#settingsStatus').textContent='已保存；请重新检测连接状态。'; toast('连接设置已保存。'); await refreshDoctor(); }
+  catch(error) { $('#settingsStatus').textContent='保存失败：'+error.message; throw error; }
+  finally { button.disabled=false; }
+}
 const vendorNames = {catia:'CATIA', ansys:'Ansys', adams:'Adams', 'vi-grade':'VI-grade'};
 function vendorReadiness(item) {
   if(item?.real_machine_verified) return {label:'实机已验证', className:'green', hint:'已有有效 Windows 机器证据，可执行已登记动作。'};
@@ -751,7 +778,7 @@ $('#nextWizard').onclick=()=>{if($('#projectName').reportValidity()) wizardPage(
 $('#backWizard').onclick=()=>wizardPage(1); $('#cancelWizard').onclick=()=>$('#projectWizard').close();
 $('#planButton').onclick=plan; $('#preflightButton').onclick=preflight; $('#queueButton').onclick=enqueue; $('#offlineButton').onclick=()=>runOffline();
 $('#refreshTasks').onclick=()=>refreshTasks().catch(reportError); $('#refreshAssets').onclick=()=>refreshAssets().catch(reportError); $('#refreshCadRuns').onclick=()=>refreshCadRuns().catch(reportError);
-$('#refreshDoctor').onclick=()=>refreshDoctor().catch(reportError); $('#viewResults').onclick=()=>choosePanel('assets');
+$('#refreshDoctor').onclick=()=>refreshDoctor().catch(reportError); $('#reloadSettings').onclick=()=>refreshSettings().catch(reportError); $('#saveSettings').onclick=()=>saveSettings().catch(reportError); $('#viewResults').onclick=()=>choosePanel('assets');
 function resetWatchPanel() {
   state.watch=null; $('#watchState').textContent='未启动'; $('#watchState').className='pill';
   $('#watchNotice').textContent='监测器只读取文件并保存指纹，不判断求解是否成功；结果仍需经过工程指标验证。';

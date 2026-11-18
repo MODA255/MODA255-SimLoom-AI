@@ -18,6 +18,7 @@ from .workspace import TEMPLATES, Workspace
 from .tasks import TaskRunner, input_snapshot
 from .reports import build_report, render_report
 from .worker_protocol import WorkerError
+from .runtime_config import RuntimeConfigStore, snapshot as runtime_config_snapshot
 
 STATIC_DIR = Path(__file__).with_name("static")
 INDEX_HTML = (STATIC_DIR / "workspace.html").read_text(encoding="utf-8")
@@ -65,6 +66,9 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
                   workspace_root: str | Path | None = None) -> ThreadingHTTPServer:
     """Construct the same local service for browsers, desktop windows and tests."""
     workspace = Workspace(queue, workspace_root)
+    runtime_config = RuntimeConfigStore(Path(queue.path).resolve().parent / "simloom-runtime-config.json")
+    if runtime_config.path.is_file():
+        agent.apply_runtime_config(runtime_config.read())
     runner = TaskRunner(agent, queue)
 
     class Handler(BaseHTTPRequestHandler):
@@ -201,6 +205,10 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
             if parsed.path == "/api/workspace":
                 return self._send(200, {"projects_root": str(workspace.root), "schemaVersion": WEB_SCHEMA_VERSION,
                                        "planner": "llm-with-fallback" if agent.config.get("llm", {}).get("enabled") else "deterministic"})
+            if parsed.path == "/api/settings":
+                return self._send(200, {"schema_version": "simloom-ai/runtime-config/v1",
+                                       "settings": runtime_config_snapshot(agent.config),
+                                       "path": str(runtime_config.path), "editable": True})
             if parsed.path == "/api/templates":
                 return self._send(200, {"templates": TEMPLATES, "schemaVersion": WEB_SCHEMA_VERSION})
             if parsed.path == "/api/doctor":
@@ -411,6 +419,13 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
                                                         body.get("request_id"), project_dir=root, **options))
             if path == "/api/projects":
                 return self._send(201, workspace.create_project(body))
+            if path == "/api/settings":
+                settings = body.get("settings", body)
+                saved = runtime_config.write(settings)
+                agent.apply_runtime_config(saved)
+                return self._send(200, {"schema_version": "simloom-ai/runtime-config/v1",
+                                       "settings": runtime_config_snapshot(agent.config),
+                                       "path": str(runtime_config.path), "saved": True})
             if path in {"/api/plan", "/api/preflight", "/api/tasks"}:
                 root, metadata, project_id = self._project_input(body)
                 prompt = body.get("prompt", "")
