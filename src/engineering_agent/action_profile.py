@@ -26,6 +26,7 @@ from .software_contract import normalize_capability_requirements, normalize_reco
 
 SCHEMA = "simloom-ai/action-profile/v1"
 WORKER_CONFIG_SCHEMA = "simloom-ai/worker-config-template/v1"
+OPERATION_CATALOG_SCHEMA = "simloom-ai/software-operation-catalog/v1"
 TOOLS = ("catia", "ansys", "adams", "vi-grade")
 _MAX_TEXT = 512
 _SECRET_KEY = re.compile(r"(?:token|secret|password|passwd|api[_-]?key|private[_-]?key)", re.I)
@@ -121,6 +122,36 @@ def _binding_digest(tool: str, action: str, binding: dict[str, Any]) -> str:
     payload = {"tool": tool, "action": action, "binding": _redact(binding)}
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _operation_catalog(tool: str) -> list[dict[str, Any]]:
+    """Return the supported vendor operation index without exposing full schemas.
+
+    The action profile is intentionally useful before a runner is configured.
+    Importing the registry lazily avoids an import cycle during module startup,
+    while keeping the catalog sourced from the same typed operation registry
+    that MCP ``tools/list`` and ``engineering://operations`` publish.
+    """
+    from .operations import OperationRegistry
+
+    prefix = tool + "."
+    catalog: list[dict[str, Any]] = []
+    for operation in OperationRegistry().list():
+        name = operation.get("name")
+        if not isinstance(name, str) or not name.startswith(prefix):
+            continue
+        catalog.append({
+            "name": name,
+            "description": str(operation.get("description", ""))[:512],
+            "version": str(operation.get("version", "1.0")),
+            "compatible_versions": list(operation.get("compatible_versions", []))[:16],
+            "required_parameters": list(operation.get("required_parameters", []))[:64],
+            "output_kinds": list(operation.get("output_kinds", []))[:32],
+            "safety": str(operation.get("safety", "safe")),
+            "compatibility": _redact(operation.get("compatibility"))
+            if operation.get("compatibility") else None,
+        })
+    return catalog
 
 
 def _action_record(tool: str, action: str, binding: Any, *, config: dict[str, Any],
@@ -259,6 +290,7 @@ def build_action_profile(config: dict[str, Any] | None, *, project_root: str | P
         records = [_action_record(tool, action, actions[action], config=config, project_root=root,
                                   adapter_capabilities=capability_map[tool], worker_commands=worker_commands)
                    for action in sorted(actions)]
+        operation_catalog = _operation_catalog(tool)
         tool_profiles[tool] = {
             "bridge_url": _text(item.get("bridge_url")) or "",
             "bridge_token_env": _text(item.get("bridge_token_env")) or "",
@@ -266,10 +298,13 @@ def build_action_profile(config: dict[str, Any] | None, *, project_root: str | P
             "mode": "bridge" if item.get("bridge_url") else "local",
             "actions": records,
             "action_count": len(records),
+            "operation_catalog": operation_catalog,
+            "operation_catalog_count": len(operation_catalog),
         }
         all_actions.extend(records)
     profile = {
         "schema_version": SCHEMA,
+        "operation_catalog_schema": OPERATION_CATALOG_SCHEMA,
         "project_root": str(root) if root else None,
         "configuration_scope": "declarative_action_bindings",
         "tools": tool_profiles,
@@ -291,6 +326,7 @@ def build_action_profile(config: dict[str, Any] | None, *, project_root: str | P
             "ready": sum(1 for item in all_actions if item.get("status") == "ready"),
             "needs_configuration": sum(1 for item in all_actions if item.get("status") == "needs_configuration"),
             "windows_check_deferred": sum(1 for item in all_actions if item.get("status") == "deferred_to_windows_worker"),
+            "catalog_operations": sum(item["operation_catalog_count"] for item in tool_profiles.values()),
         },
         "limitations": [
             "动作绑定摘要不启动商业软件，也不连接 Windows worker。",

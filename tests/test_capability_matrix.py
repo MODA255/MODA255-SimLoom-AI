@@ -192,6 +192,21 @@ def test_mcp_worker_config_resource_is_redacted_template():
     assert "secret-value" not in json.dumps(value, ensure_ascii=False)
 
 
+def test_action_profile_contains_typed_operation_catalog_even_without_bindings():
+    profile = EngineeringAgent({"tools": {}}).config
+    from engineering_agent.action_profile import build_action_profile
+
+    value = build_action_profile(profile)
+    assert value["operation_catalog_schema"] == "simloom-ai/software-operation-catalog/v1"
+    assert value["summary"]["catalog_operations"] > 0
+    catia = value["tools"]["catia"]
+    ansys = value["tools"]["ansys"]
+    assert catia["actions"] == []
+    assert any(item["name"] == "catia.create_model" for item in catia["operation_catalog"])
+    assert any(item["name"] == "ansys.solve_configured_model" for item in ansys["operation_catalog"])
+    assert all("parameters_schema" not in item for item in catia["operation_catalog"])
+
+
 def test_probe_flag_allows_offline_capability_discovery_without_network(monkeypatch):
     config = _config({"worker_features": ["durable_jobs"]})
     config["tools"]["catia"]["bridge_url"] = "http://worker.invalid"

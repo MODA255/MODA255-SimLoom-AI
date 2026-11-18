@@ -14,6 +14,16 @@ SimLoom AI 的工作职责是驱动已经安装的 CATIA、Ansys、Adams 和 VI-
 - 稳定的 `binding_digest`，用于发现动作声明被修改；
 - 当前建议是补配置、执行 plan-level preflight，还是把检查交给 Windows worker。
 
+profile 同时发布 `simloom-ai/software-operation-catalog/v1` 操作目录。目录来自和 MCP
+`tools/list`、`engineering://operations` 相同的 typed operation registry，按软件列出支持的
+operation 名称、版本、必需参数、输出类型和安全级别。它只描述 SimLoom 能识别的调用契约；目录中的
+operation 没有对应绑定时仍然不能执行。这样一个尚未配置 runner 的 Windows 项目也能先让 Agent
+发现“应该配置哪个动作”，再用 `actions[]` 判断该动作是否已有脚本和命令。
+
+Web 设置页会同时显示“已配置动作绑定”和“支持的 typed operation”两个数量。展开“查看支持的
+typed operation”可以先按软件查看操作名称、版本、安全级别和输出类型；点击具体绑定的“检查此动作”
+仍然只对已配置的 runner 执行 preflight，不会把目录项误报为可执行。
+
 它还生成可下载的 `simloom-worker-profile.json`。这个文件是脱敏的 worker 配置模板，便于在 Windows 机器上登记动作和命令。profile 不包含 bridge token、密码、API key 或其他密钥；令牌仍然只能由环境变量提供。
 
 ## 状态含义

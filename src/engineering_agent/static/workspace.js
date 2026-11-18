@@ -720,9 +720,9 @@ function actionProfileStatus(item) {
 }
 function renderActionProfile(profile) {
   const summary=profile?.summary||{};
-  $('#actionProfileSummary').innerHTML=profile ? `<div class="profile-counts"><span><strong>${escapeHTML(summary.actions??0)}</strong> 个动作</span><span><strong>${escapeHTML(summary.declared??0)}</strong> 已声明</span><span><strong>${escapeHTML(summary.ready??0)}</strong> 声明完整</span><span><strong>${escapeHTML(summary.needs_configuration??0)}</strong> 需补配置</span><span><strong>${escapeHTML(summary.windows_check_deferred??0)}</strong> 待 Windows 检查</span></div>` : '';
+  $('#actionProfileSummary').innerHTML=profile ? `<div class="profile-counts"><span><strong>${escapeHTML(summary.actions??0)}</strong> 个动作绑定</span><span><strong>${escapeHTML(summary.catalog_operations??0)}</strong> 个 typed operation</span><span><strong>${escapeHTML(summary.declared??0)}</strong> 已声明</span><span><strong>${escapeHTML(summary.ready??0)}</strong> 声明完整</span><span><strong>${escapeHTML(summary.needs_configuration??0)}</strong> 需补配置</span><span><strong>${escapeHTML(summary.windows_check_deferred??0)}</strong> 待 Windows 检查</span></div>` : '';
   const actions=Array.isArray(profile?.actions)?profile.actions:[];
-  $('#actionProfileList').innerHTML=actions.length ? actions.map(item=>{
+  const actionHtml=actions.length ? actions.map(item=>{
     const status=actionProfileStatus(item);
     const requirements=item.requirements?.declared||{};
     const issues=Array.isArray(item.issues)?item.issues:[];
@@ -732,6 +732,9 @@ function renderActionProfile(profile) {
     const outputs=item.artifacts?.outputs?.join(', ')||'由 typed runner 或计划推导';
     return `<article class="action-profile-row"><div class="action-profile-head"><div><strong>${escapeHTML(item.tool)}.${escapeHTML(item.name)}</strong><p class="muted">${escapeHTML(item.next_action==='run_plan_preflight'?'下一步：带工程目标执行 preflight':'下一步：补充动作绑定或读取诊断')}</p></div><div class="action-profile-actions"><span class="pill ${status.className}">${escapeHTML(status.label)}</span><button type="button" class="btn btn-light action-preflight-button" data-profile-tool="${escapeHTML(item.tool)}" data-profile-action="${escapeHTML(item.name)}">检查此动作</button></div></div><div class="action-profile-meta"><span>脚本：${escapeHTML(item.script?.path||'未声明')}</span><span>命令：${escapeHTML(command)}</span><span>来源：${escapeHTML(item.command_source||'未记录')}</span><span>绑定摘要：${escapeHTML(item.binding_digest||'未记录').slice(0,16)}…</span></div><details><summary>查看契约声明与诊断</summary><div class="action-profile-details"><p><strong>输入：</strong>${escapeHTML(inputs)}</p><p><strong>输出：</strong>${escapeHTML(outputs)}</p><p><strong>适配器能力：</strong>${escapeHTML((requirements.adapter_capabilities||[]).join(', ')||'未声明')}</p><p><strong>worker 特性：</strong>${escapeHTML((requirements.worker_features||[]).join(', ')||'未声明')}</p><p><strong>命令状态：</strong>${escapeHTML(item.command_check?.code||'未检查')} · ${escapeHTML(item.command_check?.status||'未记录')}</p><p><strong>问题：</strong>${escapeHTML(issueText||'无；仍需 plan-level preflight 推导完整 operation contract')}</p></div></details></article>`;
   }).join('') : '<p class="muted">当前配置没有声明软件动作。</p>';
+  const catalog=Object.entries(profile?.tools||{}).flatMap(([tool,item])=>(item?.operation_catalog||[]).map(operation=>({...operation,tool})));
+  const catalogHtml=catalog.length ? `<details class="action-catalog"><summary>查看支持的 typed operation（${escapeHTML(catalog.length)}）</summary><div class="action-profile-details">${catalog.map(operation=>`<p><strong>${escapeHTML(operation.tool)}.${escapeHTML(operation.name?.split('.').slice(1).join('.')||'')}</strong> · ${escapeHTML(operation.safety||'safe')} · v${escapeHTML(operation.version||'1.0')} · 输出：${escapeHTML((operation.output_kinds||[]).join(', ')||'未声明')}<br><span class="muted">${escapeHTML(operation.description||'')}</span></p>`).join('')}</div></details>` : '';
+  $('#actionProfileList').innerHTML=actionHtml+catalogHtml;
   $('#actionProfileNotice').textContent=profile?.profile_digest ? `Profile digest：${profile.profile_digest}。配置摘要不会替代真实软件执行证据。` : '尚未读取动作 profile。';
 }
 async function preflightProfileAction(tool, action) {

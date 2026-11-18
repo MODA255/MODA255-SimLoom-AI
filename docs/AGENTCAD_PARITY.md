@@ -350,6 +350,12 @@ vendor-neutral P&ID 图模型，不等于 ISO/ISA 全部符号、厂商对象和
 selector、CSV 列和 reducer，或 CATIA reopen 参数路径；修复比较会把父子来源一起保留，方便
 Agent 在数值改善、回归或证据不足时定位原始结果。它增强可审计性，不会把来源记录当作工程验收。
 
+2026-11-18 后续：action profile 增加 `simloom-ai/software-operation-catalog/v1`。MCP 资源、Web
+设置页和脱敏 profile 现在同时展示四款软件已支持的 typed operation 目录与当前 runner 绑定状态。
+目录由同一份 operation registry 生成，避免 Agent 只能看到已配置动作而不知道可配置的操作范围；
+目录项仍不代表脚本、Windows worker、许可证或商业软件已经可执行，具体动作必须继续通过
+`project.action_preflight` 和真实结果证据确认。
+
 2026-11-17 后续：`EngineeringResult/v1` 增加可选 `engineering-context/v1`。runner 可以明确导出
 软件版本/构建/许可证状态、原生对象、坐标系、工况和模型引用；控制端只做有界字段归一化，不从
 退出码、文件名或工具名称推断原生语义。MCP operation schema 与结果文档同步发布，真实 Windows
