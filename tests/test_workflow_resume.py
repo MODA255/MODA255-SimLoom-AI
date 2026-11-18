@@ -189,6 +189,12 @@ def test_terminal_failure_is_not_reexecuted_and_downstream_never_starts(workflow
     assert again['status']=='failed'
     assert len((tmp_path/'model-count').read_text().splitlines())==1
     assert not (tmp_path/'solve-count').exists()
+    state=WorkflowStore(project).read(report.workflow_id)
+    summary=WorkflowStore(project).summary(state)
+    failed_step=next(item for item in summary['steps'] if item['status']=='failed')
+    assert failed_step['failure_evidence']['schema_version']=='simloom-ai/failure-evidence/v1'
+    assert failed_step['failure_evidence']['error_code']=='SOFTWARE_EXIT_FAILED'
+    assert 'worker_process' in failed_step['failure_evidence']['sources']
 
 
 def test_publish_failure_restores_entire_group_and_resumes_cached_results(workflow_setup,tmp_path,monkeypatch):

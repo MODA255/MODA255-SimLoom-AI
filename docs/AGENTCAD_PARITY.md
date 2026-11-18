@@ -377,6 +377,11 @@ failure evidence；日志自动截断并脱敏，MCP operation schema 也发布�
 它不会从进程退出码推断商业软件语义，也没有增加 CATIA、Ansys、Adams 或 VI-grade 的实机验收证据；
 真实 native evidence 仍需 Windows worker 上的绑定脚本和逐软件样本。
 
+同轮又把该证据接入持久工作流步骤、repair evidence、任务报告和 HTML 时间线。控制端重启或恢复后，
+Agent 仍能看到原 request 的阶段、错误码、日志位置和显式 native evidence；报告层不会读取当前项目
+文件来补造旧任务信息。这样失败证据从单步 adapter 输出扩展为可回放的 Agent-facing 诊断链，但仍不
+替代四款软件的原生报告、许可证核验或 Windows 实机验收。
+
 2026-11-17 后续：`EngineeringResult/v1` 增加可选 `engineering-context/v1`。runner 可以明确导出
 软件版本/构建/许可证状态、原生对象、坐标系、工况和模型引用；控制端只做有界字段归一化，不从
 退出码、文件名或工具名称推断原生语义。MCP operation schema 与结果文档同步发布，真实 Windows

@@ -121,7 +121,8 @@ class WorkflowStore:
                        'request_id': state['steps'][s['id']].get('request_id'),
                        'operation_contract': copy.deepcopy(state['steps'][s['id']].get('operation_contract')),
                        'lifecycle': copy.deepcopy(state['steps'][s['id']].get('lifecycle')),
-                       'failure': copy.deepcopy(state['steps'][s['id']].get('failure'))}
+                       'failure': copy.deepcopy(state['steps'][s['id']].get('failure')),
+                       'failure_evidence': copy.deepcopy(state['steps'][s['id']].get('failure_evidence'))}
                       for s in state['plan']['steps']]}
 
 
@@ -429,6 +430,10 @@ class DurableWorkflow:
                             entry['failure'] = copy.deepcopy(engineering_result['failure'])
                         else:
                             entry.pop('failure', None)
+                        if isinstance(engineering_result.get('failure_evidence'), dict):
+                            entry['failure_evidence'] = copy.deepcopy(engineering_result['failure_evidence'])
+                        else:
+                            entry.pop('failure_evidence', None)
                     if result.status != 'completed':
                         pending = result.details.get('remote_job', {}).get('requires_reconnect')
                         state['status'] = report.status = 'waiting' if pending else 'failed'

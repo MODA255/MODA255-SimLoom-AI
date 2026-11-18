@@ -16,7 +16,7 @@ def _compact_engineering_result(value):
         return None
     keys = ("schema_version", "tool", "action", "status", "engineering_acceptance",
             "real_machine_verified", "metrics", "metric_verdicts", "metric_evidence",
-            "observations", "contract", "lifecycle", "failure")
+            "observations", "contract", "lifecycle", "failure", "failure_evidence")
     return {key: value[key] for key in keys if key in value}
 
 
@@ -229,6 +229,29 @@ def render_report(report):
             ])
     evidence = table(["步骤", "软件", "指标", "来源文件", "值定位", "单位/聚合"], evidence_rows) \
         if evidence_rows else '<p>本次任务没有保存指标来源记录。</p>'
+    failure_rows = []
+    failure_payloads = []
+    for record in report.get("engineering_results", []):
+        envelope = record.get("engineering_result") or {}
+        failure_evidence = envelope.get("failure_evidence")
+        if not isinstance(failure_evidence, dict):
+            continue
+        failure_rows.append([
+            record.get("step_id") or record.get("action") or "未记录",
+            record.get("tool") or envelope.get("tool") or "未记录",
+            failure_evidence.get("phase"), failure_evidence.get("error_code"),
+            failure_evidence.get("category"), failure_evidence.get("recommended_action"),
+            ", ".join(failure_evidence.get("sources", [])) if isinstance(failure_evidence.get("sources"), list) else "",
+        ])
+        failure_payloads.append({
+            "step_id": record.get("step_id"), "tool": record.get("tool") or envelope.get("tool"),
+            "action": record.get("action") or envelope.get("action"),
+            "failure_evidence": failure_evidence,
+        })
+    failure_evidence_view = table(["步骤", "软件", "阶段", "错误码", "分类", "建议动作", "来源"], failure_rows) \
+        if failure_rows else '<p>本次任务没有保存结构化失败证据。</p>'
+    if failure_payloads:
+        failure_evidence_view += '<details><summary>查看失败证据 JSON</summary><pre>' + pretty(failure_payloads) + '</pre></details>'
     repair = report.get("repair") or {}
     repair_sections = ''
     if repair:
@@ -284,6 +307,7 @@ pre{{white-space:pre-wrap;overflow-wrap:anywhere;background:#f4f6fa;padding:16px
 <section><h2>阶段与耗时</h2>{stages}</section>
 <section><h2>工程指标</h2><p>{e(validation)}</p>{metrics}</section>
 <section><h2>指标来源证据</h2>{evidence}</section>
+<section><h2>软件失败证据</h2><p>以下内容来自保存的 worker/runner 诊断；它不会替代厂商原生报告，也不会单独证明工程验收。</p>{failure_evidence_view}</section>
 {repair_sections}
 <section><h2>产物与校验值</h2><p>以下路径相对于项目目录。历史副本在后续运行中保留。</p>{files}</section>
 <section><h2>事件时间线</h2>{timeline}</section>

@@ -485,6 +485,14 @@ def test_task_report_preserves_metric_evidence_for_external_steps(tmp_path):
                     "path": "artifacts/results.json", "format": "json",
                     "value_selector": "metrics.equivalent_stress",
                     "unit_selector": "units.equivalent_stress"}}],
+                "failure_evidence": {
+                    "schema_version": "simloom-ai/failure-evidence/v1",
+                    "status": "failed", "phase": "validate", "error_code": "VENDOR_REPORT_INVALID",
+                    "category": "validation", "recommended_action": "review_engineering_result",
+                    "process": {}, "logs": {"paths": {"stderr": "_logs/stderr.txt"}},
+                    "remote_job": None, "native": {"code": "NATIVE_REPORT_INVALID"},
+                    "sources": ["vendor_evidence"],
+                },
             }}
         }]
     })
@@ -492,8 +500,11 @@ def test_task_report_preserves_metric_evidence_for_external_steps(tmp_path):
     assert report["engineering_results"][0]["step_id"] == "ansys_static"
     evidence = report["engineering_results"][0]["engineering_result"]["metric_evidence"][0]
     assert evidence["source"]["value_selector"] == "metrics.equivalent_stress"
+    failure_evidence = report["engineering_results"][0]["engineering_result"]["failure_evidence"]
+    assert failure_evidence["error_code"] == "VENDOR_REPORT_INVALID"
     html = __import__("engineering_agent.reports", fromlist=["render_report"]).render_report(report)
     assert "metrics.equivalent_stress" in html and "artifacts/results.json" in html
+    assert "VENDOR_REPORT_INVALID" in html and "_logs/stderr.txt" in html
 
 
 def test_rehearsal_report_has_no_fabricated_solver_results(service):

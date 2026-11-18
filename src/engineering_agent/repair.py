@@ -302,11 +302,17 @@ def _step_evidence(state: dict[str, Any], step_id: str) -> dict[str, Any]:
             return {"status": entry.get("status"), "error_code": _error_code(entry, state),
                     "vendor_validation": vendor if isinstance(vendor, dict) else None,
                     "engineering_result": normalized if isinstance(normalized, dict) else None,
+                    "failure_evidence": (copy.deepcopy(normalized.get("failure_evidence"))
+                                          if isinstance(normalized, dict) and isinstance(normalized.get("failure_evidence"), dict)
+                                          else copy.deepcopy(details.get("failure_evidence"))
+                                          if isinstance(details.get("failure_evidence"), dict) else None),
                     "verification": details.get("verification"),
                     "message": result.get("message")}
     return {"status": entry.get("status"), "error_code": _error_code(entry, state),
             "vendor_validation": None, "verification": None,
             "engineering_result": None,
+            "failure_evidence": copy.deepcopy(entry.get("failure_evidence"))
+            if isinstance(entry.get("failure_evidence"), dict) else None,
             "message": entry.get("error", {}).get("message") if isinstance(entry.get("error"), dict) else None}
 
 
