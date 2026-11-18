@@ -366,6 +366,10 @@ compact MCP 客户端可以先加载轻量目录，再只请求当前任务需�
 `SOFTWARE_OPERATION_CONTRACT_STALE`。这把配置漂移从“结果回收后才发现”提前到执行前，仍不代表商业软件
 本身已安装、求解成功或通过工程验收。
 
+随后完善有界修复候选调度：工程师可以为 `repair_strategies` 声明 `priority` 和 `risk`，匹配候选会
+在总 `repair_budget` 内按优先级、风险和稳定声明顺序选择，并把选择字段写入父子工作流报告。它提高了
+Agent 的重规划可解释性，但仍只允许显式参数 patch，不会自行改变载荷、阈值、输入输出或软件命令。
+
 2026-11-17 后续：`EngineeringResult/v1` 增加可选 `engineering-context/v1`。runner 可以明确导出
 软件版本/构建/许可证状态、原生对象、坐标系、工况和模型引用；控制端只做有界字段归一化，不从
 退出码、文件名或工具名称推断原生语义。MCP operation schema 与结果文档同步发布，真实 Windows

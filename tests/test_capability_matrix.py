@@ -155,6 +155,11 @@ def test_mcp_capability_resource_is_read_only_and_matches_tool_output():
 def test_mcp_action_profile_resource_exposes_bindings_without_secrets(tmp_path):
     config = _config()
     config["tools"]["catia"]["bridge_token"] = "do-not-export"
+    config["tools"]["catia"]["actions"][ACTION]["repair_strategies"] = [{
+        "id": "low-risk-retry", "when": {"metric": "stress", "failed": True},
+        "parameter_patch": {"load_case": "backup"}, "priority": 4, "risk": "low",
+        "max_attempts": 2,
+    }]
     config["windows_bridge"] = {
         "commands": {
             "catia.create_or_update_model": ["C:/Python/python.exe", "{script}", "{request_file}"]
@@ -177,6 +182,8 @@ def test_mcp_action_profile_resource_exposes_bindings_without_secrets(tmp_path):
     value = json.loads(resource["result"]["contents"][0]["text"])
     assert value["schema_version"] == "simloom-ai/action-profile/v1"
     assert value["actions"][0]["tool"] == "catia"
+    assert value["actions"][0]["repair_strategies"][0]["priority"] == 4
+    assert value["actions"][0]["repair_strategies"][0]["parameter_keys"] == ["load_case"]
     assert "do-not-export" not in json.dumps(value, ensure_ascii=False)
 
 

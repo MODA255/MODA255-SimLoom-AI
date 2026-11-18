@@ -17,6 +17,7 @@ from .worker_protocol import WorkerError
 
 SCHEMA = "simloom-ai/repair/v1"
 COMPARISON_SCHEMA = "simloom-ai/repair-comparison/v1"
+RISK_ORDER = {"low": 0, "medium": 1, "high": 2}
 _RESERVED = {
     "input_model", "native_output", "step_output", "db_file", "result_output",
     "command_file", "scenario_file", "metrics_output", "report_output",
@@ -33,12 +34,16 @@ class RepairCandidate:
     parameter_patch: dict[str, Any]
     evidence: dict[str, Any]
     max_attempts: int = 1
+    priority: int = 0
+    risk: str = "medium"
+    declaration_index: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {"schema_version": SCHEMA, "strategy_id": self.strategy_id,
                 "step_id": self.step_id, "reason": self.reason,
                 "parameter_patch": copy.deepcopy(self.parameter_patch),
-                "evidence": copy.deepcopy(self.evidence), "max_attempts": self.max_attempts}
+                "evidence": copy.deepcopy(self.evidence), "max_attempts": self.max_attempts,
+                "priority": self.priority, "risk": self.risk}
 
 
 def _envelope(evidence: dict[str, Any] | None) -> dict[str, Any]:
@@ -340,8 +345,15 @@ def _validate_patch(patch: Any, step: PlanStep) -> dict[str, Any]:
 
 
 def propose_repairs(state: dict[str, Any], plan: ExecutionPlan, agent) -> list[RepairCandidate]:
-    """Return all matching engineer-declared candidates, in plan order."""
+    """Return matching candidates in a deterministic risk/priority order.
+
+    Strategies remain entirely engineer-declared.  ``priority`` only orders
+    candidates that match the same evidence; ``risk`` then prefers low-risk
+    changes, and declaration order remains the final tie-breaker.  The repair
+    loop's explicit budget still limits how many candidates can run.
+    """
     candidates: list[RepairCandidate] = []
+    step_order = {step.id: index for index, step in enumerate(plan.steps)}
     for step in plan.steps:
         evidence = _step_evidence(state, step.id)
         adapter = agent.adapters[step.tool]
@@ -350,7 +362,7 @@ def propose_repairs(state: dict[str, Any], plan: ExecutionPlan, agent) -> list[R
         if not isinstance(strategies, list):
             continue
         metrics = _failed_metrics(evidence)
-        for raw in strategies:
+        for declaration_index, raw in enumerate(strategies):
             if not isinstance(raw, dict) or not isinstance(raw.get("id"), str):
                 continue
             when = raw.get("when") or {}
@@ -361,12 +373,23 @@ def propose_repairs(state: dict[str, Any], plan: ExecutionPlan, agent) -> list[R
             max_attempts = raw.get("max_attempts", 1)
             if type(max_attempts) is not int or max_attempts < 1 or max_attempts > 3:
                 raise WorkerError("REPAIR_ATTEMPT_LIMIT_INVALID", raw["id"])
+            priority = raw.get("priority", 0)
+            if type(priority) is not int or priority < -100 or priority > 100:
+                raise WorkerError("REPAIR_PRIORITY_INVALID", raw["id"])
+            risk = raw.get("risk", "medium")
+            if not isinstance(risk, str) or risk not in RISK_ORDER:
+                raise WorkerError("REPAIR_RISK_INVALID", raw["id"])
             evidence_copy = copy.deepcopy(evidence)
             if matched_metric:
                 evidence_copy["failed_metric"] = copy.deepcopy(matched_metric)
             candidates.append(RepairCandidate(raw["id"], step.id,
                                                str(raw.get("reason") or "按工程师声明的修复策略调整参数"),
-                                               patch, evidence_copy, max_attempts))
+                                               patch, evidence_copy, max_attempts,
+                                               priority, risk, declaration_index))
+    candidates.sort(key=lambda item: (-item.priority, RISK_ORDER[item.risk],
+                                      step_order.get(item.step_id, len(step_order)),
+                                      item.declaration_index,
+                                      item.strategy_id))
     return candidates
 
 

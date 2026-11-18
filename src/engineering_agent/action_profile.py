@@ -124,6 +124,31 @@ def _binding_digest(tool: str, action: str, binding: dict[str, Any]) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def _repair_strategy_summary(value: Any) -> list[dict[str, Any]]:
+    """Expose bounded repair scheduling metadata without executable patches."""
+    if not isinstance(value, list):
+        return []
+    result: list[dict[str, Any]] = []
+    for item in value[:64]:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item["id"].strip():
+            continue
+        summary: dict[str, Any] = {"id": item["id"][:128]}
+        for key in ("reason", "risk"):
+            if isinstance(item.get(key), str):
+                summary[key] = item[key][:512]
+        for key, default in (("priority", 0), ("max_attempts", 1)):
+            value = item.get(key, default)
+            if type(value) is int:
+                summary[key] = value
+        if isinstance(item.get("when"), dict):
+            summary["when"] = _redact(item["when"])
+        patch = item.get("parameter_patch")
+        if isinstance(patch, dict):
+            summary["parameter_keys"] = sorted(str(key)[:128] for key in patch)[:128]
+        result.append(summary)
+    return result
+
+
 def _operation_catalog(tool: str) -> list[dict[str, Any]]:
     """Return the supported vendor operation index without exposing full schemas.
 
@@ -218,6 +243,7 @@ def _action_record(tool: str, action: str, binding: Any, *, config: dict[str, An
                           "status": "missing" if missing_adapter else "declared"},
         "recovery_policy": recovery,
         "recovery_policy_status": "invalid" if recovery_error else "declared" if recovery else "default",
+        "repair_strategies": _repair_strategy_summary(binding.get("repair_strategies")),
         "binding_digest": _binding_digest(tool, action, binding),
         "issues": issues,
         "next_action": "run_plan_preflight" if not issues or status == "deferred_to_windows_worker" else "configure_action_binding",

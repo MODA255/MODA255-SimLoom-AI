@@ -359,6 +359,11 @@ class DurableWorkflow:
             'budget': budget,
             'attempt_count': len(attempts),
             'attempts': attempts,
+            'selection_policy': {
+                'order': ['priority_desc', 'risk_asc', 'plan_order', 'declaration_order', 'strategy_id'],
+                'risk_order': ['low', 'medium', 'high'],
+                'budget_semantics': 'maximum_candidate_rounds',
+            },
             'decision': decision,
         }
         parent = self.store.read(identifier)

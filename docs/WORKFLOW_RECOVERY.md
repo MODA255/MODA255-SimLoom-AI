@@ -116,11 +116,12 @@ Python 使用 `agent.run(..., dry_run=False, auto_repair=True)`，MCP `engineeri
 `repair_budget=2`～`8`，CLI 对应 `--repair-budget 2`。多次尝试由同一个父工程链串联，每次仍创建
 独立子工程链，并把完整尝试记录写入父报告的 `validation.auto_repair.repair_loop` 和工作流状态。
 也可以在配置文件中设置默认值：`{"repair": {"auto_budget": 2}}`；调用参数优先于配置值。
-只有上一轮比较允许 `evaluate_next_candidate` 时才会启动下一轮；同一步骤的多条匹配策略按配置
-顺序逐条评估，每条策略单独计算自己的最大尝试次数。通过、回归、证据不足、策略耗尽
+只有上一轮比较允许 `evaluate_next_candidate` 时才会启动下一轮；同一步骤的多条匹配策略先按
+`priority` 从高到低、再按 `risk=low → medium → high` 排序，最后才使用配置顺序作为稳定的平局
+处理。每条策略单独计算自己的最大尝试次数，总 `repair_budget` 仍限制最多执行的候选轮数。通过、回归、证据不足、策略耗尽
 或预算用完都会停止。等待中、失败、输入冲突或本机状态不明的工程链只返回 `deferred`，没有匹配
 策略或达到尝试上限则返回 `needs_review`。这不是让模型自由修改载荷或放宽阈值，仍受每个动作的
-显式策略、契约字段、单策略最大尝试次数和总预算约束。
+显式策略、风险/优先级字段、契约字段、单策略最大尝试次数和总预算约束。
 
 MCP full profile 使用 `engineering_workflow` 的 `action=repair`，可选 `repair_budget`；safe profile 仍只读。修复策略必须
 写在对应软件动作的 `repair_strategies` 中，例如：
@@ -131,9 +132,15 @@ MCP full profile 使用 `engineering_workflow` 的 `action=repair`，可选 `rep
   "when": {"metric": "equivalent_stress", "failed": true},
   "parameter_patch": {"load_case": "reduced_load_case"},
   "reason": "切换到工程师已配置的低载荷工况",
+  "priority": 20,
+  "risk": "low",
   "max_attempts": 1
 }
 ```
+
+`priority` 必须是 `-100` 到 `100` 的整数，默认 `0`；`risk` 只能是 `low`、`medium` 或 `high`，默认
+`medium`。它们只影响已匹配候选的选择顺序，不会改变指标阈值、输入输出契约或软件命令。候选记录会
+把最终的 `priority` 和 `risk` 保存到父子工作流审计信息中，方便解释 Agent 为什么先尝试某个策略。
 
 策略只能修改该步骤原本已存在且不属于输入、输出、单位、阈值、验证契约或软件命令的参数。
 系统不会通过放宽阈值来制造通过，也不会猜测新载荷、命令或边界条件。每次尝试创建新的子工程链，

@@ -16,7 +16,7 @@ from engineering_agent.software_jobs_client import ReceiptStore
 from engineering_agent.transactions import RunTransaction
 from engineering_agent.worker_jobs import JobManager, TERMINAL
 from engineering_agent.worker_protocol import WorkerError
-from engineering_agent.repair import compare_repair_results, decide_repair
+from engineering_agent.repair import compare_repair_results, decide_repair, propose_repairs
 from engineering_agent.workflows import WorkflowStore, DurableWorkflow
 
 SCRIPT = '''import json,sys,time
@@ -420,6 +420,47 @@ def test_repair_comparison_marks_improvement_and_allows_next_declared_candidate(
     assert decision=={'status':'continue_allowed','reason':'remaining_declared_candidates','next_action':'evaluate_next_candidate'}
 
 
+def test_repair_candidates_use_priority_then_risk_then_declaration_order(workflow_setup):
+    project, manager, config, plan, make = workflow_setup
+    config['tools']['ansys']['actions']['mesh_and_solve']['repair_strategies'] = [
+        {'id': 'medium-first', 'when': {'metric': 'stress', 'failed': True},
+         'parameter_patch': {'marker': 'medium'}, 'priority': 10, 'risk': 'medium'},
+        {'id': 'low-high-priority', 'when': {'metric': 'stress', 'failed': True},
+         'parameter_patch': {'marker': 'low-high'}, 'priority': 20, 'risk': 'low'},
+        {'id': 'low-same-priority', 'when': {'metric': 'stress', 'failed': True},
+         'parameter_patch': {'marker': 'low-same'}, 'priority': 20, 'risk': 'low'},
+    ]
+    state = {
+        'steps': {'solve': {'status': 'failed'}},
+        'report': {'results': [{'step_id': 'solve', 'status': 'completed', 'message': 'failed', 'details': {
+            'engineering_result': {'engineering_acceptance': 'failed', 'metric_verdicts': [
+                {'name': 'stress', 'value': 120, 'operator': '<=', 'target': 80,
+                 'unit': 'MPa', 'passed': False}]}}}]},
+    }
+    candidates = propose_repairs(state, plan, make())
+    assert [item.strategy_id for item in candidates] == [
+        'low-high-priority', 'low-same-priority', 'medium-first']
+    assert candidates[0].to_dict()['priority'] == 20
+    assert candidates[0].to_dict()['risk'] == 'low'
+
+
+def test_repair_candidate_rejects_unknown_risk(workflow_setup):
+    project, manager, config, plan, make = workflow_setup
+    config['tools']['ansys']['actions']['mesh_and_solve']['repair_strategies'] = [{
+        'id': 'bad-risk', 'when': {'metric': 'stress', 'failed': True},
+        'parameter_patch': {'marker': 'bad'}, 'risk': 'unknown'}]
+    state = {
+        'steps': {'solve': {'status': 'failed'}},
+        'report': {'results': [{'step_id': 'solve', 'status': 'completed', 'message': 'failed', 'details': {
+            'engineering_result': {'engineering_acceptance': 'failed', 'metric_verdicts': [
+                {'name': 'stress', 'value': 120, 'operator': '<=', 'target': 80,
+                 'unit': 'MPa', 'passed': False}]}}}]},
+    }
+    with pytest.raises(WorkerError) as caught:
+        propose_repairs(state, plan, make())
+    assert caught.value.code == 'REPAIR_RISK_INVALID'
+
+
 def test_repair_comparison_stops_on_regression_even_when_a_candidate_remains():
     parent={
         'workflow_id':'parent', 'status':'completed',
@@ -458,6 +499,7 @@ def test_repair_loop_evaluates_next_candidate_until_success(workflow_setup, monk
     assert calls == [first.workflow_id, first.workflow_id]
     assert result['repair_loop']['attempt_count']==2
     assert result['repair_loop']['decision']['next_action']=='stop_success'
+    assert result['repair_loop']['selection_policy']['risk_order']==['low','medium','high']
     saved=WorkflowStore(project).read(first.workflow_id)
     assert saved['repair_loop']['schema_version']=='simloom-ai/repair-loop/v1'
     assert saved['repair_decision']['reason']=='engineering_acceptance_passed'

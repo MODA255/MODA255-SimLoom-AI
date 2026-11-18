@@ -11,6 +11,7 @@ SimLoom AI 的工作职责是驱动已经安装的 CATIA、Ansys、Adams 和 VI-
 - 脚本在当前项目中是否存在、为空或越界（如果请求带 `root`）；
 - 输入、输出和验证声明是否已经写入动作；
 - 适配器能力、worker 特性和恢复策略；
+- 已声明的修复策略、匹配条件、优先级、风险级别和每条策略的最大尝试次数；
 - 稳定的 `binding_digest`，用于发现动作声明被修改；
 - 当前建议是补配置、执行 plan-level preflight，还是把检查交给 Windows worker。
 
