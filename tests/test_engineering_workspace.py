@@ -249,6 +249,15 @@ def test_workspace_exposes_structured_preflight_guidance():
     assert "preflight-action" in stylesheet
 
 
+def test_workspace_shows_metric_evidence_sources():
+    script = (STATIC_DIR / "workspace.js").read_text(encoding="utf-8")
+    stylesheet = (STATIC_DIR / "workspace.css").read_text(encoding="utf-8")
+    assert 'id="taskMetricEvidence"' in INDEX_HTML
+    assert "renderMetricEvidence" in script
+    assert "metric_evidence" in script
+    assert "metric-evidence" in stylesheet
+
+
 def test_web_preflight_returns_structured_next_actions(service):
     call, _, _ = service
     status, project = call("/api/projects", {"name": "preflight-ui"})
@@ -455,6 +464,36 @@ def test_report_escapes_user_text_and_metric_failures_are_not_execution_failures
     assert call(url + '?format=exe')[0] == 400
     assert call('/api/tasks/missing/report')[0] == 404
     assert call('/api/tasks/missing/events')[0] == 404
+
+
+def test_task_report_preserves_metric_evidence_for_external_steps(tmp_path):
+    from engineering_agent.reports import build_report
+    from engineering_agent.tasks import input_snapshot
+    queue = TaskQueue(tmp_path / "evidence.db")
+    task_id = queue.submit("Ansys 应力分析", str(tmp_path), inputs=input_snapshot())
+    queue.update(task_id, "completed", {
+        "status": "committed",
+        "results": [{
+            "step_id": "ansys_static", "tool": "ansys", "action": "solve_configured_model",
+            "status": "completed", "details": {"engineering_result": {
+                "schema_version": "simloom-ai/engineering-result/v1",
+                "tool": "ansys", "action": "solve_configured_model", "status": "completed",
+                "engineering_acceptance": "failed", "real_machine_verified": False,
+                "metrics": {"equivalent_stress": {"value": 125, "unit": "MPa"}},
+                "metric_verdicts": [{"name": "equivalent_stress", "passed": False}],
+                "metric_evidence": [{"name": "equivalent_stress", "unit": "MPa", "source": {
+                    "path": "artifacts/results.json", "format": "json",
+                    "value_selector": "metrics.equivalent_stress",
+                    "unit_selector": "units.equivalent_stress"}}],
+            }}
+        }]
+    })
+    report = build_report(queue, task_id)
+    assert report["engineering_results"][0]["step_id"] == "ansys_static"
+    evidence = report["engineering_results"][0]["engineering_result"]["metric_evidence"][0]
+    assert evidence["source"]["value_selector"] == "metrics.equivalent_stress"
+    html = __import__("engineering_agent.reports", fromlist=["render_report"]).render_report(report)
+    assert "metrics.equivalent_stress" in html and "artifacts/results.json" in html
 
 
 def test_rehearsal_report_has_no_fabricated_solver_results(service):

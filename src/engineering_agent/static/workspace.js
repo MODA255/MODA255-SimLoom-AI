@@ -819,6 +819,26 @@ const displayDuration = value => value == null ? '未记录' : `${Number(value).
 function reportTable(headers, rows) {
   return `<div class="table-wrap"><table class="table"><thead><tr>${headers.map(h=>`<th>${escapeHTML(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr>${row.map(c=>`<td>${escapeHTML(c ?? '未记录')}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
 }
+function renderMetricEvidence(records) {
+  const rows=[];
+  (Array.isArray(records)?records:[]).forEach(record=>{
+    const envelope=record?.engineering_result||{};
+    (Array.isArray(envelope.metric_evidence)?envelope.metric_evidence:[]).forEach(item=>{
+      const source=item?.source&&typeof item.source==='object'?item.source:{};
+      rows.push([
+        record.step_id||record.action||'未记录',
+        record.tool||envelope.tool||'未记录',
+        item.name||'未记录',
+        source.path||'未记录',
+        source.value_selector||source.column||'未记录',
+        source.unit_selector||source.reducer||'未记录'
+      ]);
+    });
+  });
+  $('#taskMetricEvidence').innerHTML=rows.length
+    ? '<div class="metric-evidence-title">来源证据</div>'+reportTable(['步骤','软件','指标','来源文件','值定位','单位/聚合'],rows)
+    : '<p class="muted metric-evidence-empty">本次任务没有保存指标来源记录。</p>';
+}
 function renderTaskReport(report) {
   $('#taskTitle').textContent=report.prompt;
   $('#taskSubtitle').textContent=`${report.project_name} · ${report.task_id}`;
@@ -842,6 +862,7 @@ function renderTaskReport(report) {
   $('#taskRetryOrigin').dataset.task=report.retry_of||'';
   $('#taskStages').innerHTML=report.stages.length?reportTable(['阶段','软件','状态','耗时','说明'],report.stages.map(s=>[s.label,s.tool||'工作台',taskStatusLabels[s.status]||s.status,displayDuration(s.duration_seconds),s.error||s.message||''])):'<p class="muted">开始运行后显示阶段记录。旧任务可能没有耗时信息。</p>';
   $('#taskMetrics').innerHTML=report.verdicts.length?reportTable(['指标','数值','单位','规则','判定'],report.verdicts.map(v=>[metricTitles[v.name]||v.name,v.value,v.unit,`${v.operator} ${v.target}`,v.passed?'通过':'未通过'])):'<p class="muted">本次任务尚无指标判定；排练不会生成仿真结论。</p>';
+  renderMetricEvidence(report.engineering_results);
   const input=report.input?.model_spec;
   const values={...(input?.parameters||{}),...(input?.load_cases?.[0]||{})};
   const parameterNames={wheelbase_mm:'长度 / 轴距（mm）',track_front_mm:'宽度 / 轮距（mm）',chassis_height_mm:'几何高度（mm）',force_n:'载荷（N）'};

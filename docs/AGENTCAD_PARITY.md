@@ -123,6 +123,10 @@ Web 工作台随后接入同一份 `next_actions`：默认离线检查启动条�
 随后补齐计划级错误建议：无效计划和需要澄清的计划步骤也会返回统一 `inspect_diagnostics` 建议，
 避免 Agent 在没有可执行步骤时收到空的指导信息。
 
+同轮把 `EngineeringResult/v1` 的 `metric_evidence` 接入任务详情和可下载 HTML 报告，工程师可以
+直接看到指标来源文件、JSON selector 或 CSV 列名与 reducer；历史任务缺少来源时保持为空，不从当前
+项目文件推断证据。这改善了结果回溯和 Agent-facing 审计体验，但仍不替代厂商原生后处理器或实机验收。
+
 2026-11-17 后续：新增 `simloom-ai/capability-matrix/v1`。每个已声明的软件动作现在
 同时返回状态、规范化要求、缺失原因、发现状态、证据等级和实机验收标记；CLI、Web 和
 MCP 复用同一个矩阵，避免 Agent 从不同入口拼接 `doctor()` 字段。该改动改善了操作发现

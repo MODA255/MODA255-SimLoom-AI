@@ -118,6 +118,24 @@
 如果动作配置了 `capability_requirements`，同一对象还包含规范化的 `requirements.adapter_capabilities` 和 `requirements.worker_features`。它们是调度和协议前置条件，不会提升 `real_machine_verified`，也不代替厂商许可证或工程结果证据。
 - `artifacts` 只包含项目相对路径、大小和 SHA-256，不包含本机绝对路径。
 
+## 任务报告中的来源定位
+
+任务队列报告会从外部软件步骤保存的 `details.engineering_result` 中提取有界的
+`engineering_results` 列表。它保留步骤、软件、动作、指标、`metric_evidence`、生命周期和
+失败分类，但不会重新读取当前项目文件，也不会根据缺失字段补造来源。Web 任务详情和可下载的
+HTML 报告会把每条来源展开为：
+
+| 字段 | 含义 |
+| --- | --- |
+| 步骤 / 软件 | 产生该指标的工程步骤和适配器 |
+| 来源文件 | 结果文件的项目相对路径 |
+| 值定位 | JSON selector 或 CSV 列名 |
+| 单位/聚合 | JSON unit selector，或 CSV reducer |
+
+这层展示只帮助工程师回到原始结果文件复核；它不会把来源记录、文件存在或 runner 完成状态
+自动变成工程验收通过。排练任务没有真实 vendor envelope 时，页面明确显示“没有保存指标来源记录”。
+旧任务缺少 `engineering_results` 时保持空列表，避免把当前项目里的新文件错误地归到历史任务。
+
 ## 兼容策略
 
 旧客户端仍可读取 `details.verification`、`details.vendor_validation` 和 `details.output_manifest`。新 Agent 应优先读取 `details.engineering_result`，只有在 `schema_version` 不支持时才回退到旧字段。`engineering_context` 缺失不影响旧结果解析，也不代表原生对象不存在；它只在 runner 明确导出后出现。该 envelope 不会把未运行的软件伪装成已验证，也不会把失败的 vendor report 误判为工程指标失败；报告本身无效时，`engineering_acceptance` 为 `unknown`。

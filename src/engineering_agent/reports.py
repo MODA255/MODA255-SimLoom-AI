@@ -8,6 +8,54 @@ STATUS_LABELS = {"queued": "待运行", "running": "运行中", "waiting": "等�
                  "planned": "排练通过", "blocked": "依赖阻塞", "unavailable": "不可用", "rolled_back": "已回滚"}
 
 
+def _compact_engineering_result(value):
+    """Keep the report-facing, bounded part of one EngineeringResult envelope."""
+    if not isinstance(value, dict):
+        return None
+    keys = ("schema_version", "tool", "action", "status", "engineering_acceptance",
+            "real_machine_verified", "metrics", "metric_verdicts", "metric_evidence",
+            "observations", "contract", "lifecycle", "failure")
+    return {key: value[key] for key in keys if key in value}
+
+
+def _engineering_result_records(result):
+    """Collect persisted vendor envelopes without inventing evidence.
+
+    External runs store envelopes under ``results[*].details`` while a few
+    workflow adapters persist one top-level envelope.  Reports expose both in
+    one bounded list so Web, HTML and future clients use the same source.
+    """
+    records = []
+    seen = set()
+
+    def add(value, *, step_id=None, tool=None, action=None):
+        compact = _compact_engineering_result(value)
+        if compact is None:
+            return
+        identity = (step_id or compact.get("tool"), tool or compact.get("tool"),
+                    action or compact.get("action"), compact.get("status"))
+        if identity in seen:
+            return
+        seen.add(identity)
+        records.append({"step_id": step_id, "tool": tool or compact.get("tool"),
+                        "action": action or compact.get("action"),
+                        "engineering_result": compact})
+
+    add(result.get("engineering_result"))
+    for item in result.get("results", []) if isinstance(result.get("results"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        details = item.get("details") if isinstance(item.get("details"), dict) else {}
+        add(details.get("engineering_result"), step_id=item.get("step_id"),
+            tool=item.get("tool"), action=item.get("action"))
+    for item in result.get("steps", []) if isinstance(result.get("steps"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        add(item.get("engineering_result"), step_id=item.get("id") or item.get("step_id"),
+            tool=item.get("tool"), action=item.get("action"))
+    return records[:64]
+
+
 def build_report(queue, task_id):
     task = queue.get(task_id)
     if not task:
@@ -38,6 +86,7 @@ def build_report(queue, task_id):
     offline = mode == "offline"
     external = mode == "external"
     snapshot = task["input"]
+    engineering_results = _engineering_result_records(result)
     return {
         "schema_version": "simloom-ai/task-report/v1",
         "task_id": task_id, "project_id": task["project_id"], "project_dir": task["project_dir"],
@@ -52,6 +101,7 @@ def build_report(queue, task_id):
                             if started and finished else None,
         "input": snapshot, "input_snapshot_available": snapshot is not None,
         "plan": plan, "stages": list(stages.values()), "verdicts": verdicts,
+        "engineering_results": engineering_results,
         "validation_status": verdict_status,
         "artifacts": result.get("artifact_manifest", []), "error": error,
         "workflow_id": task.get("workflow_id"),
@@ -80,6 +130,20 @@ def render_report(report):
     metrics = table(["指标", "数值", "单位", "规则", "判定"], [
         [v["name"], v.get("value"), v.get("unit"), str(v["operator"]) + " " + str(v["target"]),
          "通过" if v["passed"] else "未通过"] for v in report["verdicts"]])
+    evidence_rows = []
+    for record in report.get("engineering_results", []):
+        envelope = record.get("engineering_result") or {}
+        for evidence in envelope.get("metric_evidence", []) if isinstance(envelope.get("metric_evidence"), list) else []:
+            source = evidence.get("source") if isinstance(evidence.get("source"), dict) else {}
+            evidence_rows.append([
+                record.get("step_id") or record.get("action") or "未记录",
+                record.get("tool") or envelope.get("tool") or "未记录",
+                evidence.get("name"), source.get("path"),
+                source.get("value_selector") or source.get("column"),
+                source.get("unit_selector") or source.get("reducer") or "",
+            ])
+    evidence = table(["步骤", "软件", "指标", "来源文件", "值定位", "单位/聚合"], evidence_rows) \
+        if evidence_rows else '<p>本次任务没有保存指标来源记录。</p>'
     files = table(["产物", "相对路径", "字节", "SHA-256"], [
         [a["name"], a["path"], a["bytes"], a["sha256"]] for a in report["artifacts"]])
     timeline = table(["时间（UTC）", "事件", "说明"], [
@@ -107,6 +171,7 @@ pre{{white-space:pre-wrap;overflow-wrap:anywhere;background:#f4f6fa;padding:16px
 <section><h2>执行计划</h2><pre>{pretty(report['plan'])}</pre></section>
 <section><h2>阶段与耗时</h2>{stages}</section>
 <section><h2>工程指标</h2><p>{e(validation)}</p>{metrics}</section>
+<section><h2>指标来源证据</h2>{evidence}</section>
 <section><h2>产物与校验值</h2><p>以下路径相对于项目目录。历史副本在后续运行中保留。</p>{files}</section>
 <section><h2>事件时间线</h2>{timeline}</section>
 <footer><small>SimLoom AI · {e(report['schema_version'])} · 可离线阅读，也可通过浏览器打印为 PDF。</small></footer>
