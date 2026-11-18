@@ -33,9 +33,43 @@ SimLoom AI 的工作职责是驱动已经安装的 CATIA、Ansys、Adams 和 VI-
 
 - `GET /api/settings`：返回运行时连接设置和嵌入式 `profile`；
 - `POST /api/settings`：保存脱敏连接覆盖，并返回保存后的 `profile`；
-- `GET /api/settings/profile`：下载 `simloom-worker-profile.json`。
+- `GET /api/settings/profile`：下载 `simloom-worker-profile.json`；
+- `POST /api/action-preflight`：对指定 `tool` + `action` 运行单动作 preflight；
+- typed operation `project.action_preflight`：给 MCP、CLI 和 Python 客户端使用同一份单动作检查。
+
+CLI 入口：
+
+```bash
+engineering-agent --config configs/my-engineering-agent.json \
+  --project-dir ./demo action-preflight ansys solve_configured_model \
+  --parameters '{"db_file":"inputs/model.mechdat","analysis_name":"Static Structural","native_output":"artifacts/solved.mechdat","result_output":"artifacts/results.json","report_output":"artifacts/evidence.json","required_metrics":["equivalent_stress"],"metric_units":{"equivalent_stress":"MPa"}}'
+```
 
 `GET /api/settings?root=/path/to/project` 会在脚本检查中使用该项目目录。没有 `root` 时只检查声明，不访问项目文件。profile 本身不会访问 Windows worker；需要健康检查或动作能力时，继续使用 `/api/doctor`、`/api/capabilities` 或带具体工程目标的 `/api/preflight`。
+
+单动作 preflight 请求示例：
+
+```json
+{
+  "project_dir": "C:/SimLoom/projects/suspension",
+  "tool": "ansys",
+  "action": "solve_configured_model",
+  "parameters": {
+    "db_file": "inputs/model.mechdat",
+    "analysis_name": "Static Structural",
+    "native_output": "artifacts/ansys/solved.mechdat",
+    "result_output": "artifacts/ansys/results.json",
+    "report_output": "artifacts/ansys/evidence.json",
+    "required_metrics": ["equivalent_stress"],
+    "metric_units": {"equivalent_stress": "MPa"}
+  },
+  "probe": false
+}
+```
+
+返回的 `step.operation_contract` 与计划级 preflight 使用同一个
+`simloom-ai/software-operation-contract/v1`。如果 typed runner 缺少参数，返回的 `issues[]` 会明确指出
+契约错误；这不会启动软件，也不会因为脚本路径存在而跳过参数和输出校验。
 
 ## 与 plan-level preflight 的关系
 

@@ -61,6 +61,17 @@ PREFLIGHT_OUTPUT_SCHEMA = {
     },
 }
 
+ACTION_PREFLIGHT_OUTPUT_SCHEMA = {
+    "type": "object",
+    "required": ["schema_version", "project_dir", "probe_requested", "step"],
+    "properties": {
+        "schema_version": {"type": "string", "const": "simloom-ai/action-preflight/v1"},
+        "project_dir": {"type": "string"},
+        "probe_requested": {"type": "boolean"},
+        "step": PREFLIGHT_OUTPUT_SCHEMA["properties"]["steps"]["items"],
+    },
+}
+
 
 # Keep these identifiers aligned with ``capability_matrix.next_action``.  A
 # preflight response is the point where an Agent can act on a capability
@@ -274,4 +285,47 @@ def preflight_plan(adapters: dict[ToolName, Any], plan: ExecutionPlan, project_d
         "step_count": len(steps),
         "ready": bool(steps) and ready_count == len(steps) and not skipped,
         "next_actions": next_actions,
+    }
+
+
+def preflight_action(adapters: dict[ToolName, Any], tool: str | ToolName, action: str,
+                     project_dir: str | Path, *, parameters: dict[str, Any] | None = None,
+                     inputs: list[str] | None = None, outputs: list[str] | None = None,
+                     probe: bool = False) -> dict[str, Any]:
+    """Preflight one explicitly selected vendor action.
+
+    This is the action-level counterpart to :func:`preflight_plan`.  It does
+    not ask the planner to infer a workflow, which makes it useful for a
+    settings page, a worker setup wizard, and an Agent that already knows the
+    exact software action it wants to inspect.  The adapter's normal
+    ``file_contract`` remains the source of truth, so typed actions still need
+    their required parameters before a complete contract can be produced.
+    """
+    try:
+        tool_name = tool if isinstance(tool, ToolName) else ToolName(str(tool))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("UNSUPPORTED_SOFTWARE_TOOL") from exc
+    if tool_name not in {ToolName.CATIA, ToolName.ANSYS, ToolName.ADAMS, ToolName.VI_GRADE}:
+        raise ValueError("UNSUPPORTED_SOFTWARE_TOOL")
+    if not isinstance(action, str) or not action.strip() or len(action) > 160:
+        raise ValueError("ACTION_REQUIRED")
+    adapter = adapters.get(tool_name)
+    if adapter is None:
+        raise ValueError("SOFTWARE_ADAPTER_UNAVAILABLE")
+    root = Path(project_dir).resolve()
+    step = PlanStep(
+        id=f"{tool_name.value}.{action.strip()}",
+        tool=tool_name,
+        action=action.strip(),
+        objective=f"Preflight {tool_name.value}.{action.strip()}",
+        inputs=[value for value in (inputs or []) if isinstance(value, str) and value][:256],
+        outputs=[value for value in (outputs or []) if isinstance(value, str) and value][:256],
+        parameters=parameters if isinstance(parameters, dict) else {},
+    )
+    result = _step_preflight(adapter, step, root, probe=probe, workflow=False)
+    return {
+        "schema_version": "simloom-ai/action-preflight/v1",
+        "project_dir": str(root),
+        "probe_requested": bool(probe),
+        "step": result,
     }

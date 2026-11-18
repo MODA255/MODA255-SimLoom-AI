@@ -730,9 +730,24 @@ function renderActionProfile(profile) {
     const command=item.command?.join(' ')||'未声明';
     const inputs=item.artifacts?.inputs?.join(', ')||'由 typed runner 或计划推导';
     const outputs=item.artifacts?.outputs?.join(', ')||'由 typed runner 或计划推导';
-    return `<article class="action-profile-row"><div class="action-profile-head"><div><strong>${escapeHTML(item.tool)}.${escapeHTML(item.name)}</strong><p class="muted">${escapeHTML(item.next_action==='run_plan_preflight'?'下一步：带工程目标执行 preflight':'下一步：补充动作绑定或读取诊断')}</p></div><span class="pill ${status.className}">${escapeHTML(status.label)}</span></div><div class="action-profile-meta"><span>脚本：${escapeHTML(item.script?.path||'未声明')}</span><span>命令：${escapeHTML(command)}</span><span>来源：${escapeHTML(item.command_source||'未记录')}</span><span>绑定摘要：${escapeHTML(item.binding_digest||'未记录').slice(0,16)}…</span></div><details><summary>查看契约声明与诊断</summary><div class="action-profile-details"><p><strong>输入：</strong>${escapeHTML(inputs)}</p><p><strong>输出：</strong>${escapeHTML(outputs)}</p><p><strong>适配器能力：</strong>${escapeHTML((requirements.adapter_capabilities||[]).join(', ')||'未声明')}</p><p><strong>worker 特性：</strong>${escapeHTML((requirements.worker_features||[]).join(', ')||'未声明')}</p><p><strong>命令状态：</strong>${escapeHTML(item.command_check?.code||'未检查')} · ${escapeHTML(item.command_check?.status||'未记录')}</p><p><strong>问题：</strong>${escapeHTML(issueText||'无；仍需 plan-level preflight 推导完整 operation contract')}</p></div></details></article>`;
+    return `<article class="action-profile-row"><div class="action-profile-head"><div><strong>${escapeHTML(item.tool)}.${escapeHTML(item.name)}</strong><p class="muted">${escapeHTML(item.next_action==='run_plan_preflight'?'下一步：带工程目标执行 preflight':'下一步：补充动作绑定或读取诊断')}</p></div><div class="action-profile-actions"><span class="pill ${status.className}">${escapeHTML(status.label)}</span><button type="button" class="btn btn-light action-preflight-button" data-profile-tool="${escapeHTML(item.tool)}" data-profile-action="${escapeHTML(item.name)}">检查此动作</button></div></div><div class="action-profile-meta"><span>脚本：${escapeHTML(item.script?.path||'未声明')}</span><span>命令：${escapeHTML(command)}</span><span>来源：${escapeHTML(item.command_source||'未记录')}</span><span>绑定摘要：${escapeHTML(item.binding_digest||'未记录').slice(0,16)}…</span></div><details><summary>查看契约声明与诊断</summary><div class="action-profile-details"><p><strong>输入：</strong>${escapeHTML(inputs)}</p><p><strong>输出：</strong>${escapeHTML(outputs)}</p><p><strong>适配器能力：</strong>${escapeHTML((requirements.adapter_capabilities||[]).join(', ')||'未声明')}</p><p><strong>worker 特性：</strong>${escapeHTML((requirements.worker_features||[]).join(', ')||'未声明')}</p><p><strong>命令状态：</strong>${escapeHTML(item.command_check?.code||'未检查')} · ${escapeHTML(item.command_check?.status||'未记录')}</p><p><strong>问题：</strong>${escapeHTML(issueText||'无；仍需 plan-level preflight 推导完整 operation contract')}</p></div></details></article>`;
   }).join('') : '<p class="muted">当前配置没有声明软件动作。</p>';
   $('#actionProfileNotice').textContent=profile?.profile_digest ? `Profile digest：${profile.profile_digest}。配置摘要不会替代真实软件执行证据。` : '尚未读取动作 profile。';
+}
+async function preflightProfileAction(tool, action) {
+  const root=state.project?.project_dir||'.';
+  $('#actionProfileNotice').textContent=`正在检查 ${tool}.${action}…`;
+  try {
+    const result=await request('/api/action-preflight',{project_id:state.project?.id,project_dir:root,tool,action,probe:false});
+    const step=result.step||{};
+    const contract=step.operation_contract;
+    const digest=contract?.definition_digest?`，contract digest ${contract.definition_digest.slice(0,16)}…`:'';
+    $('#actionProfileNotice').textContent=`${tool}.${action}：${step.ready?'启动条件已满足':'仍需配置或补充参数'}${digest}。不会启动商业软件。`;
+    details(result);
+  } catch(error) {
+    $('#actionProfileNotice').textContent=`${tool}.${action} 检查失败：${error.message}`;
+    throw error;
+  }
 }
 function collectSettings() {
   const value={schema_version:'simloom-ai/runtime-config/v1',tools:{},windows_bridge:{}};
@@ -785,6 +800,7 @@ function renderVendorCapabilities(tools) {
 }
 document.addEventListener('click',event=>{
   const target=event.target.closest('button'); if(!target||target.disabled) return;
+  if(target.dataset.profileTool&&target.dataset.profileAction) { preflightProfileAction(target.dataset.profileTool,target.dataset.profileAction).catch(reportError); return; }
   if(target.dataset.panel) choosePanel(target.dataset.panel);
   if(target.dataset.action==='new-project') openWizard();
   if(target.dataset.action==='demo') runOffline(true);

@@ -433,6 +433,15 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
                                        "settings": runtime_config_snapshot(agent.config),
                                        "profile": build_action_profile(agent.config),
                                        "path": str(runtime_config.path), "saved": True})
+            if path == "/api/action-preflight":
+                root, _metadata, _project_id = self._project_input(body)
+                tool, action = body.get("tool"), body.get("action")
+                if not isinstance(tool, str) or not isinstance(action, str):
+                    raise ValueError("tool 和 action 是必填项")
+                return self._send(200, agent.preflight_action(
+                    tool, action, project_dir=root, parameters=body.get("parameters"),
+                    inputs=body.get("inputs"), outputs=body.get("outputs"),
+                    probe=bool(body.get("probe", False))))
             if path in {"/api/plan", "/api/preflight", "/api/tasks"}:
                 root, metadata, project_id = self._project_input(body)
                 prompt = body.get("prompt", "")

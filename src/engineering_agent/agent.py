@@ -33,7 +33,7 @@ from .software_jobs_client import ReceiptStore, validate_state
 from .transactions import file_hash
 from .worker_protocol import SCHEMA as WORKER_SCHEMA, WorkerError, safe_file
 from .cad_diff_view import visual_diff
-from .software_preflight import preflight_plan
+from .software_preflight import preflight_action as run_action_preflight, preflight_plan
 from .file_watch import FileWatchStore
 from .dependencies import DependencyScanner
 from .autocad_backend import AutoCADError, backend_status, run_core_console
@@ -141,6 +141,15 @@ class EngineeringAgent:
         if not validation["valid"]:
             result["issues"] = [{"code": "PLAN_INVALID", "message": error} for error in validation["errors"]]
         return result
+
+    def preflight_action(self, tool: str, action: str, *, project_dir: str = ".",
+                         parameters: dict[str, Any] | None = None,
+                         inputs: list[str] | None = None, outputs: list[str] | None = None,
+                         probe: bool = False) -> dict[str, Any]:
+        """Check one explicitly selected software action without executing it."""
+        return run_action_preflight(self.adapters, tool, action, project_dir,
+                                    parameters=parameters, inputs=inputs,
+                                    outputs=outputs, probe=probe)
 
     def run(self, prompt: str, *, project_dir: str = ".", parameters: dict[str, Any] | None = None,
             dry_run: bool = True, on_event=None, auto_repair: bool = False,
@@ -479,6 +488,12 @@ class EngineeringAgent:
         if name == "project.preflight":
             return self.preflight(arguments["prompt"], project_dir=arguments.get("project_dir", "."),
                                   parameters=arguments.get("parameters"), probe=bool(arguments.get("probe", False)))
+        if name == "project.action_preflight":
+            return self.preflight_action(arguments["tool"], arguments["action"],
+                                         project_dir=arguments.get("project_dir", "."),
+                                         parameters=arguments.get("parameters"),
+                                         inputs=arguments.get("inputs"), outputs=arguments.get("outputs"),
+                                         probe=bool(arguments.get("probe", False)))
         if name == "project.version":
             return self.create_version(arguments.get("project_dir", "."), arguments["label"], arguments.get("paths", []), arguments.get("parent"))
         if name == "project.version_export":

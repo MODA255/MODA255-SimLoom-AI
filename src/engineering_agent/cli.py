@@ -57,6 +57,13 @@ def _parser() -> argparse.ArgumentParser:
     preflight.add_argument("prompt")
     preflight.add_argument("--parameters", default="{}", help="工程参数 JSON")
     preflight.add_argument("--probe", action="store_true", help="同时探测已配置的远程 worker")
+    action_preflight = sub.add_parser("action-preflight", help="检查一个指定软件动作的脚本、命令和输出契约，不启动外部软件")
+    action_preflight.add_argument("tool", choices=["catia", "ansys", "adams", "vi-grade"])
+    action_preflight.add_argument("action")
+    action_preflight.add_argument("--parameters", default="{}", help="动作参数 JSON")
+    action_preflight.add_argument("--inputs", nargs="*", default=None, help="可选项目相对输入文件")
+    action_preflight.add_argument("--outputs", nargs="*", default=None, help="可选项目相对输出文件")
+    action_preflight.add_argument("--probe", action="store_true", help="同时探测已配置的远程 worker")
     run = sub.add_parser("run", help="执行计划；默认仅 dry-run")
     run.add_argument("prompt")
     run.add_argument("--parameters", default="{}", help="传递给软件步骤的工程参数 JSON")
@@ -239,6 +246,12 @@ def main(argv: list[str] | None = None) -> int:
                                  parameters=json.loads(args.parameters), probe=args.probe)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result.get("ready") else 2
+    if args.command == "action-preflight":
+        result = agent.preflight_action(args.tool, args.action, project_dir=args.project_dir,
+                                        parameters=json.loads(args.parameters), inputs=args.inputs,
+                                        outputs=args.outputs, probe=args.probe)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result.get("step", {}).get("ready") else 2
     if args.command == "windows-validate":
         result = agent.validate_windows_backends(smoke=args.smoke)
         print(json.dumps(result, ensure_ascii=False, indent=2))
