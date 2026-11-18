@@ -3,6 +3,7 @@ import json
 from engineering_agent.queue import TaskQueue
 from engineering_agent.reports import build_report, render_report
 from engineering_agent.tasks import input_snapshot
+from engineering_agent.web import _attach_workflow_repair_to_task
 
 
 def _repair_fixture():
@@ -87,3 +88,43 @@ def test_task_report_limits_repair_attempts_and_metrics(tmp_path):
     assert len(repair["comparison"]["metrics"]) == 256
     assert len(repair["attempts"]) == 8
     json.dumps(repair, ensure_ascii=False)
+
+
+def test_workflow_repair_is_attached_to_parent_task_without_status_transition(tmp_path):
+    queue = TaskQueue(tmp_path / "reports.db")
+    task = queue.submit("保存的 Ansys 工程链", str(tmp_path), inputs=input_snapshot())
+    queue.record_event(task, "workflow", {"workflow_id": "parent-workflow", "status": "running"})
+    queue.update(task, "completed", {"status": "committed", "validation": {"plan": {"valid": True}}})
+    result = {
+        "status": "committed", "workflow_id": "child-workflow",
+        "repair": {
+            "parent_workflow_id": "parent-workflow", "child_workflow_id": "child-workflow",
+            "candidate": {"strategy_id": "reduce_load"},
+            "comparison": {"schema_version": "simloom-ai/repair-comparison/v1", "outcome": "accepted",
+                           "metrics": []},
+            "decision": {"status": "stopped", "reason": "engineering_acceptance_passed",
+                         "next_action": "stop_success"},
+        },
+    }
+
+    saved = _attach_workflow_repair_to_task(queue, "parent-workflow", result)
+    assert saved["status"] == "completed"
+    current = queue.get(task)
+    assert current["status"] == "completed"
+    assert queue.events(task)[-1]["event"] == "workflow_repair"
+    report = build_report(queue, task)
+    assert report["repair"]["child_workflow_id"] == "child-workflow"
+    assert report["repair"]["decision"]["next_action"] == "stop_success"
+
+
+def test_merge_result_rejects_non_object_patch_and_preserves_existing_result(tmp_path):
+    queue = TaskQueue(tmp_path / "reports.db")
+    task = queue.submit("结果补丁", str(tmp_path), inputs=input_snapshot())
+    queue.update(task, "failed", {"status": "failed", "error": "原始错误"})
+    try:
+        queue.merge_result(task, [])
+    except TypeError as exc:
+        assert "result patch" in str(exc)
+    else:
+        raise AssertionError("non-object result patch was accepted")
+    assert queue.get(task)["result"]["error"] == "原始错误"

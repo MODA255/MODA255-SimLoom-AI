@@ -9,6 +9,8 @@ SimLoom AI 的修复功能用于操作已经配置好的 CATIA、Ansys、Adams �
 1. `validation.auto_repair`：`EngineeringAgent.run(..., auto_repair=True)` 产生的标准入口。
 2. `repair`、`repair_loop`：工作流修复接口直接返回的结果，便于 CLI、MCP 和 Web 共享同一结构。
 
+工作台从“继续未完成的工程链”区域单独发起修复时，服务会把子工程链的比较结果合并回原任务的保存结果，并追加 `workflow_repair` 审计事件。原任务状态和原始父工程链不会被替换；任务详情下一次刷新即可看到同一份修复报告。没有关联队列任务的 CLI/MCP 工作流仍只保存工作流自己的状态。
+
 报告只复制已保存的比较与决策，不重新读取当前项目文件，也不重新计算工程指标。这样可以避免工程师在任务完成后修改结果文件，导致历史报告被悄悄改变。
 
 ## `repair` 字段

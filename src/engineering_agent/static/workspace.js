@@ -906,7 +906,7 @@ function renderTaskReport(report) {
     const query=new URLSearchParams({root:report.project_dir,path:a.path});
     return `<article class="task-artifact"><div><strong>${escapeHTML(a.name)}</strong><p class="muted">${escapeHTML(a.path)} · ${Number(a.bytes).toLocaleString()} 字节</p><code>SHA-256 ${escapeHTML(a.sha256)}</code></div><a class="btn btn-light btn-link" href="/api/download?${escapeHTML(query.toString())}" download>下载</a></article>`;
   }).join(''):'<p class="muted">尚无已保存的历史产物；旧任务的文件哈希不会补造。</p>';
-  const eventNames={workflow:'工程链已记录',workflow_step:'工程链步骤已完成',waiting:'等待恢复连接',queued:'任务已创建',running:'开始执行',plan:'计划已记录',stage_started:'阶段开始',stage_finished:'阶段结束',completed:'任务已完成',failed:'任务失败',execution_mode:'运行模式已记录',software_job:'软件任务状态'};
+  const eventNames={workflow:'工程链已记录',workflow_step:'工程链步骤已完成',workflow_repair:'修复结果已记录',waiting:'等待恢复连接',queued:'任务已创建',running:'开始执行',plan:'计划已记录',stage_started:'阶段开始',stage_finished:'阶段结束',completed:'任务已完成',failed:'任务失败',execution_mode:'运行模式已记录',software_job:'软件任务状态'};
   $('#taskEvents').innerHTML=report.events.map(e=>`<li><time>${escapeHTML(displayTime(e.created_at))}</time><div><strong>${escapeHTML(eventNames[e.event]||e.event)}</strong><p>${escapeHTML(e.payload.label||e.payload.error||(e.event==='software_job'?`${e.payload.tool} · ${e.payload.status} · ${e.payload.request_id}`:''))}${e.payload.duration_seconds==null?'':` · ${escapeHTML(displayDuration(e.payload.duration_seconds))}`}</p></div></li>`).join('');
   $('#taskEvidence').textContent=JSON.stringify(report,null,2);
   for(const format of ['html','json']) $('#report'+format).href=`/api/tasks/${encodeURIComponent(report.task_id)}/report?format=${format}&download=1`;

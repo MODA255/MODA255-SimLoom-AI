@@ -25,6 +25,42 @@ WEB_SCHEMA_VERSION = "simloom-ai/web/v1"
 WEB_ERROR_SCHEMA_VERSION = "simloom-ai/error-envelope/v1"
 
 
+def _attach_workflow_repair_to_task(queue: TaskQueue, workflow_id: str | None, result: dict[str, Any]):
+    """Attach a workflow repair result to its queue task, when one exists.
+
+    The saved-workflow page invokes repair separately from the original task
+    runner.  Persisting the child comparison on the parent task keeps JSON and
+    HTML reports complete without changing the parent's execution status or
+    pretending that a child workflow replaced the original result.
+    """
+    if not workflow_id or not isinstance(result, dict):
+        return None
+    task = queue.find_workflow(workflow_id)
+    if not task:
+        return None
+    current = task.get("result") if isinstance(task.get("result"), dict) else {}
+    validation = dict(current.get("validation") or {}) if isinstance(current.get("validation"), dict) else {}
+    auto = dict(validation.get("auto_repair") or {}) if isinstance(validation.get("auto_repair"), dict) else {}
+    auto.update({"requested": True, "status": result.get("status"), "parent_workflow_id": workflow_id})
+    repair = result.get("repair")
+    if isinstance(repair, dict):
+        auto.update(repair)
+    loop = result.get("repair_loop")
+    if isinstance(loop, dict):
+        auto["repair_loop"] = loop
+    if result.get("message"):
+        auto["message"] = result["message"]
+    if result.get("error"):
+        auto["error"] = result["error"]
+    validation["auto_repair"] = auto
+    patch = {"validation": validation}
+    if isinstance(repair, dict):
+        patch["repair"] = repair
+    if isinstance(loop, dict):
+        patch["repair_loop"] = loop
+    return queue.merge_result(task["id"], patch, event="workflow_repair")
+
+
 def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.0.1", port: int = 8787,
                   workspace_root: str | Path | None = None) -> ThreadingHTTPServer:
     """Construct the same local service for browsers, desktop windows and tests."""
@@ -361,8 +397,13 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
                 task = queue.find_workflow(identifier) if action == "resume" and identifier else None
                 if task and Path(task["project_dir"]).resolve() == Path(root).resolve():
                     return self._send(200, runner.resume(task["id"]))
-                return self._send(200, agent.workflow(action, identifier, project_dir=root,
-                                                     repair_budget=body.get("repair_budget")))
+                result = agent.workflow(action, identifier, project_dir=root,
+                                        repair_budget=body.get("repair_budget"))
+                if action == "repair":
+                    repair_task = queue.find_workflow(identifier) if identifier else None
+                    if repair_task and Path(repair_task["project_dir"]).resolve() == Path(root).resolve():
+                        _attach_workflow_repair_to_task(queue, identifier, result)
+                return self._send(200, result)
             if path == "/api/software-jobs":
                 root, _metadata, _project_id = self._project_input(body)
                 options = {key: body[key] for key in ("limit", "cursor", "offset", "after", "stream", "confirmed_stopped", "reason") if key in body}

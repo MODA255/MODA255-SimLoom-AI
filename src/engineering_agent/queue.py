@@ -125,6 +125,36 @@ class TaskQueue:
             db.execute("UPDATE tasks SET status=?, result_json=?, updated_at=? WHERE id=?", (status, json.dumps(result, ensure_ascii=False) if result is not None else None, now, task_id))
             db.execute("INSERT INTO task_events(task_id,event,payload_json,created_at) VALUES (?, ?, ?, ?)", (task_id, status, json.dumps(result or {}, ensure_ascii=False), now))
 
+    def merge_result(self, task_id: str, patch: dict[str, Any], *, event: str = "result_patch"):
+        """Persist additional evidence without changing the task status.
+
+        Workflow repair is a child operation of an already completed or
+        waiting task.  Calling :meth:`update` for that evidence would create a
+        misleading second ``completed`` transition and could make a queue
+        worker claim the parent again.  This method atomically merges a
+        top-level evidence patch into the saved result, keeps the existing
+        status, updates the timestamp and records a named audit event.
+        Callers must pass a JSON-serializable mapping; nested objects are
+        replaced as a unit so the report always reflects one complete schema
+        envelope rather than a partially merged validation object.
+        """
+        if not isinstance(patch, dict):
+            raise TypeError("result patch must be an object")
+        with self._lock, self._connect() as db:
+            row = db.execute("SELECT status, result_json FROM tasks WHERE id=?", (task_id,)).fetchone()
+            if row is None:
+                raise FileNotFoundError("任务不存在")
+            result = json.loads(row[1]) if row[1] else {}
+            if not isinstance(result, dict):
+                result = {}
+            result.update(patch)
+            now = _now()
+            db.execute("UPDATE tasks SET result_json=?, updated_at=? WHERE id=?",
+                       (json.dumps(result, ensure_ascii=False), now, task_id))
+            db.execute("INSERT INTO task_events(task_id,event,payload_json,created_at) VALUES (?, ?, ?, ?)",
+                       (task_id, event, json.dumps(patch, ensure_ascii=False), now))
+            return {"status": row[0], "result": result}
+
     def get(self, task_id: str) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
