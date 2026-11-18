@@ -370,6 +370,13 @@ compact MCP 客户端可以先加载轻量目录，再只请求当前任务需�
 在总 `repair_budget` 内按优先级、风险和稳定声明顺序选择，并把选择字段写入父子工作流报告。它提高了
 Agent 的重规划可解释性，但仍只允许显式参数 patch，不会自行改变载荷、阈值、输入输出或软件命令。
 
+2026-11-18 后续：`EngineeringResult/v1` 增加可选 `failure_evidence/v1`。失败结果现在可以保留有界的
+worker return code、`requires_review`、stdout/stderr 尾部、远程任务状态和 runner 明确导出的 native
+failure evidence；日志自动截断并脱敏，MCP operation schema 也发布相同字段。这个改动让 Agent 能区分
+“继续查询原任务”“检查软件会话”“修复输入契约”和“人工查看原生报告”等动作，并让失败报告更容易审计。
+它不会从进程退出码推断商业软件语义，也没有增加 CATIA、Ansys、Adams 或 VI-grade 的实机验收证据；
+真实 native evidence 仍需 Windows worker 上的绑定脚本和逐软件样本。
+
 2026-11-17 后续：`EngineeringResult/v1` 增加可选 `engineering-context/v1`。runner 可以明确导出
 软件版本/构建/许可证状态、原生对象、坐标系、工况和模型引用；控制端只做有界字段归一化，不从
 退出码、文件名或工具名称推断原生语义。MCP operation schema 与结果文档同步发布，真实 Windows

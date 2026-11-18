@@ -13,6 +13,7 @@ satisfied merely because it was present.
 from __future__ import annotations
 
 import math
+import re
 from typing import Any, Iterable
 
 from .engineering_failure import classify_failure
@@ -22,7 +23,10 @@ from .engineering_context import validate_engineering_context
 
 SCHEMA = "simloom-ai/engineering-result/v1"
 CONTEXT_SCHEMA = "simloom-ai/engineering-context/v1"
+FAILURE_EVIDENCE_SCHEMA = "simloom-ai/failure-evidence/v1"
 ACCEPTANCE_STATES = {"not_requested", "passed", "failed", "unknown"}
+_SECRET_KEY = re.compile(r"(?:token|secret|password|passwd|api[_-]?key|private[_-]?key)", re.I)
+_SECRET_TEXT = re.compile(r"(?i)((?:token|secret|password|passwd|api[_-]?key|private[_-]?key)\s*[:=]\s*)[^\s,;]+")
 
 
 def _bounded_text(value: Any, limit: int = 256) -> str | None:
@@ -46,6 +50,83 @@ def _bounded_value(value: Any, *, depth: int = 0) -> Any:
                 for key, item in list(value.items())[:128]
                 if isinstance(key, (str, int, float))}
     return str(value)[:256]
+
+
+def _safe_failure_value(value: Any, *, key: str = "", depth: int = 0) -> Any:
+    """Bound and redact values copied into failure evidence."""
+    if _SECRET_KEY.search(key):
+        return "[redacted]"
+    if isinstance(value, str):
+        return _SECRET_TEXT.sub(r"\1[redacted]", value[:4096])
+    if depth > 4:
+        return "<truncated>"
+    if isinstance(value, dict):
+        return {str(name)[:128]: _safe_failure_value(item, key=str(name), depth=depth + 1)
+                for name, item in list(value.items())[:128]}
+    if isinstance(value, list):
+        return [_safe_failure_value(item, key=key, depth=depth + 1) for item in value[:128]]
+    if isinstance(value, (bool, int)) or value is None:
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    return str(value)[:256]
+
+
+def _failure_evidence(details: dict[str, Any], *, error_code: str | None,
+                      status: str, phase: str | None, failure: dict[str, Any] | None,
+                      vendor_validation: Any) -> dict[str, Any] | None:
+    """Normalize bounded process, log and native failure evidence.
+
+    The controller only copies evidence explicitly present in the worker or
+    vendor response. It never infers a native CAD/solver error from an exit
+    code, filename or missing output.
+    """
+    if status != "failed" and not isinstance(details.get("error"), dict):
+        return None
+    process: dict[str, Any] = {}
+    if isinstance(details.get("returncode"), int) and not isinstance(details.get("returncode"), bool):
+        process["returncode"] = details["returncode"]
+    if isinstance(details.get("requires_review"), bool):
+        process["requires_review"] = details["requires_review"]
+    logs: dict[str, Any] = {}
+    for name in ("stdout", "stderr"):
+        value = details.get(name)
+        if isinstance(value, str) and value:
+            logs[f"{name}_tail"] = _SECRET_TEXT.sub(r"\1[redacted]", value[-4096:])
+            logs.setdefault("paths", {})[name] = f"_logs/{name}.txt"
+    remote = details.get("remote_job")
+    remote_summary = None
+    if isinstance(remote, dict):
+        remote_summary = {key: _safe_failure_value(remote.get(key), key=key)
+                          for key in ("request_id", "status", "requires_reconnect")
+                          if key in remote}
+    native = None
+    if isinstance(vendor_validation, dict):
+        for key in ("failure_evidence", "native_failure", "error"):
+            if vendor_validation.get(key) is not None:
+                native = _safe_failure_value(vendor_validation.get(key), key=key)
+                break
+    sources = []
+    if process or logs:
+        sources.append("worker_process")
+    if remote_summary:
+        sources.append("remote_job")
+    if native is not None:
+        sources.append("vendor_evidence")
+    evidence = {
+        "schema_version": FAILURE_EVIDENCE_SCHEMA,
+        "status": status,
+        "phase": phase,
+        "error_code": error_code,
+        "category": failure.get("category") if isinstance(failure, dict) else None,
+        "recommended_action": failure.get("recommended_action") if isinstance(failure, dict) else None,
+        "process": process,
+        "logs": logs,
+        "remote_job": remote_summary,
+        "native": native,
+        "sources": sources,
+    }
+    return evidence
 
 
 def _context_records(value: Any, fields: tuple[str, ...]) -> list[dict[str, Any]]:
@@ -312,6 +393,22 @@ def normalize_engineering_result(*, tool: str, action: str, status: str,
     if not output_artifacts:
         # A dry-run or an early failure may only have declared output names.
         output_artifacts = [{"path": item} for item in outputs if isinstance(item, str) and item][:512]
+    failure = None
+    if error is not None:
+        failure = classify_failure(
+            error_code,
+            status=str(status),
+            lifecycle=lifecycle_value,
+            message=error.get("message") if isinstance(error.get("message"), str) else message,
+        )
+    failure_evidence = _failure_evidence(
+        details,
+        error_code=error_code,
+        status=str(status),
+        phase=phase or lifecycle_value.get("current_stage"),
+        failure=failure,
+        vendor_validation=vendor_validation,
+    )
     result: dict[str, Any] = {
         "schema_version": SCHEMA,
         "tool": str(tool),
@@ -340,10 +437,7 @@ def normalize_engineering_result(*, tool: str, action: str, status: str,
     }
     if error is not None:
         result["error"] = error
-        result["failure"] = classify_failure(
-            error_code,
-            status=str(status),
-            lifecycle=lifecycle_value,
-            message=error.get("message") if isinstance(error.get("message"), str) else message,
-        )
+        result["failure"] = failure
+    if failure_evidence is not None:
+        result["failure_evidence"] = failure_evidence
     return result

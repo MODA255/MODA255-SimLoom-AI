@@ -66,6 +66,8 @@ def test_vendor_operation_schema_advertises_normalized_result():
     assert envelope["properties"]["engineering_context"]["properties"]["schema_version"]["const"] == "simloom-ai/engineering-context/v1"
     assert envelope["properties"]["engineering_context_validation"]["properties"]["valid"]["type"] == "boolean"
     assert envelope["properties"]["operation_contract"]["properties"]["engineering_context"]["type"] == ["object", "null"]
+    assert envelope["properties"]["failure_evidence"]["properties"]["schema_version"]["const"] == "simloom-ai/failure-evidence/v1"
+    assert envelope["properties"]["failure_evidence"]["properties"]["logs"]["type"] == "object"
 
 
 def test_normalized_result_exposes_the_input_output_and_metric_contract():
@@ -163,6 +165,50 @@ def test_failure_classification_distinguishes_validation_from_recovery():
     assert recovery["failure"]["category"] == "recovery"
     assert recovery["failure"]["retryable"] is True
     assert recovery["failure"]["requires_human"] is False
+
+
+def test_failed_result_exposes_bounded_process_and_native_failure_evidence():
+    result = normalize_engineering_result(
+        tool="ansys", action="solve_configured_model", status="failed",
+        phase="execute", details={
+            "returncode": -15,
+            "requires_review": True,
+            "stdout": "stdout-prefix\n" + ("x" * 5000) + " token=secret-value",
+            "stderr": "solver stopped password=another-secret",
+            "remote_job": {"request_id": "job-123", "status": "lost", "requires_reconnect": True,
+                           "api_key": "do-not-copy"},
+            "vendor_validation": {
+                "failure_evidence": {
+                    "native_code": "ANSYS_SOLVER_ABORTED",
+                    "message": "native failure token=native-secret",
+                },
+            },
+            "error": {"code": "SOFTWARE_TIMEOUT", "message": "runner stopped"},
+        })
+
+    evidence = result["failure_evidence"]
+    assert evidence["schema_version"] == "simloom-ai/failure-evidence/v1"
+    assert evidence["phase"] == "execute"
+    assert evidence["error_code"] == "SOFTWARE_TIMEOUT"
+    assert evidence["category"] == "execution"
+    assert evidence["recommended_action"] == "inspect_software_session"
+    assert evidence["process"] == {"returncode": -15, "requires_review": True}
+    assert len(evidence["logs"]["stdout_tail"]) <= 4096
+    assert "stdout-prefix" not in evidence["logs"]["stdout_tail"]
+    assert "secret-value" not in evidence["logs"]["stdout_tail"]
+    assert "another-secret" not in evidence["logs"]["stderr_tail"]
+    assert evidence["logs"]["paths"] == {"stdout": "_logs/stdout.txt", "stderr": "_logs/stderr.txt"}
+    assert evidence["remote_job"] == {"request_id": "job-123", "status": "lost", "requires_reconnect": True}
+    assert evidence["native"]["native_code"] == "ANSYS_SOLVER_ABORTED"
+    assert "native-secret" not in evidence["native"]["message"]
+    assert evidence["sources"] == ["worker_process", "remote_job", "vendor_evidence"]
+
+
+def test_failure_evidence_is_absent_for_successful_result():
+    result = normalize_engineering_result(
+        tool="catia", action="create_model", status="completed",
+        details={"returncode": 0, "stdout": "completed", "stderr": ""})
+    assert "failure_evidence" not in result
 
 
 def test_normalized_result_carries_bounded_native_engineering_context():

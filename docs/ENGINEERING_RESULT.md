@@ -123,6 +123,9 @@
 - `contract` 是本次请求实际使用的输入、输出和验收契约摘要。它包括 evidence schema、报告路径、输入/输出路径、必须检查的指标、期望单位和原始规则。该摘要有长度限制，适合 Agent 做失败归因、修复候选比较和重规划；它不会替代原始报告，也不会因为契约存在就把结果判为通过。
 - `lifecycle` 是 `simloom-ai/engineering-lifecycle/v1` 阶段状态。五个阶段固定为 `preflight`、`execute`、`collect`、`validate`、`recover`。它记录控制端实际到达的阶段、阶段错误和是否可以用原任务 ID 恢复。`completed` 只在声明的输出已回收且验证契约通过后把 `validate` 标为 `passed`；断线或观测超时会把 `recover` 标为 `deferred`，不会把前面的阶段推断成成功。
 - `failure` 是 `simloom-ai/engineering-failure/v1` 的保守分类，只在存在错误时出现。它把底层错误码归入配置、输入契约、传输、执行、回收、验证、恢复、并发、发布或未知类别，并给出 `retryable`、`requires_human` 和建议动作。未知错误默认要求人工复核；分类不会改变原始错误码，也不会把软件运行失败改成工程指标失败。
+- `failure_evidence` 是可选的 `simloom-ai/failure-evidence/v1` 诊断证据，只在结果失败或显式带有错误时出现。它按固定上限复制 worker 的退出码、`requires_review`、stdout/stderr 尾部、远程任务摘要和 runner/validator 明确提供的 `failure_evidence`、`native_failure` 或 `error`。`phase`、`error_code`、`category` 和 `recommended_action` 与同一 envelope 的生命周期和保守分类对齐；`sources` 说明证据来自进程、远程任务还是 vendor 导出。控制端不会根据退出码、日志文字、文件名或软件名称推断 CATIA、Ansys、Adams 或 VI-grade 的原生故障语义。
+- `failure_evidence.process` 只保存整数 `returncode` 和布尔 `requires_review`；`logs` 最多保留每个流最后 4096 个字符，并记录项目相对的 `_logs/stdout.txt`、`_logs/stderr.txt` 路径。token、secret、password、API key 和 private key 字段及常见 `key=value` 文本会被替换为 `[redacted]`。日志尾部可能不足以解释完整故障，Agent 应通过原任务日志分页或 Windows 工程师会话继续取证。
+- `failure_evidence.native` 只有 runner 或独立 validator 显式导出时才出现。它是有界、脱敏的原生观察，不是控制端验证，也不能单独提升 `real_machine_verified`、`engineering_acceptance` 或 `verification`。如果没有显式 native evidence，字段为 `null`，不能从“进程退出失败”补造厂商错误码。
 - `operation_contract` 是 `simloom-ai/software-operation-contract/v1` 的稳定动作定义。preflight、worker 请求、结果回收和工作流状态引用同一份 `definition_digest`；它只包含项目相对路径、声明式验收契约、可选的动作绑定 `engineering_context` 和可选的 `recovery.policy`，不包含本机绝对路径。上下文声明用于执行前对齐对象和部署信息，不是运行时实机证据；恢复策略只约束 Agent 的下一步边界，不授权对不确定的软件状态自动重跑；输入文件的实际 SHA-256 仍由 evidence contract 单独记录。
 如果动作配置了 `capability_requirements`，同一对象还包含规范化的 `requirements.adapter_capabilities` 和 `requirements.worker_features`。它们是调度和协议前置条件，不会提升 `real_machine_verified`，也不代替厂商许可证或工程结果证据。
 - `artifacts` 只包含项目相对路径、大小和 SHA-256，不包含本机绝对路径。
@@ -147,15 +150,15 @@ HTML 报告会把每条来源展开为：
 
 ## 兼容策略
 
-旧客户端仍可读取 `details.verification`、`details.vendor_validation` 和 `details.output_manifest`。新 Agent 应优先读取 `details.engineering_result`，只有在 `schema_version` 不支持时才回退到旧字段。`engineering_context` 缺失不影响旧结果解析，也不代表原生对象不存在；它只在 runner 明确导出后出现。该 envelope 不会把未运行的软件伪装成已验证，也不会把失败的 vendor report 误判为工程指标失败；报告本身无效时，`engineering_acceptance` 为 `unknown`。
+旧客户端仍可读取 `details.verification`、`details.vendor_validation` 和 `details.output_manifest`。新 Agent 应优先读取 `details.engineering_result`，只有在 `schema_version` 不支持时才回退到旧字段。`engineering_context` 和 `failure_evidence` 缺失不影响旧结果解析，也不代表原生对象或诊断证据不存在；它们只在 runner 明确导出后出现。该 envelope 不会把未运行的软件伪装成已验证，也不会把失败的 vendor report 误判为工程指标失败；报告本身无效时，`engineering_acceptance` 为 `unknown`。
 
 ## 入口和测试
 
 统一结果会从 CATIA、Ansys、Adams 和 VI-grade 的 worker 响应及本地/远程 adapter 返回，并出现在工作流、CLI、Web 和 MCP 的结构化结果中。MCP operation schema 在 vendor operation 的 `details` 中声明了该 envelope。即使 worker 在启动前校验失败、runner 超时或输出契约不完整，也会返回 `status=failed` 的 envelope，并尽可能保留原始契约摘要，避免 Agent 只通过是否收到响应来判断状态。
 
 MCP discovery 会展开 `engineering_result.contract` 的字段结构。Agent 可以在调用前发现报告路径、输入/输出路径、必需指标、单位和原始规则，不必等待一次真实执行后再猜测返回格式。
-MCP discovery 同时展开 `engineering_result.lifecycle`，因此客户端可以根据 `current_stage`、`recoverable` 和
-`next_action` 选择继续查询原任务、读取结果或转入人工复核。
+MCP discovery 同时展开 `engineering_result.lifecycle`、`failure` 和 `failure_evidence`，因此客户端可以根据
+`current_stage`、`recoverable`、`next_action`、错误类别和实际诊断来源选择继续查询原任务、读取结果或转入人工复核。
 
 ```bash
 .venv/bin/python -m pytest -q tests/test_engineering_result.py tests/test_four_vendor_runners.py tests/test_software_integration.py

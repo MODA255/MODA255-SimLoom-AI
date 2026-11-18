@@ -134,6 +134,8 @@ def test_zero_exit_is_insufficient_and_failures_keep_logs(project, tmp_path, mod
     assert result.status == "failed" and not result.outputs
     assert result.details["error"]["code"] == code
     assert "stdout" in result.details and "stderr" in result.details
+    assert result.details["engineering_result"]["failure_evidence"]["schema_version"] == "simloom-ai/failure-evidence/v1"
+    assert result.details["engineering_result"]["failure_evidence"]["error_code"] == code
     assert (project / "artifacts/model.step").read_text() == "old output must not count"
 
 

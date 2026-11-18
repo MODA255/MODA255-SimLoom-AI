@@ -239,6 +239,19 @@ worker 请求会携带同一摘要，worker 在启动 runner 前校验工具、�
 继续使用原 request ID；`validation` 表示需要检查工程报告或指标，不应盲目重跑；未知类别会
 标记 `requires_human=true`。这个分类只是 Agent 的路由提示，原始 `error.code` 和日志仍是审计依据。
 
+同一结果还可能带有 `engineering_result.failure_evidence`（schema
+`simloom-ai/failure-evidence/v1`）。它给 Agent 一个受限的失败事实包：worker 退出码和
+`requires_review`、stdout/stderr 尾部、远程 request 状态，以及 runner 或独立 validator 显式导出的
+原生失败对象。日志每个流最多保留 4096 个字符，路径固定为本次 job 的 `_logs/stdout.txt` 和
+`_logs/stderr.txt`；token、secret、password、API key 等字段会先脱敏。这个字段只在失败或显式错误时
+生成，成功结果不会携带它，因此客户端可以把它当作失败分支的可选诊断输入。
+
+控制端只复制和限制证据，不解释厂商语义。`SOFTWARE_TIMEOUT` 的 `category=execution` 和
+`recommended_action=inspect_software_session` 只是恢复提示；它不能证明 CATIA、Ansys、Adams 或
+VI-grade 内部发生了某一种具体错误。只有绑定脚本或 validator 明确提供的 `native` 内容才会进入
+`sources` 中的 `vendor_evidence`，并且仍不等同于许可证、模型、求解或工程验收。没有 native evidence
+时字段为 `null`，Agent 应继续使用原任务日志分页、远程查询或人工检查，而不是从退出码猜测软件状态。
+
 ## 当前边界与下一步
 
 - 文件传输保留小任务内联协议：最多 128 个文件、单次请求体上限 48 MiB；输入超过 32 MiB
