@@ -101,6 +101,27 @@ def test_bridge_bind_does_not_depend_on_reverse_dns(tmp_path, monkeypatch):
         server.server_close()
 
 
+def test_worker_token_can_be_loaded_from_environment_without_persisting_secret(tmp_path, monkeypatch):
+    monkeypatch.setenv("SIMLOOM_TEST_BRIDGE_TOKEN", "env-only-token")
+    bridge = WindowsBridge({"root_dir": str(tmp_path), "token_env": "SIMLOOM_TEST_BRIDGE_TOKEN"})
+    assert bridge.config.token == "env-only-token"
+    assert bridge.config.token_env == "SIMLOOM_TEST_BRIDGE_TOKEN"
+    diagnostics = bridge.diagnostics()
+    assert diagnostics["authentication"] == {
+        "token_configured": True,
+        "header": "X-Bridge-Token",
+        "token_env": "SIMLOOM_TEST_BRIDGE_TOKEN",
+    }
+    assert "env-only-token" not in json.dumps(diagnostics, ensure_ascii=False)
+
+
+def test_explicit_worker_token_takes_precedence_over_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("SIMLOOM_TEST_BRIDGE_TOKEN", "environment-token")
+    bridge = WindowsBridge({"root_dir": str(tmp_path), "token": "explicit-token",
+                            "token_env": "SIMLOOM_TEST_BRIDGE_TOKEN"})
+    assert bridge.config.token == "explicit-token"
+
+
 @pytest.mark.parametrize(("mode", "code"), [("missing", "ARTIFACT_MISSING"), ("empty", "OUTPUT_EMPTY"),
                                             ("exit", "SOFTWARE_EXIT_FAILED"), ("timeout", "SOFTWARE_TIMEOUT")])
 def test_zero_exit_is_insufficient_and_failures_keep_logs(project, tmp_path, mode, code):

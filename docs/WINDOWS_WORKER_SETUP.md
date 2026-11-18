@@ -35,7 +35,7 @@ install-windows.cmd
     "root_dir": "D:/SimLoom/worker",
     "host": "0.0.0.0",
     "port": 8099,
-    "token": "use-a-long-random-token",
+    "token_env": "SIMLOOM_BRIDGE_TOKEN",
     "timeout_seconds": 1800,
     "commands": {
       "catia.create_or_update_model": [
@@ -49,6 +49,10 @@ install-windows.cmd
   }
 }
 ```
+
+`token_env` 是推荐配置：worker 启动时从 Windows 进程环境读取令牌，配置文件中不需要保存密钥。
+旧的 `token` 字段仍然兼容；如果两者同时存在，显式 `token` 优先。`/diagnostics` 只返回令牌是否
+已配置和环境变量名，不会返回令牌内容。
 
 启动 bridge：
 

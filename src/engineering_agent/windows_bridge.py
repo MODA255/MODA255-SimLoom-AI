@@ -39,13 +39,21 @@ class BridgeConfig:
     host: str = "127.0.0.1"
     port: int = 8099
     token: str = ""
+    token_env: str = ""
     timeout_seconds: int = 1800
     commands: dict[str, list[str]] = field(default_factory=dict)
     com: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "BridgeConfig":
-        return cls(**{key: value for key, value in data.items() if key in cls.__dataclass_fields__})
+        values = {key: value for key, value in data.items() if key in cls.__dataclass_fields__}
+        token_env = values.get("token_env")
+        if isinstance(token_env, str):
+            token_env = token_env.strip()
+            values["token_env"] = token_env
+            if not values.get("token") and token_env:
+                values["token"] = os.environ.get(token_env, "")
+        return cls(**values)
 
 
 class WindowsBridge:
@@ -167,12 +175,15 @@ class WindowsBridge:
             warnings.append("BRIDGE_TOKEN_NOT_CONFIGURED")
         command_count = sum(len(item["actions"]) for item in command_tools.values())
         ready_count = sum(len(item["ready_actions"]) for item in command_tools.values())
+        authentication = {"token_configured": bool(self.config.token), "header": "X-Bridge-Token"}
+        if self.config.token_env:
+            authentication["token_env"] = self.config.token_env
         return {
             "schema_version": DIAGNOSTICS_SCHEMA,
             "worker_protocol": SCHEMA,
             "platform": health["platform"],
             "root": {"path": str(self.root), "exists": root_exists, "writable": root_writable},
-            "authentication": {"token_configured": bool(self.config.token), "header": "X-Bridge-Token"},
+            "authentication": authentication,
             "commands": command_tools,
             "com": {"configured_prog_ids": sorted(self.config.com), "dispatch_probe": "not_run",
                     "real_machine_verified": False},
