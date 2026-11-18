@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from engineering_agent import EngineeringAgent
+from engineering_agent.cad_model import Block, CadDocument
+from engineering_agent.cad_operations import _block_instance_bounds
 from engineering_agent.formats import write_dxf
 
 
@@ -46,6 +48,8 @@ def test_cad_query_is_discoverable_through_mcp(tmp_path):
     })
     query = next(item for item in listed["result"]["tools"] if item["name"] == "operation.cad.query")
     assert query["outputSchema"]["properties"]["entities"]["type"] == "array"
+    assert {"attribute_properties", "attribute_text_contains", "block_geometry"} <= set(query["inputSchema"]["properties"])
+    assert query["outputSchema"]["properties"]["warnings"]["items"]["type"] == "string"
 
 
 def test_cad_query_accepts_entity_refs_and_numeric_closed_filters(tmp_path):
@@ -77,3 +81,88 @@ def test_cad_query_accepts_agentcad_filter_object_and_tag_prefix(tmp_path):
     })
     assert result["total_count"] == 1
     assert result["entities"][0]["tag"] == "hole.1"
+
+
+def test_cad_query_filters_block_name_and_insert_attributes(tmp_path):
+    source = tmp_path / "blocks.dxf"
+    write_dxf(source, blocks=[
+        {"name": "LABEL", "base_point": {"x": 0, "y": 0}, "entities": [
+            {"type": "LINE", "start": {"x": 0, "y": 0}, "end": {"x": 4, "y": 0}},
+        ]},
+    ], entities=[
+        {"type": "INSERT", "block_name": "LABEL", "insert": {"x": 10, "y": 20},
+         "attributes": [{"tag": "NAME", "text": "Bracket", "insert": {"x": 10, "y": 20}, "height": 2}]},
+        {"type": "INSERT", "block_name": "LABEL", "insert": {"x": 40, "y": 20},
+         "attributes": [{"tag": "NAME", "text": "Cover", "insert": {"x": 40, "y": 20}, "height": 2}]},
+    ])
+    agent = EngineeringAgent({"tools": {}})
+    result = agent.execute_operation("cad.query", {
+        "project_dir": str(tmp_path), "input_file": source,
+        "filter": {"type": "INSERT", "block_name": "LABEL", "attribute_properties": {"NAME": "Bracket"}},
+        "attribute_text_contains": "brack", "block_geometry": True,
+        "include_geometry": False,
+    })
+    assert result["total_count"] == 1
+    entity = result["entities"][0]
+    assert entity["block_name"] == "LABEL"
+    assert "attributes" not in entity
+    assert entity["block_instance"]["bounds"] == [10.0, 20.0, 14.0, 20.0]
+    assert entity["block_instance"]["block_path"] == ["LABEL"]
+    assert entity["block_instance"]["block_paths"] == [["LABEL"]]
+
+
+def test_cad_query_block_geometry_applies_rotation_scale_and_window(tmp_path):
+    source = tmp_path / "transformed-block.dxf"
+    write_dxf(source, blocks=[
+        {"name": "PIN", "base_point": {"x": 1, "y": 2}, "entities": [
+            {"type": "LINE", "start": {"x": 1, "y": 2}, "end": {"x": 3, "y": 2}},
+        ]},
+    ], inserts=[{"block_name": "PIN", "insert": {"x": 10, "y": 20},
+                 "scale": {"x": 2, "y": 3}, "rotation": 90}])
+    agent = EngineeringAgent({"tools": {}})
+    result = agent.execute_operation("cad.query", {
+        "project_dir": str(tmp_path), "input_file": source, "entity_type": "INSERT",
+        "block_geometry": True, "window": [{"x": 9.5, "y": 23.5}, {"x": 10.5, "y": 24.5}],
+    })
+    assert result["total_count"] == 1
+    assert result["entities"][0]["block_instance"]["bounds"] == [10.0, 20.0, 10.0, 24.0]
+
+    outside = agent.execute_operation("cad.query", {
+        "project_dir": str(tmp_path), "input_file": source, "entity_type": "INSERT",
+        "block_geometry": True, "window": [{"x": 11, "y": 23.5}, {"x": 12, "y": 24.5}],
+    })
+    assert outside["total_count"] == 0
+
+
+def test_cad_query_nested_blocks_returns_all_geometry_paths(tmp_path):
+    source = tmp_path / "nested-blocks.dxf"
+    write_dxf(source, blocks=[
+        {"name": "LEAF", "base_point": {"x": 0, "y": 0}, "entities": [
+            {"type": "LINE", "start": {"x": 0, "y": 0}, "end": {"x": 1, "y": 0}},
+        ]},
+        {"name": "ASSEMBLY", "base_point": {"x": 0, "y": 0}, "entities": [
+            {"type": "INSERT", "block_name": "LEAF", "insert": {"x": 5, "y": 2}, "rotation": 90},
+            {"type": "LINE", "start": {"x": 0, "y": 0}, "end": {"x": 0, "y": 1}},
+        ]},
+    ], inserts=[{"block_name": "ASSEMBLY", "insert": {"x": 10, "y": 10}, "scale": {"x": 2, "y": 2}}])
+    result = EngineeringAgent({"tools": {}}).execute_operation("cad.query", {
+        "project_dir": str(tmp_path), "input_file": source, "entity_type": "INSERT", "block_geometry": True,
+    })
+    instance = result["entities"][0]["block_instance"]
+    assert instance["block_path"] == ["ASSEMBLY", "LEAF"]
+    assert instance["block_paths"] == [["ASSEMBLY"], ["ASSEMBLY", "LEAF"]]
+    assert instance["bounds"] == [10.0, 10.0, 20.0, 16.0]
+
+
+def test_block_bounds_reports_missing_and_recursive_definitions():
+    missing = CadDocument(blocks={})
+    bounds, info = _block_instance_bounds(missing, {"block_name": "UNKNOWN", "insert": {"x": 0, "y": 0}})
+    assert bounds is None
+    assert info["warnings"] == ["BLOCK_NOT_FOUND:UNKNOWN"]
+
+    recursive = CadDocument(blocks={
+        "A": Block("A", entities=[{"type": "INSERT", "block_name": "A", "insert": {"x": 0, "y": 0}}]),
+    })
+    bounds, info = _block_instance_bounds(recursive, {"block_name": "A", "insert": {"x": 0, "y": 0}})
+    assert bounds is None
+    assert info["warnings"] == ["BLOCK_RECURSIVE:A/A"]

@@ -286,6 +286,102 @@ def _entity_bounds(entity: dict[str, Any]) -> tuple[float, float, float, float] 
     return min(xs), min(ys), max(xs), max(ys)
 
 
+def _affine_insert(block: Block, insert: dict[str, Any]) -> tuple[float, float, float, float, float, float]:
+    """Return the 2D affine matrix for one block INSERT instance."""
+    point = _point(insert.get("insert"))
+    base = _point(block.base_point)
+    scale = insert.get("scale") or {}
+    sx, sy = float(scale.get("x", 1)), float(scale.get("y", scale.get("x", 1)))
+    angle = math.radians(float(insert.get("rotation", 0)))
+    cosine, sine = math.cos(angle), math.sin(angle)
+    a, b, c, d = cosine * sx, -sine * sy, sine * sx, cosine * sy
+    return a, b, c, d, point["x"] - a * base["x"] - b * base["y"], point["y"] - c * base["x"] - d * base["y"]
+
+
+def _affine_compose(parent: tuple[float, float, float, float, float, float],
+                    child: tuple[float, float, float, float, float, float]) -> tuple[float, float, float, float, float, float]:
+    """Compose ``parent(child(point))`` for nested block instances."""
+    pa, pb, pc, pd, pe, pf = parent
+    ca, cb, cc, cd, ce, cf = child
+    return (pa * ca + pb * cc, pa * cb + pb * cd,
+            pc * ca + pd * cc, pc * cb + pd * cd,
+            pa * ce + pb * cf + pe, pc * ce + pd * cf + pf)
+
+
+def _affine_point(matrix: tuple[float, float, float, float, float, float], point: dict[str, Any]) -> dict[str, float]:
+    a, b, c, d, e, f = matrix
+    source = _point(point)
+    return {"x": a * source["x"] + b * source["y"] + e,
+            "y": c * source["x"] + d * source["y"] + f,
+            "z": source["z"]}
+
+
+def _block_instance_bounds(document: CadDocument, insert: dict[str, Any], *, max_depth: int = 16) -> tuple[tuple[float, float, float, float] | None, dict[str, Any]]:
+    """Resolve a block INSERT's nested geometry into a world-space bounds.
+
+    Bounds use each canonical entity's semantic points. Curves therefore stay
+    conservative and the query remains independent of a renderer or vendor
+    CAD session. Missing blocks and recursion are returned as warnings instead
+    of making an otherwise useful read-only query fail.
+    """
+    name = str(insert.get("block_name", ""))
+    root = document.blocks.get(name)
+    info: dict[str, Any] = {
+        "resolved": root is not None,
+        "block_path": [name] if name else [],
+        "block_paths": [],
+        "warnings": [],
+    }
+    if root is None:
+        info["warnings"].append("BLOCK_NOT_FOUND:" + name)
+        return None, info
+    points: list[dict[str, float]] = []
+
+    def visit(block_name: str, matrix: tuple[float, float, float, float, float, float], path: list[str], depth: int, active: tuple[str, ...]) -> None:
+        if depth > max_depth:
+            info["warnings"].append("BLOCK_NESTING_LIMIT:" + "/".join(path))
+            return
+        if block_name in active:
+            info["warnings"].append("BLOCK_RECURSIVE:" + "/".join(path))
+            return
+        block = document.blocks.get(block_name)
+        if block is None:
+            info["warnings"].append("BLOCK_NOT_FOUND:" + block_name)
+            return
+        next_active = active + (block_name,)
+        for child in block.entities:
+            if str(child.get("type", "")).upper() == "INSERT":
+                child_name = str(child.get("block_name", ""))
+                child_block = document.blocks.get(child_name)
+                if child_block is None:
+                    info["warnings"].append("BLOCK_NOT_FOUND:" + child_name)
+                    continue
+                visit(child_name, _affine_compose(matrix, _affine_insert(child_block, child)), path + [child_name], depth + 1, next_active)
+                continue
+            transformed = [_affine_point(matrix, point) for point in entity_points(child)]
+            if transformed:
+                points.extend(transformed)
+                info["block_paths"].append(list(path))
+
+    visit(name, _affine_insert(root, insert), [name], 0, ())
+    if not points:
+        return None, info
+    bounds = (min(point["x"] for point in points), min(point["y"] for point in points),
+              max(point["x"] for point in points), max(point["y"] for point in points))
+    unique_paths = []
+    for path in info["block_paths"]:
+        if path not in unique_paths:
+            unique_paths.append(path)
+    unique_paths.sort(key=lambda path: tuple(path))
+    info["block_paths"] = unique_paths
+    # ``block_path`` is the deepest deterministic path, which is the most
+    # useful representative when a block contains several nested branches;
+    # callers that need every branch use ``block_paths``.
+    info["block_path"] = max(unique_paths, key=lambda path: (len(path), tuple(path))) if unique_paths else [name]
+    info["bounds"] = bounds
+    return bounds, info
+
+
 def _query_identifier(value: Any) -> str:
     """Normalize an entity id or an EntityRef-shaped value for read queries."""
     if isinstance(value, dict):
@@ -894,6 +990,16 @@ def _query_entities(document: CadDocument, arguments: dict[str, Any]) -> dict[st
     tag_prefix = arguments.get("tag_prefix", selector_filter.get("tag_prefix"))
     if tag_prefix is not None and not isinstance(tag_prefix, str):
         raise ValueError("CAD_QUERY_TAG_PREFIX_INVALID")
+    block_name_filter = arguments.get("block_name", selector_filter.get("block_name"))
+    if block_name_filter is not None and not isinstance(block_name_filter, str):
+        raise ValueError("CAD_QUERY_BLOCK_NAME_INVALID")
+    attribute_properties = arguments.get("attribute_properties", selector_filter.get("attribute_properties", selector_filter.get("attributes", {}))) or {}
+    if not isinstance(attribute_properties, dict):
+        raise ValueError("CAD_QUERY_ATTRIBUTE_PROPERTIES_INVALID")
+    attribute_text = arguments.get("attribute_text_contains", selector_filter.get("attribute_text_contains"))
+    if attribute_text is not None and not isinstance(attribute_text, str):
+        raise ValueError("CAD_QUERY_ATTRIBUTE_TEXT_INVALID")
+    block_geometry = bool(arguments.get("block_geometry", selector_filter.get("block_geometry", False)))
     raw_ids = arguments.get("entity_ids") or arguments.get("ids") or []
     if isinstance(raw_ids, (str, dict)):
         raw_ids = [raw_ids]
@@ -947,6 +1053,7 @@ def _query_entities(document: CadDocument, arguments: dict[str, Any]) -> dict[st
                         max(first["x"], second["x"]), max(first["y"], second["y"]))
     intersects = bool(arguments.get("intersects", True))
     matched: list[dict[str, Any]] = []
+    query_warnings: list[str] = []
     for entity in document.entities:
         entity_id = str(entity.get("id"))
         handle = str(entity.get("handle")) if entity.get("handle") is not None else ""
@@ -957,8 +1064,17 @@ def _query_entities(document: CadDocument, arguments: dict[str, Any]) -> dict[st
         if layers and str(entity.get("layer", "0")) not in layers:
             continue
         block_name = entity.get("block_name", entity.get("name", entity.get("block", "")))
-        if arguments.get("block_name") and str(block_name) != str(arguments["block_name"]):
+        if block_name_filter and str(block_name) != str(block_name_filter):
             continue
+        attributes = entity.get("attributes") if isinstance(entity.get("attributes"), list) else []
+        attribute_values = {str(item.get("tag")): str(item.get("text", "")) for item in attributes if isinstance(item, dict) and item.get("tag") is not None}
+        if attribute_properties and any(attribute_values.get(str(key)) != str(value) for key, value in attribute_properties.items()):
+            continue
+        if attribute_text is not None:
+            attribute_haystack = " ".join([str(key) + " " + value for key, value in attribute_values.items()])
+            found_attribute = attribute_text in attribute_haystack if case_sensitive else str(attribute_text).casefold() in attribute_haystack.casefold()
+            if not found_attribute:
+                continue
         requested_layout = arguments.get("layout", selector_filter.get("layout"))
         if requested_layout and str(requested_layout) != "*" and _selector_layout(entity) != str(requested_layout):
             continue
@@ -976,7 +1092,8 @@ def _query_entities(document: CadDocument, arguments: dict[str, Any]) -> dict[st
             if str(constraint_kind) not in kinds:
                 continue
         if text_query is not None:
-            haystack = str(entity.get("text", entity.get("tag", entity.get("prompt", ""))))
+            haystack = " ".join([str(entity.get("text", entity.get("tag", entity.get("prompt", "")))),
+                                 " ".join(str(key) + " " + value for key, value in attribute_values.items())])
             found = text_query in haystack if case_sensitive else str(text_query).casefold() in haystack.casefold()
             if not found:
                 continue
@@ -1006,8 +1123,13 @@ def _query_entities(document: CadDocument, arguments: dict[str, Any]) -> dict[st
                 break
         if not numeric_match:
             continue
-        if query_bounds is not None:
+        instance_info = None
+        if str(entity.get("type", "")).upper() == "INSERT" and block_geometry:
+            bounds, instance_info = _block_instance_bounds(document, entity)
+            query_warnings.extend(str(item) for item in (instance_info.get("warnings", []) if instance_info else []))
+        else:
             bounds = _entity_bounds(entity)
+        if query_bounds is not None:
             if bounds is None:
                 continue
             ex1, ey1, ex2, ey2 = bounds
@@ -1019,15 +1141,24 @@ def _query_entities(document: CadDocument, arguments: dict[str, Any]) -> dict[st
                 continue
         record = copy.deepcopy(entity)
         record["ref"] = {"document_id": document.document_id, "entity_id": entity_id}
+        if instance_info is not None:
+            record["block_instance"] = {
+                "resolved": bool(instance_info.get("resolved")),
+                "block_path": list(instance_info.get("block_path", [])),
+                "block_paths": [list(path) for path in instance_info.get("block_paths", [])],
+                "bounds": list(instance_info["bounds"]) if instance_info.get("bounds") else None,
+                "warnings": list(instance_info.get("warnings", [])),
+            }
         if not bool(arguments.get("include_geometry", True)):
             record = {key: value for key, value in record.items()
-                      if key in {"id", "handle", "type", "layer", "sheet", "layout", "block_name", "ref"}}
+                      if key in {"id", "handle", "type", "layer", "sheet", "layout", "block_name", "ref", "block_instance"}}
         matched.append(record)
     matched_ids = [str(item.get("id")) for item in matched]
     return {"entities": matched[offset:offset + limit], "total_count": len(matched),
             "matched_ids": matched_ids, "offset": offset, "limit": limit,
             "query": copy.deepcopy(arguments), "document_id": document.document_id,
-            "units": document.units, "selection_set": selection_name or None}
+            "units": document.units, "selection_set": selection_name or None,
+            "warnings": sorted(set(query_warnings))}
 
 
 def _expand_associative_refs(document: CadDocument, ids: list[str]) -> list[str]:

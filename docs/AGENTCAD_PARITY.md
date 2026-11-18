@@ -23,6 +23,11 @@ SimLoom 原有的 CATIA / Ansys / Adams / VI-grade 工程链、B-Rep 和仿真�
 
 `cad.block_from_entities` 现已补齐：可把选定实体转换为相对基点的原生块定义，并按请求保留原件或创建 INSERT，细节见 `CAD_BLOCK_FROM_ENTITIES.md`。
 
+`cad.query` 的复杂块实例查询现已补齐：支持块名、ATT/ATTRIB 属性精确筛选和文本筛选，
+并可按块基点、非等比缩放、旋转以及嵌套 INSERT 解析世界坐标包围盒。查询返回稳定的
+`block_path`、完整 `block_paths` 和可审计 warning，不会把缺失或递归块误报为已解析几何；
+分页、metadata-only 返回和 MCP schema 也保持兼容。细节见 `CAD_QUERY_BLOCKS.md`。
+
 `cad.set_annotation_scale` 现已补齐：统一对象模型保存标注比例，原生 DXF 写入 `$DIMSCALE`，
 按比例调整文字注释并保留尺寸、引线、GD&T、表面粗糙度和 BOM 的标注元数据；模型几何和实际
 测量值不改变，细节见 `CAD_ANNOTATION_SCALE.md`。
@@ -262,7 +267,8 @@ safe/full profile 继续叠加生效。这样控制端可以按项目或部署�
 2026-11-14 后续：新增只读 `cad.query` 的 2D Viewer 入口。用户或 Agent 可以输入 JSON 查询，
 由工作台通过统一 operation 调用读取当前 DXF；返回的稳定 `EntityRef` 会自动选择、变更高亮并
 缩放到当前视图，分页时同时显示完整命中数。查询不会进入写事务，也不会改变图纸文件；历史快照
-保持只读。后续仍需补大图纸查询性能、复杂块实例过滤和真实浏览器交互回归。
+保持只读。复杂块实例过滤、嵌套变换和缺失/递归 warning 已补齐；后续仍需补大图纸查询性能
+和真实浏览器交互回归。
 
 2026-11-14 后续：新增 `cad.draw_arch_plan` 工程工作流。它接受轴对齐闭合墙环、厚度、开口和
 房间位置，在一个 CAD 事务中生成墙体边界、开口标记、房间面积标签和外形尺寸；房间面积由保存
