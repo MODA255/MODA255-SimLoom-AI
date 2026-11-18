@@ -117,6 +117,7 @@
         <div class="task-grid">
           <div class="card"><h3>阶段进度与耗时</h3><div id="taskStages"></div></div>
           <div class="card"><h3>工程指标判定</h3><div id="taskMetrics"></div><div id="taskMetricEvidence" class="metric-evidence"></div></div>
+          <div class="card task-wide" id="taskRepairCard" hidden><div class="card-head"><div><h3>修复比较与有界重规划</h3><p>显示父子工程链、候选策略、指标变化和停止原因。系统只展示已保存证据，不替换工程师阈值。</p></div><span class="pill" id="taskRepairStatus">未请求</span></div><div id="taskRepairSummary"></div><div id="taskRepairMetrics"></div><div id="taskRepairAttempts"></div><details><summary>查看修复证据 JSON</summary><pre class="json" id="taskRepairJson"></pre></details></div>
           <div class="card"><h3>本次输入快照</h3><div id="taskInput"></div><details><summary>完整参数与规则</summary><pre class="json" id="taskInputJson"></pre></details></div>
           <div class="card"><h3>执行计划</h3><div id="taskPlan"></div></div>
           <div class="card task-wide"><h3>本次产物</h3><p class="muted">每次运行保留独立副本，下次运行不会覆盖这里的文件。</p><div id="taskArtifacts"></div></div>

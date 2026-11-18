@@ -7,6 +7,8 @@ import json
 STATUS_LABELS = {"queued": "待运行", "running": "运行中", "waiting": "等待恢复连接", "completed": "已完成", "failed": "失败",
                  "planned": "排练通过", "blocked": "依赖阻塞", "unavailable": "不可用", "rolled_back": "已回滚"}
 
+REPAIR_REPORT_SCHEMA = "simloom-ai/task-repair-report/v1"
+
 
 def _compact_engineering_result(value):
     """Keep the report-facing, bounded part of one EngineeringResult envelope."""
@@ -56,6 +58,87 @@ def _engineering_result_records(result):
     return records[:64]
 
 
+def _repair_report(result):
+    """Normalize bounded repair evidence for task reports.
+
+    A repair can be attached to a run in two compatible shapes: the regular
+    ``validation.auto_repair`` envelope produced by :class:`EngineeringAgent`
+    and the direct ``repair``/``repair_loop`` fields returned by workflow
+    endpoints.  The task report deliberately keeps the evidence descriptive:
+    it does not recalculate metric trends or infer a successful repair from a
+    child process status.  The comparison and decision are copied from the
+    persisted workflow result, with the same small limits used by the repair
+    engine so a malformed worker response cannot make the Web page unbounded.
+    """
+    if not isinstance(result, dict):
+        return None
+    validation = result.get("validation") if isinstance(result.get("validation"), dict) else {}
+    auto = validation.get("auto_repair") if isinstance(validation.get("auto_repair"), dict) else {}
+    direct = result.get("repair") if isinstance(result.get("repair"), dict) else {}
+    loop = (auto.get("repair_loop") if isinstance(auto.get("repair_loop"), dict) else None) or \
+        (direct.get("repair_loop") if isinstance(direct.get("repair_loop"), dict) else None) or \
+        (result.get("repair_loop") if isinstance(result.get("repair_loop"), dict) else None)
+    comparison = (direct.get("comparison") if isinstance(direct.get("comparison"), dict) else None) or \
+        (auto.get("comparison") if isinstance(auto.get("comparison"), dict) else None)
+    decision = (direct.get("decision") if isinstance(direct.get("decision"), dict) else None) or \
+        (auto.get("decision") if isinstance(auto.get("decision"), dict) else None) or \
+        ((loop or {}).get("decision") if isinstance((loop or {}).get("decision"), dict) else None)
+    candidate = (direct.get("candidate") if isinstance(direct.get("candidate"), dict) else None) or \
+        (auto.get("candidate") if isinstance(auto.get("candidate"), dict) else None)
+    parent_id = direct.get("parent_workflow_id") or auto.get("parent_workflow_id")
+    child_id = direct.get("child_workflow_id") or auto.get("child_workflow_id")
+    requested = bool(auto.get("requested") or direct or loop or comparison or decision)
+    if not requested:
+        return None
+
+    attempts = []
+    if isinstance(loop, dict) and isinstance(loop.get("attempts"), list):
+        for item in loop["attempts"][:8]:
+            if not isinstance(item, dict):
+                continue
+            attempt = {key: item[key] for key in ("index", "status", "workflow_id") if key in item}
+            if isinstance(item.get("candidate"), dict):
+                attempt["candidate"] = {key: item["candidate"][key] for key in (
+                    "schema_version", "strategy_id", "step_id", "reason", "parameter_patch", "evidence", "max_attempts"
+                ) if key in item["candidate"]}
+            if isinstance(item.get("comparison"), dict):
+                attempt["comparison"] = {key: item["comparison"][key] for key in (
+                    "schema_version", "parent_workflow_id", "child_workflow_id", "parent", "child",
+                    "metrics", "counts", "outcome", "next_action", "should_continue"
+                ) if key in item["comparison"]}
+                if isinstance(attempt["comparison"].get("metrics"), list):
+                    attempt["comparison"]["metrics"] = attempt["comparison"]["metrics"][:256]
+            if isinstance(item.get("decision"), dict):
+                attempt["decision"] = {key: item["decision"][key] for key in (
+                    "status", "reason", "next_action"
+                ) if key in item["decision"]}
+            attempts.append(attempt)
+    comparison_copy = None
+    if isinstance(comparison, dict):
+        comparison_copy = {key: comparison[key] for key in (
+            "schema_version", "parent_workflow_id", "child_workflow_id", "candidate",
+            "parent", "child", "metrics", "counts", "outcome", "next_action", "should_continue"
+        ) if key in comparison}
+        if isinstance(comparison_copy.get("metrics"), list):
+            comparison_copy["metrics"] = comparison_copy["metrics"][:256]
+    loop_copy = None
+    if isinstance(loop, dict):
+        loop_copy = {key: loop[key] for key in ("schema_version", "budget", "attempt_count", "attempts", "decision") if key in loop}
+        loop_copy["attempts"] = attempts
+    return {
+        "schema_version": REPAIR_REPORT_SCHEMA,
+        "requested": bool(auto.get("requested", requested)),
+        "status": auto.get("status") or direct.get("status") or result.get("status"),
+        "parent_workflow_id": parent_id,
+        "child_workflow_id": child_id,
+        "candidate": candidate,
+        "comparison": comparison_copy,
+        "decision": decision,
+        "loop": loop_copy,
+        "attempts": attempts,
+    }
+
+
 def build_report(queue, task_id):
     task = queue.get(task_id)
     if not task:
@@ -87,6 +170,7 @@ def build_report(queue, task_id):
     external = mode == "external"
     snapshot = task["input"]
     engineering_results = _engineering_result_records(result)
+    repair = _repair_report(result)
     return {
         "schema_version": "simloom-ai/task-report/v1",
         "task_id": task_id, "project_id": task["project_id"], "project_dir": task["project_dir"],
@@ -102,6 +186,7 @@ def build_report(queue, task_id):
         "input": snapshot, "input_snapshot_available": snapshot is not None,
         "plan": plan, "stages": list(stages.values()), "verdicts": verdicts,
         "engineering_results": engineering_results,
+        "repair": repair,
         "validation_status": verdict_status,
         "artifacts": result.get("artifact_manifest", []), "error": error,
         "workflow_id": task.get("workflow_id"),
@@ -144,6 +229,33 @@ def render_report(report):
             ])
     evidence = table(["步骤", "软件", "指标", "来源文件", "值定位", "单位/聚合"], evidence_rows) \
         if evidence_rows else '<p>本次任务没有保存指标来源记录。</p>'
+    repair = report.get("repair") or {}
+    repair_sections = ''
+    if repair:
+        candidate = repair.get("candidate") or {}
+        comparison = repair.get("comparison") or {}
+        decision = repair.get("decision") or {}
+        loop = repair.get("loop") or {}
+        repair_metrics = table(["步骤", "指标", "父值", "子值", "变化", "趋势", "父/子判定"], [
+            [item.get("step_id"), item.get("name"),
+             (item.get("parent") or {}).get("value"), (item.get("child") or {}).get("value"),
+             item.get("delta"), item.get("trend"),
+             f"{(item.get('parent') or {}).get('passed')} / {(item.get('child') or {}).get('passed')}" ]
+            for item in comparison.get("metrics", []) if isinstance(item, dict)
+        ]) if comparison.get("metrics") else '<p>没有可比较的父子指标证据。</p>'
+        repair_attempts = table(["尝试", "子工程链", "策略", "结果", "停止原因"], [
+            [item.get("index"), item.get("workflow_id"), (item.get("candidate") or {}).get("strategy_id"),
+             ((item.get("comparison") or {}).get("outcome") or item.get("status")),
+             (item.get("decision") or {}).get("reason") or ""]
+            for item in repair.get("attempts", []) if isinstance(item, dict)
+        ]) if repair.get("attempts") else '<p>本次没有保存多轮修复尝试。</p>'
+        repair_sections = f'''<section><h2>修复比较与重规划</h2>
+<p>父工程链：{e(repair.get("parent_workflow_id"))}<br>子工程链：{e(repair.get("child_workflow_id"))}<br>
+策略：{e(candidate.get("strategy_id"))} · 当前状态：{e(repair.get("status"))}<br>
+比较结果：{e(comparison.get("outcome"))} · 下一步：{e(decision.get("next_action"))} · 停止原因：{e(decision.get("reason"))}<br>
+修复预算：{e(loop.get("budget"))} · 已尝试：{e(loop.get("attempt_count"))}</p>
+<h3>父子指标变化</h3>{repair_metrics}<h3>修复时间线</h3>{repair_attempts}
+<details><summary>查看修复证据 JSON</summary><pre>{pretty(repair)}</pre></details></section>'''
     files = table(["产物", "相对路径", "字节", "SHA-256"], [
         [a["name"], a["path"], a["bytes"], a["sha256"]] for a in report["artifacts"]])
     timeline = table(["时间（UTC）", "事件", "说明"], [
@@ -172,6 +284,7 @@ pre{{white-space:pre-wrap;overflow-wrap:anywhere;background:#f4f6fa;padding:16px
 <section><h2>阶段与耗时</h2>{stages}</section>
 <section><h2>工程指标</h2><p>{e(validation)}</p>{metrics}</section>
 <section><h2>指标来源证据</h2>{evidence}</section>
+{repair_sections}
 <section><h2>产物与校验值</h2><p>以下路径相对于项目目录。历史副本在后续运行中保留。</p>{files}</section>
 <section><h2>事件时间线</h2>{timeline}</section>
 <footer><small>SimLoom AI · {e(report['schema_version'])} · 可离线阅读，也可通过浏览器打印为 PDF。</small></footer>

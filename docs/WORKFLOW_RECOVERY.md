@@ -162,3 +162,7 @@ MCP full profile 使用 `engineering_workflow` 的 `action=repair`，可选 `rep
 `repair_history[]` 项。系统不会因为子进程退出码为零、输出文件存在或指标数值变化就自动宣布
 工程通过；只有独立工程结果中的验收状态为 `passed` 才会触发成功停止。这样可以在继续尝试候选
 策略时保留完整父子证据，也能在回归或证据不足时及时交给工程师复核。
+
+任务详情和 HTML 报告会把这些父子比较、候选策略、多轮尝试和停止原因整理为
+`simloom-ai/task-repair-report/v1`。字段边界、展示方式和历史报告行为见
+[`REPAIR_REPORTING.md`](REPAIR_REPORTING.md)。

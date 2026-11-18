@@ -839,6 +839,38 @@ function renderMetricEvidence(records) {
     ? '<div class="metric-evidence-title">来源证据</div>'+reportTable(['步骤','软件','指标','来源文件','值定位','单位/聚合'],rows)
     : '<p class="muted metric-evidence-empty">本次任务没有保存指标来源记录。</p>';
 }
+const repairOutcomeLabels={accepted:'已通过',improved:'有所改善',unchanged:'没有变化',regressed:'出现回归',needs_review:'需要人工复核'};
+const repairTrendLabels={improved:'改善',unchanged:'不变',regressed:'回归',unknown:'无法比较'};
+const repairActionLabels={stop_success:'停止并接受',evaluate_next_candidate:'评估下一候选策略',manual_review:'转人工复核'};
+function renderRepairReport(repair) {
+  const card=$('#taskRepairCard');
+  if(!repair) { card.hidden=true; return; }
+  card.hidden=false;
+  const comparison=repair.comparison||{};
+  const decision=repair.decision||{};
+  const loop=repair.loop||{};
+  const candidate=repair.candidate||{};
+  const status=repair.status||'未记录';
+  $('#taskRepairStatus').textContent=repairOutcomeLabels[comparison.outcome]||status;
+  $('#taskRepairStatus').className='pill '+(comparison.outcome==='accepted'?'green':comparison.outcome==='regressed'?'amber':'');
+  $('#taskRepairSummary').innerHTML=reportTable(['项目','记录'],[
+    ['父工程链',repair.parent_workflow_id||'未记录'],['子工程链',repair.child_workflow_id||'未记录'],
+    ['候选策略',candidate.strategy_id||'未记录'],['策略说明',candidate.reason||'未记录'],
+    ['比较结果',repairOutcomeLabels[comparison.outcome]||comparison.outcome||'未记录'],
+    ['下一步',repairActionLabels[decision.next_action]||decision.next_action||'未记录'],
+    ['停止原因',decision.reason||'未记录'],['预算 / 已尝试',`${loop.budget??'未记录'} / ${loop.attempt_count??'未记录'}`]
+  ]);
+  const metrics=(Array.isArray(comparison.metrics)?comparison.metrics:[]).map(item=>[
+    item.step_id,item.name,item.parent?.value,item.child?.value,item.delta,
+    repairTrendLabels[item.trend]||item.trend,item.comparable===false?'不可比较':`${item.parent?.passed??'未记录'} / ${item.child?.passed??'未记录'}`
+  ]);
+  $('#taskRepairMetrics').innerHTML='<h4>父子指标变化</h4>'+(metrics.length?reportTable(['步骤','指标','父值','子值','变化','趋势','父/子判定'],metrics):'<p class="muted">没有可比较的父子指标证据。</p>');
+  const attempts=(Array.isArray(repair.attempts)?repair.attempts:[]).map(item=>[
+    item.index,item.workflow_id,item.candidate?.strategy_id,(repairOutcomeLabels[item.comparison?.outcome]||item.comparison?.outcome||item.status||'未记录'),item.decision?.reason||''
+  ]);
+  $('#taskRepairAttempts').innerHTML='<h4>修复时间线</h4>'+(attempts.length?reportTable(['尝试','子工程链','策略','结果','停止原因'],attempts):'<p class="muted">本次没有保存多轮修复尝试。</p>');
+  $('#taskRepairJson').textContent=JSON.stringify(repair,null,2);
+}
 function renderTaskReport(report) {
   $('#taskTitle').textContent=report.prompt;
   $('#taskSubtitle').textContent=`${report.project_name} · ${report.task_id}`;
@@ -863,6 +895,7 @@ function renderTaskReport(report) {
   $('#taskStages').innerHTML=report.stages.length?reportTable(['阶段','软件','状态','耗时','说明'],report.stages.map(s=>[s.label,s.tool||'工作台',taskStatusLabels[s.status]||s.status,displayDuration(s.duration_seconds),s.error||s.message||''])):'<p class="muted">开始运行后显示阶段记录。旧任务可能没有耗时信息。</p>';
   $('#taskMetrics').innerHTML=report.verdicts.length?reportTable(['指标','数值','单位','规则','判定'],report.verdicts.map(v=>[metricTitles[v.name]||v.name,v.value,v.unit,`${v.operator} ${v.target}`,v.passed?'通过':'未通过'])):'<p class="muted">本次任务尚无指标判定；排练不会生成仿真结论。</p>';
   renderMetricEvidence(report.engineering_results);
+  renderRepairReport(report.repair);
   const input=report.input?.model_spec;
   const values={...(input?.parameters||{}),...(input?.load_cases?.[0]||{})};
   const parameterNames={wheelbase_mm:'长度 / 轴距（mm）',track_front_mm:'宽度 / 轮距（mm）',chassis_height_mm:'几何高度（mm）',force_n:'载荷（N）'};
