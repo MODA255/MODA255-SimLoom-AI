@@ -109,6 +109,10 @@ bulge 弧段、SPLINE 采样段和 HATCH 多段线边界检查自交/重叠；�
 `inspect_diagnostics` 这套建议码。未知阻塞会安全回退到人工诊断；建议只提供调度信息，不能
 绕过重新 preflight、事务、停止确认或实机证据。详见 `SOFTWARE_CAPABILITY_REQUIREMENTS.md`。
 
+随后补齐 typed operation `project.preflight` 的输出 schema，使 Python、MCP 内置工具和
+`operation.project.preflight` 都发布相同的步骤级/计划级建议和 operation contract 字段；这减少
+Agent 为不同入口维护特殊解析器的差距，但仍不构成四款商业软件实机验收。
+
 2026-11-17 后续：新增 `simloom-ai/capability-matrix/v1`。每个已声明的软件动作现在
 同时返回状态、规范化要求、缺失原因、发现状态、证据等级和实机验收标记；CLI、Web 和
 MCP 复用同一个矩阵，避免 Agent 从不同入口拼接 `doctor()` 字段。该改动改善了操作发现

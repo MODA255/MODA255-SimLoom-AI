@@ -103,6 +103,17 @@ def test_operation_registry_enforces_published_schema_and_accepts_pathlike_input
     }) == []
 
 
+def test_project_preflight_publishes_the_same_guidance_fields_as_builtin_preflight():
+    registry = OperationRegistry()
+    output = registry.get("project.preflight").schema()["output_schema"]
+    assert {"schema_version", "plan", "steps", "ready", "next_actions"} <= set(output)
+    assert "next_actions" in output["steps"]["items"]["properties"]
+    server = MCPServer(EngineeringAgent({"tools": {}}))
+    listed = server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    operation = next(item for item in listed["result"]["tools"] if item["name"] == "operation.project.preflight")
+    assert "next_actions" in operation["outputSchema"]["properties"]
+
+
 def test_mcp_surface_lists_and_calls_tools():
     server = MCPServer(EngineeringAgent({"tools": {}}))
     listed = server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
