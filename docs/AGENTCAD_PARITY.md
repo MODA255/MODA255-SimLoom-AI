@@ -134,6 +134,23 @@ MCP 复用同一个矩阵，避免 Agent 从不同入口拼接 `doctor()` 字段
 能力矩阵现在还支持 `probe=false` 的离线发现，并通过 MCP
 `engineering://capabilities` resource 提供给先发现后调用的客户端。
 
+2026-11-18 后续：设置页新增 `simloom-ai/action-profile/v1`。它把四款软件动作的脚本、命令、
+输入输出声明、能力要求、恢复策略和绑定摘要集中展示，并提供脱敏的 `simloom-worker-profile.json`。
+新增 `project.action_preflight`、CLI `action-preflight` 和 Web `POST /api/action-preflight`，可以
+对一个明确选择的软件动作直接复用 adapter 的 file contract 和 `definition_digest`，不必先让规划器
+生成完整工程链。它改善了 Agent-facing 的动作发现和部署排障，但仍只代表配置/契约检查，不能证明
+商业软件已启动或结果已验收。
+
+同日新增 `simloom-ai/engineering-context-validation/v1`。统一工程结果现在会对 runner 明确导出的
+原生对象、坐标系、工况和模型引用检查 schema、ID 唯一性、父子关系、模型/坐标系引用、有限坐标值和
+项目相对路径，并把错误作为独立诊断保留。结构验证不会提升 `real_machine_verified`，也不会把不一致
+的上下文自动改写成软件执行失败；真实对象语义仍需厂商结果和 Windows 机器证据。
+
+同日新增 `simloom-ai/worker-config-template/v1` 导出。工作台可以生成带 host、port、root、动作命令、
+COM 声明和 token 占位符的脱敏 `simloom-worker.json`；Windows worker 支持 `token_env`，启动时从受保护
+环境读取令牌，旧的显式 `token` 仍兼容。模板、命令解析和认证环境变量都不能替代 Windows 上的路径、
+许可证、COM dispatch、模型求解和异常恢复验收。
+
 随后补齐工作台连接设置：控制端可以保存四款软件的 worker 地址、令牌环境变量名和诊断字段，
 并将脱敏运行时覆盖立即应用到当前 adapter；设置页不会写入密钥、动作命令，也不会把连接成功
 误报成商业软件实机验收。细节见 `CONNECTION_SETTINGS.md`。这缩小了部署体验差距，但 Windows
