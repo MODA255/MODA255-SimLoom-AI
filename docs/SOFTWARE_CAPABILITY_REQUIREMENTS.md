@@ -37,6 +37,66 @@ SimLoom 的一个 CATIA、Ansys、Adams 或 VI-grade 动作可以声明它需要
 
 Web 工作台的环境检查页会同时显示“已发现”“可执行”和“已验收”三个数量，并给每个动作标出可执行、能力缺失、待探测或实机已验收状态。这样工程师能直接区分配置存在、协议条件满足和真实软件证据。
 
+## Preflight 的结构化下一步建议
+
+从 `simloom-ai/software-preflight/v1` 的当前版本开始，preflight 会把每个阻塞问题翻译成
+`next_actions`。这让 Agent 可以直接进入下一步处理，不需要根据中文错误消息猜测应该重试、改配置还是联系工程师。
+建议码与 `docs/CAPABILITY_MATRIX.md` 中的能力矩阵共用同一套词汇：
+
+| 建议码 | 适用情况 | Agent 可以做的事 |
+| --- | --- | --- |
+| `configure_action_binding` | 动作绑定、脚本路径、命令或 worker 动作登记缺失 | 检查配置文件、脚本和 worker action 名称，然后重新生成 preflight |
+| `configure_capabilities` | 适配器能力或 worker 特性不满足 | 修改动作要求，或切换到真正声明了所需能力的适配器/worker |
+| `probe_worker` | 远程 worker 尚未探测或当前不可达 | 认证并读取 worker health/capabilities；探测失败时查看连接诊断 |
+| `inspect_diagnostics` | 未知或无法归类的 contract 检查失败 | 读取完整诊断，确认版本、路径和 contract 字段后再处理 |
+
+步骤级建议的形状如下：
+
+```json
+{
+  "step_id": "ansys-static",
+  "tool": "ansys",
+  "action": "solve_static",
+  "ready": false,
+  "issues": [
+    {"code": "WORKER_CAPABILITY_PROBE_REQUIRED", "message": "执行前必须探测远程 worker 能力"}
+  ],
+  "next_actions": [
+    {
+      "action": "probe_worker",
+      "reason": "先探测并认证 Windows worker 的能力",
+      "issue_codes": ["WORKER_CAPABILITY_PROBE_REQUIRED"]
+    }
+  ]
+}
+```
+
+计划级 `next_actions` 会按步骤合并相同建议，并附带 `step_ids` 与 `issue_codes`，例如：
+
+```json
+{
+  "next_actions": [
+    {
+      "action": "configure_capabilities",
+      "reason": "补齐适配器声明的能力，或改用当前适配器支持的动作",
+      "step_ids": ["catia-model", "ansys-static"],
+      "issue_codes": ["ADAPTER_CAPABILITY_MISSING"]
+    },
+    {
+      "action": "probe_worker",
+      "reason": "先探测并认证 Windows worker 的能力",
+      "step_ids": ["ansys-static"],
+      "issue_codes": ["WORKER_CAPABILITY_PROBE_REQUIRED"]
+    }
+  ]
+}
+```
+
+聚合顺序是确定的，步骤内优先给出配置修复，其次是能力补齐、worker 探测和人工诊断；计划级列表按建议码排序，便于 CLI、Web 和 MCP 做稳定 diff。未知错误码永远回退到 `inspect_diagnostics`，避免新增检查因为忘记更新映射而被误判为可执行。
+
+这些建议只提供调度信息，不授予执行权限。Agent 仍必须重新运行 preflight，确认 `ready=true`，再把同一份
+`operation_contract` 传给执行入口；`next_actions` 不会绕过事务、锁、停止确认、实机证据或独立结果验证。
+
 ## 典型结果
 
 动作缺少适配器能力时：
@@ -83,5 +143,10 @@ engineering-agent --config ./configs/vendor-actions.example.json \
 ```bash
 .venv/bin/python -m pytest -q tests/test_capability_requirements.py tests/test_software_integration.py
 ```
+
+其中 `test_preflight_does_not_call_an_unprobed_worker_action_ready` 验证未探测 worker 时返回
+`probe_worker`，`test_preflight_groups_multiple_issues_into_stable_next_actions` 验证多个问题会合并为
+确定性的计划级建议。MCP 的 `engineering_preflight` output schema 也会声明步骤级和计划级字段，外部
+客户端无需读取实现代码即可发现这个契约。
 
 这些测试使用受控 runner 和本地 HTTP worker，只证明 SimLoom 的能力协商、拒绝和 contract 完整性；不证明四款商业软件的安装、许可证、建模、求解或结果验收。

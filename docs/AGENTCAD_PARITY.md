@@ -104,6 +104,11 @@ bulge 弧段、SPLINE 采样段和 HATCH 多段线边界检查自交/重叠；�
 2026-11-18 后续：能力矩阵动作增加 `next_action`，将 `ready`、`not_probed`、能力缺失和
 绑定不可用转换为可发现的下一步提示；它只辅助 Agent 调度，不授权跳过 preflight 或实机证据。
 
+同日后续：`software-preflight/v1` 的步骤和计划现在也返回结构化 `next_actions`，并复用
+`run_preflight`、`probe_worker`、`configure_capabilities`、`configure_action_binding` 和
+`inspect_diagnostics` 这套建议码。未知阻塞会安全回退到人工诊断；建议只提供调度信息，不能
+绕过重新 preflight、事务、停止确认或实机证据。详见 `SOFTWARE_CAPABILITY_REQUIREMENTS.md`。
+
 2026-11-17 后续：新增 `simloom-ai/capability-matrix/v1`。每个已声明的软件动作现在
 同时返回状态、规范化要求、缺失原因、发现状态、证据等级和实机验收标记；CLI、Web 和
 MCP 复用同一个矩阵，避免 Agent 从不同入口拼接 `doctor()` 字段。该改动改善了操作发现

@@ -17,7 +17,7 @@ from .software_contract import build_operation_contract, normalize_capability_re
 
 PREFLIGHT_OUTPUT_SCHEMA = {
     "type": "object",
-    "required": ["schema_version", "steps", "ready", "ready_count", "step_count"],
+    "required": ["schema_version", "steps", "ready", "ready_count", "step_count", "next_actions"],
     "properties": {
         "schema_version": {"type": "string", "const": "simloom-ai/software-preflight/v1"},
         "project_dir": {"type": "string"},
@@ -27,6 +27,10 @@ PREFLIGHT_OUTPUT_SCHEMA = {
         "steps": {"type": "array", "items": {"type": "object", "properties": {
             "step_id": {"type": "string"}, "tool": {"type": "string"}, "action": {"type": "string"},
             "ready": {"type": "boolean"}, "issues": {"type": "array"},
+            "next_actions": {"type": "array", "items": {"type": "object", "properties": {
+                "action": {"type": "string"}, "reason": {"type": "string"},
+                "issue_codes": {"type": "array", "items": {"type": "string"}},
+            }}},
             "contract": {"type": ["object", "null"]},
             "operation_contract": {"type": ["object", "null"], "properties": {
                 "schema_version": {"type": "string", "const": "simloom-ai/software-operation-contract/v1"},
@@ -49,8 +53,58 @@ PREFLIGHT_OUTPUT_SCHEMA = {
         "ready_count": {"type": "integer", "minimum": 0},
         "step_count": {"type": "integer", "minimum": 0},
         "ready": {"type": "boolean"},
+        "next_actions": {"type": "array", "items": {"type": "object", "properties": {
+            "action": {"type": "string"}, "reason": {"type": "string"},
+            "step_ids": {"type": "array", "items": {"type": "string"}},
+            "issue_codes": {"type": "array", "items": {"type": "string"}},
+        }}},
     },
 }
+
+
+# Keep these identifiers aligned with ``capability_matrix.next_action``.  A
+# preflight response is the point where an Agent can act on a capability
+# diagnosis, so it must not invent a second vocabulary for the same decision.
+_ISSUE_NEXT_ACTION = {
+    "ACTION_BINDING_REQUIRED": ("configure_action_binding", "补充该软件动作的脚本、命令或 bridge 绑定"),
+    "SCRIPT_REQUIRED": ("configure_action_binding", "为动作配置脚本文件"),
+    "SCRIPT_MISSING": ("configure_action_binding", "检查脚本路径并把脚本放入项目目录"),
+    "SCRIPT_EMPTY": ("configure_action_binding", "补充动作脚本内容"),
+    "INVALID_SCRIPT_PATH": ("configure_action_binding", "修正脚本路径，路径必须位于项目目录内"),
+    "COMMAND_ARGV_REQUIRED": ("configure_action_binding", "配置非空的命令参数列表"),
+    "COMMAND_SCRIPT_BINDING_REQUIRED": ("configure_action_binding", "在启动命令中加入 {script} 绑定"),
+    "COMMAND_EXECUTABLE_NOT_FOUND": ("configure_action_binding", "安装或配置动作启动程序，并检查 PATH"),
+    "ADAPTER_CAPABILITY_MISSING": ("configure_capabilities", "补齐适配器声明的能力，或改用当前适配器支持的动作"),
+    "WORKER_FEATURE_REQUIRES_BRIDGE": ("configure_capabilities", "为需要 worker 特性的动作配置 Windows bridge"),
+    "WORKER_FEATURE_MISSING": ("configure_capabilities", "让 Windows worker 声明所需特性，或调整动作要求"),
+    "WORKER_CAPABILITY_PROBE_REQUIRED": ("probe_worker", "先探测并认证 Windows worker 的能力"),
+    "BRIDGE_UNREACHABLE": ("probe_worker", "检查 bridge 地址、认证令牌和 Windows worker 健康状态"),
+    "WORKER_ACTION_NOT_FOUND": ("configure_action_binding", "在 Windows worker 上登记该软件动作"),
+    "ACTION_CONTRACT_INVALID": ("inspect_diagnostics", "读取动作 contract 和完整诊断后修正配置"),
+}
+
+
+def _next_actions(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Translate preflight issue codes into deterministic Agent guidance.
+
+    Unknown issue codes deliberately fall back to ``inspect_diagnostics`` so
+    a newly added check can never look executable just because its guidance
+    mapping has not been added yet.
+    """
+    grouped: dict[str, dict[str, Any]] = {}
+    for issue in issues:
+        if not isinstance(issue, dict):
+            continue
+        code = str(issue.get("code", ""))
+        action, reason = _ISSUE_NEXT_ACTION.get(
+            code, ("inspect_diagnostics", "读取完整 preflight 诊断后再决定处理方式"))
+        entry = grouped.setdefault(action, {"action": action, "reason": reason,
+                                            "issue_codes": []})
+        if code and code not in entry["issue_codes"]:
+            entry["issue_codes"].append(code)
+    order = {"configure_action_binding": 0, "configure_capabilities": 1,
+             "probe_worker": 2, "inspect_diagnostics": 3}
+    return sorted(grouped.values(), key=lambda item: (order.get(item["action"], 99), item["action"]))
 
 
 def _command_status(command: Any) -> tuple[bool, str, str | None]:
@@ -93,6 +147,7 @@ def _step_preflight(adapter: Any, step: PlanStep, root: Path, *, probe: bool = F
         "command": None,
         "outputs": list(step.outputs),
         "requirements": None,
+        "next_actions": [],
     }
     if not isinstance(binding, dict):
         result["issues"].append({"code": "ACTION_BINDING_REQUIRED", "message": "未配置该软件动作"})
@@ -170,6 +225,7 @@ def _step_preflight(adapter: Any, step: PlanStep, root: Path, *, probe: bool = F
 
     result["ready"] = not result["issues"]
     result["status"] = "ready" if result["ready"] else "needs_configuration"
+    result["next_actions"] = _next_actions(result["issues"])
     return result
 
 
@@ -180,6 +236,19 @@ def preflight_plan(adapters: dict[ToolName, Any], plan: ExecutionPlan, project_d
              if step.tool in adapters and step.action != "clarify_request"]
     skipped = [step.id for step in plan.steps if step.action == "clarify_request"]
     ready_count = sum(bool(item["ready"]) for item in steps)
+    guidance: dict[str, dict[str, Any]] = {}
+    for step in steps:
+        for recommendation in step.get("next_actions", []):
+            action = recommendation["action"]
+            entry = guidance.setdefault(action, {"action": action,
+                                                  "reason": recommendation["reason"],
+                                                  "step_ids": [], "issue_codes": []})
+            if step["step_id"] not in entry["step_ids"]:
+                entry["step_ids"].append(step["step_id"])
+            for code in recommendation.get("issue_codes", []):
+                if code not in entry["issue_codes"]:
+                    entry["issue_codes"].append(code)
+    next_actions = sorted(guidance.values(), key=lambda item: item["action"])
     return {
         "schema_version": "simloom-ai/software-preflight/v1",
         "project_dir": str(root),
@@ -191,4 +260,5 @@ def preflight_plan(adapters: dict[ToolName, Any], plan: ExecutionPlan, project_d
         "ready_count": ready_count,
         "step_count": len(steps),
         "ready": bool(steps) and ready_count == len(steps) and not skipped,
+        "next_actions": next_actions,
     }

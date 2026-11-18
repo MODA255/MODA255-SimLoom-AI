@@ -235,6 +235,9 @@ def test_mcp_negotiates_requested_protocol_and_publishes_standard_output_schema(
     operation = next(item for item in listed["result"]["tools"] if item["name"] == "operation.cad.entity_move")
     assert plan["outputSchema"]["type"] == "object"
     assert preflight["outputSchema"]["properties"]["schema_version"]["const"] == "simloom-ai/software-preflight/v1"
+    assert "next_actions" in preflight["outputSchema"]["properties"]
+    step_schema = preflight["outputSchema"]["properties"]["steps"]["items"]["properties"]
+    assert "next_actions" in step_schema
     context_schema = preflight["outputSchema"]["properties"]["steps"]["items"]["properties"]["operation_contract"]["properties"]["engineering_context"]
     assert context_schema["type"] == ["object", "null"]
     assert capabilities["outputSchema"]["properties"]["schema_version"]["const"] == "simloom-ai/capabilities/v1"

@@ -111,6 +111,34 @@ def test_preflight_does_not_call_an_unprobed_worker_action_ready(tmp_path):
     assert step["ready"] is False
     assert step["requirements"]["status"] == "not_probed"
     assert step["issues"][0]["code"] == "WORKER_CAPABILITY_PROBE_REQUIRED"
+    assert step["next_actions"] == [{
+        "action": "probe_worker",
+        "reason": "先探测并认证 Windows worker 的能力",
+        "issue_codes": ["WORKER_CAPABILITY_PROBE_REQUIRED"],
+    }]
+    assert result["next_actions"] == [{
+        "action": "probe_worker",
+        "reason": "先探测并认证 Windows worker 的能力",
+        "step_ids": ["model"],
+        "issue_codes": ["WORKER_CAPABILITY_PROBE_REQUIRED"],
+    }]
+
+
+def test_preflight_groups_multiple_issues_into_stable_next_actions(tmp_path):
+    root = _project(tmp_path)
+    config = _config({"adapter_capabilities": ["unknown-vendor-feature"],
+                      "worker_features": ["durable_jobs"]})
+    config["tools"]["catia"]["bridge_url"] = "http://worker.invalid"
+    adapter = CatiaAdapter(config["tools"]["catia"])
+    result = preflight_plan({ToolName.CATIA: adapter},
+                            ExecutionPlan(AgentRequest("test", str(root), {}), [_step()], []), root,
+                            probe=False)
+    step = result["steps"][0]
+    assert [item["action"] for item in step["next_actions"]] == [
+        "configure_capabilities", "probe_worker"]
+    assert step["next_actions"][0]["issue_codes"] == ["ADAPTER_CAPABILITY_MISSING"]
+    assert step["next_actions"][1]["issue_codes"] == ["WORKER_CAPABILITY_PROBE_REQUIRED"]
+    assert result["next_actions"][0]["step_ids"] == ["model"]
 
 
 def test_remote_worker_requirement_is_checked_before_job_launch(tmp_path):
