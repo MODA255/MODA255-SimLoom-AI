@@ -237,6 +237,7 @@ def normalize_engineering_result(*, tool: str, action: str, status: str,
         verification = "not_run"
     metrics: dict[str, Any] = {}
     metric_verdicts: list[dict[str, Any]] = []
+    metric_evidence: list[dict[str, Any]] = []
     observations: dict[str, Any] = {}
     scope = None
     real_machine_verified = False
@@ -247,6 +248,9 @@ def normalize_engineering_result(*, tool: str, action: str, status: str,
         raw_verdicts = vendor_validation.get("metric_verdicts")
         if isinstance(raw_verdicts, list):
             metric_verdicts = [item for item in raw_verdicts[:256] if isinstance(item, dict)]
+        raw_evidence = vendor_validation.get("metric_evidence")
+        if isinstance(raw_evidence, list):
+            metric_evidence = [item for item in raw_evidence[:256] if isinstance(item, dict)]
         raw_observations = vendor_validation.get("observations")
         if isinstance(raw_observations, dict):
             observations = raw_observations
@@ -283,6 +287,7 @@ def normalize_engineering_result(*, tool: str, action: str, status: str,
         "real_machine_verified": real_machine_verified,
         "metrics": metrics,
         "metric_verdicts": metric_verdicts,
+        "metric_evidence": metric_evidence,
         "observations": observations,
         "engineering_context": context,
         "artifacts": {"inputs": input_artifacts, "outputs": output_artifacts},

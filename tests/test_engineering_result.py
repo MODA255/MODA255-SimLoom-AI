@@ -16,6 +16,7 @@ def test_normalized_result_separates_execution_from_engineering_acceptance():
                 "engineering_acceptance": "failed",
                 "metrics": {"equivalent_stress": {"value": 125.0, "unit": "MPa"}},
                 "metric_verdicts": [{"name": "equivalent_stress", "passed": False}],
+                "metric_evidence": [{"name": "equivalent_stress", "source": {"path": "results.json", "format": "json", "value_selector": "metrics.equivalent_stress"}}],
                 "observations": {"solution_status": "Done"},
                 "real_machine_verified": False,
                 "scope": "file_identity_and_reported_observations",
@@ -26,6 +27,7 @@ def test_normalized_result_separates_execution_from_engineering_acceptance():
     assert result["engineering_acceptance"] == "failed"
     assert result["verification"] == "artifact_and_vendor_evidence"
     assert result["metrics"]["equivalent_stress"]["unit"] == "MPa"
+    assert result["metric_evidence"][0]["source"]["value_selector"] == "metrics.equivalent_stress"
     assert result["artifacts"]["inputs"][0]["path"] == "model.mechdat"
     assert result["artifacts"]["outputs"][0]["sha256"] == "b" * 64
 
@@ -52,6 +54,7 @@ def test_vendor_operation_schema_advertises_normalized_result():
     details = schema["output_schema"]["details"]
     assert "engineering_result" in details["properties"]
     envelope = details["properties"]["engineering_result"]
+    assert envelope["properties"]["metric_evidence"]["type"] == "array"
     assert envelope["properties"]["contract"]["properties"]["metric_rules"]["type"] == "array"
     assert envelope["properties"]["real_machine_verified"]["type"] == "boolean"
     assert envelope["properties"]["lifecycle"]["properties"]["stages"]["properties"]["recover"]["properties"]["status"]["enum"][-1] == "deferred"

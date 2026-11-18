@@ -25,6 +25,8 @@ ENGINEERING_RESULT_SCHEMA = {
         "real_machine_verified": {"type": "boolean"},
         "metrics": {"type": "object"},
         "metric_verdicts": {"type": "array", "items": {"type": "object"}},
+        "metric_evidence": {"type": "array", "items": {"type": "object"},
+                             "description": "Bounded provenance for each normalized metric value"},
         "observations": {"type": "object"},
         "engineering_context": {
             "type": ["object", "null"],

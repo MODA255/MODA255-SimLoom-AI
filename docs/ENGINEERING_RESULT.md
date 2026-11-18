@@ -17,6 +17,12 @@
   "metric_verdicts": [
     {"name": "equivalent_stress", "passed": false}
   ],
+  "metric_evidence": [
+    {"name": "equivalent_stress", "unit": "MPa",
+     "source": {"path": "artifacts/results.json", "format": "json",
+                 "value_selector": "metrics.equivalent_stress",
+                 "unit_selector": "units.equivalent_stress"}}
+  ],
   "observations": {"solution_status": "Done"},
   "engineering_context": {
     "schema_version": "simloom-ai/engineering-context/v1",
@@ -98,6 +104,10 @@
 - `engineering_acceptance` 表示工程指标是否满足规则：`passed`、`failed`、`not_requested` 或 `unknown`。进程成功不自动等于工程验收通过。
 - `real_machine_verified` 只有经过 Windows worker 的机器证据记录才可能为 `true`。本地 fixture、COM 探针和文件哈希不能填充这个字段。
 - `metrics` 是已按契约单位规范化的数值，`metric_verdicts` 保存每项规则的目标、运算符和通过状态。
+- `metric_evidence` 是每个规范化指标的有界来源记录。JSON 结果包含结果文件相对路径以及
+  `metrics.<name>` 和 `units.<name>` selector；CSV 结果包含路径、列名、明确的 reducer 和行数。
+  CATIA 参数回读包含 `observations.parameters.<name>.after_reopen` selector。它帮助 Agent、
+  工程师和审计报告定位原始证据，不会把来源记录本身当成工程正确性证明。
 - `observations` 保存 runner 报告中的软件观察，例如 CATIA 参数回读、Ansys 解算状态或 Adams/VI-grade 返回码。
 - `engineering_context` 是 `simloom-ai/engineering-context/v1` 的有界原生对象摘要。它可以包含软件版本/构建/许可证状态、CATIA 参数树或文档对象、Ansys/Adams/VI-grade 的坐标系、工况、场景对象和模型引用。runner 可以把它放在统一结果顶层、`vendor_validation.engineering_context`，或 `vendor_validation.observations.engineering_context`；控制端只复制 runner 或 validator 明确导出的字段，不从文件名、进程退出码或工具名称推断原生对象；缺少独立导出时字段为 `null`，不会伪造实机证据。
 - runner 还可以从动作绑定的 `vendor_options.engineering_context` 读取项目负责人明确提供的部署上下文。该配置用于补充 build、edition、许可证状态和模板已知对象；runner 从真实厂商 API 读到的版本优先覆盖配置版本。配置声明经过条目和字段边界归一化后才进入统一结果，且永远不会单独提升 `real_machine_verified` 或工程验收结论。

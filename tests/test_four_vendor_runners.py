@@ -55,6 +55,9 @@ def test_export_preserves_failed_design_verdict_without_repeating_successful_sol
     assert normalized['engineering_acceptance'] == 'failed'
     assert verdict['engineering_acceptance'] == 'failed'
     assert verdict['metric_verdicts'][0]['value'] == 12.5
+    assert normalized['metric_evidence'][0]['source'] == {
+        'path': 'artifacts/result.json', 'format': 'json',
+        'value_selector': 'metrics.peak', 'unit_selector': 'units.peak'}
     assert not verdict['real_machine_verified']
     context = normalized['engineering_context']
     assert context['software']['name'] == tool
@@ -114,3 +117,14 @@ def test_csv_does_not_silently_choose_an_earlier_valid_sample(data):
 def test_csv_reducer_is_explicit():
     expected = {'required_metrics': ['peak'], 'metric_columns': {'peak': {'column': 'acc', 'reducer': 'abs_max', 'unit': 'm/s^2'}}}
     assert read_export(b'time,acc\n0,3\n1,-9\n2,2\n', '.csv', expected)['peak']['value'] == 9
+
+
+def test_metric_export_provenance_identifies_csv_column_and_reducer():
+    expected = {'required_metrics': ['peak'], 'metric_columns': {'peak': {'column': 'acc', 'reducer': 'abs_max', 'unit': 'm/s^2'}}}
+    metrics, evidence = read_export(b'time,acc\n0,3\n1,-9\n2,2\n', '.csv', expected,
+                                    source_path='artifacts/motion.csv', return_provenance=True)
+    assert metrics['peak']['value'] == 9
+    assert evidence == [{
+        'name': 'peak', 'unit': 'm/s^2',
+        'source': {'path': 'artifacts/motion.csv', 'format': 'csv', 'column': 'acc', 'reducer': 'abs_max', 'row_count': 3},
+    }]

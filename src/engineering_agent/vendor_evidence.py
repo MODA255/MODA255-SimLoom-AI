@@ -196,9 +196,17 @@ def check_contract(contract, tool, action, outputs):
     return expected
 
 
-def read_export(data, suffix, expected):
-    """Read raw exported numbers again; never choose the last valid CSV cell."""
+def read_export(data, suffix, expected, *, source_path: str | None = None,
+                return_provenance: bool = False):
+    """Read raw exported numbers again; never choose the last valid CSV cell.
+
+    Provenance is opt-in so older callers keep receiving the original metric
+    dictionary.  When requested, each metric identifies the JSON selector or
+    CSV column and reducer used to produce its normalized value.
+    """
     required = expected['required_metrics']
+    source = str(source_path or '<result>')
+    provenance: list[dict[str, object]] = []
     if suffix.lower() == '.json':
         value = strict_json(data)
         if not isinstance(value, dict) or not isinstance(value.get('metrics'), dict) or not isinstance(value.get('units'), dict):
@@ -208,7 +216,11 @@ def read_export(data, suffix, expected):
             if name not in value['metrics'] or name not in value['units']:
                 fail('METRIC_MISSING', name)
             result[name] = quantity({'value': value['metrics'][name], 'unit': value['units'][name]})
-        return result
+            provenance.append({"name": name, "unit": result[name]["unit"],
+                              "source": {"path": source, "format": "json",
+                                          "value_selector": f"metrics.{name}",
+                                          "unit_selector": f"units.{name}"}})
+        return (result, provenance) if return_provenance else result
     try:
         reader = csv.DictReader(io.StringIO(data.decode('utf-8-sig'), newline=''))
         headers = reader.fieldnames
@@ -226,7 +238,11 @@ def read_export(data, suffix, expected):
         values = [number(row[spec['column']]) for row in rows]
         reduce = {'min': min, 'max': max, 'abs_max': lambda vs: max(abs(v) for v in vs), 'last': lambda vs: vs[-1]}
         result[name] = quantity({'value': reduce[spec['reducer']](values), 'unit': spec['unit']})
-    return result
+        provenance.append({"name": name, "unit": result[name]["unit"],
+                          "source": {"path": source, "format": "csv",
+                                      "column": spec["column"], "reducer": spec["reducer"],
+                                      "row_count": len(rows)}})
+    return (result, provenance) if return_provenance else result
 
 
 def evaluate_quantities(metrics, expected):
@@ -270,7 +286,7 @@ def validate_evidence(report, contract, outputs, *, request_id, tool, action):
     observation = report.get('observations')
     if not isinstance(observation, dict):
         fail('VENDOR_OBSERVATIONS_MISSING')
-    metrics, verdicts = {}, []
+    metrics, verdicts, metric_evidence = {}, [], []
     if contract['kind'] == 'catia_parameters':
         if observation.get('reopened_from_disk') is not True:
             fail('NATIVE_REOPEN_REQUIRED')
@@ -282,12 +298,19 @@ def validate_evidence(report, contract, outputs, *, request_id, tool, action):
                 value = converted(observed.get(phase), target['unit'])
                 if abs(value - target['value']) > number(update.get('tolerance', 1e-6)):
                     fail('PARAMETER_READBACK_MISMATCH', update['name'] + ':' + phase)
+            metric_evidence.append({"name": update["name"],
+                                    "value": converted(observed.get("after_reopen"), target["unit"]),
+                                    "unit": target["unit"],
+                                    "source": {"path": expected["report_output"], "format": "json",
+                                                "value_selector": f"observations.parameters.{update['name']}.after_reopen"}})
         step = content(outputs[expected['step_output']])
         if not step.lstrip().startswith(b'ISO-10303-21;') or b'END-ISO-10303-21;' not in step:
             fail('STEP_EXPORT_INVALID')
     else:
         result_path = expected.get('result_output', expected.get('metrics_output'))
-        metrics = read_export(content(outputs[result_path]), '.' + result_path.rsplit('.', 1)[-1], expected)
+        metrics, metric_evidence = read_export(
+            content(outputs[result_path]), '.' + result_path.rsplit('.', 1)[-1], expected,
+            source_path=result_path, return_provenance=True)
         if contract['kind'] == 'mechanical_solve':
             if observation.get('solution_status') != 'Done' or observation.get('analysis_name') != expected['analysis_name']:
                 fail('MECHANICAL_SOLUTION_INCOMPLETE')
@@ -297,7 +320,7 @@ def validate_evidence(report, contract, outputs, *, request_id, tool, action):
             fail('VENDOR_PROCESS_FAILED')
         metrics, verdicts = evaluate_quantities(metrics, expected)
     return {'schema_version': SCHEMA, 'passed': True, 'kind': contract['kind'],
-            'metrics': metrics, 'metric_verdicts': verdicts,
+            'metrics': metrics, 'metric_verdicts': verdicts, 'metric_evidence': metric_evidence,
             'observations': observation,
             'engineering_acceptance': ('failed' if any(not v['passed'] for v in verdicts) else 'passed') if verdicts else 'not_requested',
             'real_machine_verified': False, 'scope': 'file_identity_and_reported_observations'}
