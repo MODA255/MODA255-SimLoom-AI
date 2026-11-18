@@ -47,6 +47,25 @@ def test_compact_toolset_discovers_operation_schemas_on_demand(tmp_path):
     resource_value = json.loads(resource["result"]["contents"][0]["text"])
     assert resource_value["operations"] and "parameters_schema" not in resource_value["operations"][0]
 
+    filtered = server.handle({
+        "jsonrpc": "2.0", "id": 4, "method": "resources/read",
+        "params": {"uri": "engineering://operations?detail=true&category=catia&limit=2"},
+    })
+    filtered_value = json.loads(filtered["result"]["contents"][0]["text"])
+    assert filtered_value["operations"]
+    assert len(filtered_value["operations"]) <= 2
+    assert all(item["name"].startswith("catia.") for item in filtered_value["operations"])
+    assert "parameters_schema" in filtered_value["operations"][0]
+
+    single = server.handle({
+        "jsonrpc": "2.0", "id": 5, "method": "resources/read",
+        "params": {"uri": "engineering://operation?name=add_line"},
+    })
+    single_value = json.loads(single["result"]["contents"][0]["text"])
+    assert single_value["operation"]["name"] == "add_line"
+    assert "parameters_schema" in single_value["operation"]
+    assert single_value["operation"]["compatibility"]["alias_for"] == "cad.line_create"
+
 
 def test_compact_dispatcher_keeps_transaction_and_profile_guards(tmp_path):
     source = tmp_path / "source.dxf"

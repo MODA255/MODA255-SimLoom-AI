@@ -7,7 +7,7 @@ import hashlib
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 from typing import Any
 
 from .agent import EngineeringAgent
@@ -580,6 +580,10 @@ class MCPServer:
                 {"uri": f"engineering://cad?root={root}&path={path}", "name": "CAD document context", "mimeType": "application/json"},
                 {"uri": f"engineering://asset?root={root}&path={path}", "name": "Project asset preview and image", "mimeType": "image/svg+xml"},
             ])
+        operation_name = params.get("operation") or params.get("name")
+        if isinstance(operation_name, str) and operation_name:
+            resources.append({"uri": f"engineering://operation?name={quote(operation_name, safe='._-')}",
+                              "name": f"Operation schema: {operation_name}", "mimeType": "application/json"})
         watch_id = params.get("watch_id")
         if isinstance(watch_id, str) and watch_id:
             resources.append({"uri": f"engineering://watch?root={root}&watch_id={watch_id}", "name": "External file watch status", "mimeType": "application/json"})
@@ -596,6 +600,8 @@ class MCPServer:
             {"uriTemplate": "engineering://capabilities", "name": "Software capability matrix", "mimeType": "application/json"},
             {"uriTemplate": "engineering://action-profile?root={root}", "name": "Software action bindings", "mimeType": "application/json"},
             {"uriTemplate": "engineering://worker-config", "name": "Windows worker configuration template", "mimeType": "application/json"},
+            {"uriTemplate": "engineering://operations?detail={detail}&category={category}&limit={limit}&cursor={cursor}", "name": "Filtered operation schemas", "mimeType": "application/json"},
+            {"uriTemplate": "engineering://operation?name={name}", "name": "Single operation schema", "mimeType": "application/json"},
             {"uriTemplate": "engineering://project?root={root}", "name": "Canonical project object", "mimeType": "application/json"},
             {"uriTemplate": "engineering://versions?root={root}", "name": "Project versions and timeline", "mimeType": "application/json"},
             {"uriTemplate": "engineering://dependencies?root={root}", "name": "Project dependency graph", "mimeType": "application/json"},
@@ -616,7 +622,27 @@ class MCPServer:
             probe = query.get("probe", ["true"])[0].strip().lower() not in {"0", "false", "no", "off"}
             value = self.agent.capabilities(probe=probe)
         elif parsed.netloc == "operations":
-            value = self._operation_discovery({"detail": self.toolset == "all", "limit": 500})
+            detail = query.get("detail", ["true" if self.toolset == "all" else "false"])[0].strip().lower() not in {"0", "false", "no", "off"}
+            try:
+                operation_limit = int(query.get("limit", ["500"])[0])
+            except ValueError as exc:
+                raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "operation resource limit must be an integer") from exc
+            arguments: dict[str, Any] = {"detail": detail, "limit": operation_limit}
+            if query.get("cursor", [""])[0]:
+                arguments["cursor"] = query["cursor"][0]
+            if query.get("category", [""])[0]:
+                arguments["category"] = query["category"][0]
+            if query.get("operation", [""])[0]:
+                arguments["operations"] = query["operation"]
+            value = self._operation_discovery(arguments)
+        elif parsed.netloc == "operation":
+            name = query.get("name", [""])[0].strip()
+            if not name:
+                raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "operation name is required")
+            discovered = self._operation_discovery({"operations": [name], "detail": True, "limit": 1})
+            if not discovered.get("operations"):
+                raise ProtocolError(ErrorCode.RESOURCE_NOT_FOUND, f"operation schema not found: {name}")
+            value = {"operation": discovered["operations"][0], "schemaVersion": self.schema_version}
         elif parsed.netloc == "action-profile":
             value = build_action_profile(self.agent.config, project_root=root)
         elif parsed.netloc == "worker-config":

@@ -356,6 +356,11 @@ Agent 在数值改善、回归或证据不足时定位原始结果。它增强�
 目录项仍不代表脚本、Windows worker、许可证或商业软件已经可执行，具体动作必须继续通过
 `project.action_preflight` 和真实结果证据确认。
 
+同轮补齐 MCP operation 资源的按需读取：`engineering://operations` 支持 `detail`、软件分类、分页
+和游标，`engineering://operation?name=...` 支持单个完整 schema（包括 AgentCAD 兼容别名）。这让
+compact MCP 客户端可以先加载轻量目录，再只请求当前任务需要的参数契约，减少上下文和互操作压力；资源
+仍然是只读发现，不代表对应 runner 或商业软件已可执行。
+
 2026-11-17 后续：`EngineeringResult/v1` 增加可选 `engineering-context/v1`。runner 可以明确导出
 软件版本/构建/许可证状态、原生对象、坐标系、工况和模型引用；控制端只做有界字段归一化，不从
 退出码、文件名或工具名称推断原生语义。MCP operation schema 与结果文档同步发布，真实 Windows

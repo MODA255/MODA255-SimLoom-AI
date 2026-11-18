@@ -66,6 +66,17 @@ PYTHONPATH=src python -m engineering_agent.cli \
 事务、权限、schema version、验证和 rollback；默认 `all` 模式保持每个 typed operation
 都可直接发现。
 
+除了工具入口，MCP 资源也支持按需发现 operation：
+
+- `engineering://operations?detail=false&category=ansys&limit=50` 返回按软件筛选的轻量目录；
+- 把 `detail=true` 加入同一资源可以返回完整参数和输出 schema；
+- `engineering://operation?name=ansys.solve_configured_model` 只读取一个完整 operation schema；
+- `engineering://operation?name=add_line` 也支持 AgentCAD 兼容别名，并返回 `compatibility.alias_for`。
+
+资源目录和 `tools/list` 使用同一个 operation registry。读取 schema 只做发现，不会启动脚本、连接
+Windows worker 或改变工程文件；真正执行前仍需通过 MCP profile、operation policy 和对应的
+preflight 检查。
+
 生成器只写 MCP 客户端配置，不会启动 server，也不会修改工程文件。`--output` 使用临时文件替换
 目标文件，父目录不存在时会创建。
 
