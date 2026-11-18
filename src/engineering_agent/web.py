@@ -19,7 +19,7 @@ from .tasks import TaskRunner, input_snapshot
 from .reports import build_report, render_report
 from .worker_protocol import WorkerError
 from .runtime_config import RuntimeConfigStore, snapshot as runtime_config_snapshot
-from .action_profile import build_action_profile
+from .action_profile import build_action_profile, build_worker_config_template
 
 STATIC_DIR = Path(__file__).with_name("static")
 INDEX_HTML = (STATIC_DIR / "workspace.html").read_text(encoding="utf-8")
@@ -215,6 +215,9 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
             if parsed.path == "/api/settings/profile":
                 profile = build_action_profile(agent.config, project_root=(root if "root" in query else None))
                 return self._send(200, profile, filename="simloom-worker-profile.json")
+            if parsed.path == "/api/settings/worker-config":
+                template = build_worker_config_template(agent.config)
+                return self._send(200, template, filename="simloom-worker.json")
             if parsed.path == "/api/templates":
                 return self._send(200, {"templates": TEMPLATES, "schemaVersion": WEB_SCHEMA_VERSION})
             if parsed.path == "/api/doctor":

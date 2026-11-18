@@ -25,6 +25,7 @@ from .software_contract import normalize_capability_requirements, normalize_reco
 
 
 SCHEMA = "simloom-ai/action-profile/v1"
+WORKER_CONFIG_SCHEMA = "simloom-ai/worker-config-template/v1"
 TOOLS = ("catia", "ansys", "adams", "vi-grade")
 _MAX_TEXT = 512
 _SECRET_KEY = re.compile(r"(?:token|secret|password|passwd|api[_-]?key|private[_-]?key)", re.I)
@@ -193,6 +194,50 @@ def _action_record(tool: str, action: str, binding: Any, *, config: dict[str, An
     }
 
 
+def build_worker_config_template(config: dict[str, Any] | None) -> dict[str, Any]:
+    """Build a redacted Windows worker configuration template.
+
+    The returned object is intentionally not an assertion that the file is
+    ready to launch.  A human must set a real worker token, verify paths on the
+    Windows host and validate each command with the worker diagnostics endpoint.
+    """
+    config = config if isinstance(config, dict) else {}
+    bridge = config.get("windows_bridge") if isinstance(config.get("windows_bridge"), dict) else {}
+    tools = config.get("tools") if isinstance(config.get("tools"), dict) else {}
+    commands = bridge.get("commands") if isinstance(bridge.get("commands"), dict) else {}
+    token_env = "SIMLOOM_BRIDGE_TOKEN"
+    for name in TOOLS:
+        item = tools.get(name) if isinstance(tools.get(name), dict) else {}
+        value = _text(item.get("bridge_token_env"))
+        if value:
+            token_env = value
+            break
+    com = bridge.get("com") if isinstance(bridge.get("com"), dict) else {}
+    return {
+        "schema_version": WORKER_CONFIG_SCHEMA,
+        "template_only": True,
+        "host": _text(bridge.get("host")) or "127.0.0.1",
+        "port": bridge.get("port") if isinstance(bridge.get("port"), int) else 8099,
+        "root_dir": _text(bridge.get("root_dir")) or "C:/SimLoom/jobs",
+        "timeout_seconds": bridge.get("timeout_seconds") if isinstance(bridge.get("timeout_seconds"), (int, float)) else 1800,
+        "token": "<set-on-windows>",
+        "token_env": token_env,
+        "commands": {str(key): _redacted_command(value) for key, value in sorted(commands.items())},
+        "com": _redact(com),
+        "setup_checks": [
+            "把 token 占位符替换为 Windows worker 的真实随机令牌，不要提交到 Git。",
+            "在 Windows 主机上确认 root_dir、脚本解释器和每个 {script} 路径存在。",
+            "启动 worker 后读取 /capabilities 和 /diagnostics，再执行项目级 action preflight。",
+            "只有 machine-evidence/v1 和原生结果文件都通过，才可记录真实软件验收。",
+        ],
+        "limitations": [
+            "这是配置模板，不会启动 worker 或商业软件。",
+            "token_env 只是交付提示；当前 worker 仍需把实际 token 写入受保护配置或启动环境。",
+            "命令路径、COM ProgID、许可证和软件版本必须在 Windows 实机确认。",
+        ],
+    }
+
+
 def build_action_profile(config: dict[str, Any] | None, *, project_root: str | Path | None = None) -> dict[str, Any]:
     """Return a deterministic, redacted summary of all configured actions."""
     config = config if isinstance(config, dict) else {}
@@ -237,6 +282,7 @@ def build_action_profile(config: dict[str, Any] | None, *, project_root: str | P
             "commands": {str(key): _redacted_command(value) for key, value in sorted(worker_commands.items())},
             "com_prog_ids": sorted(str(key) for key in (bridge.get("com") or {}) if isinstance(key, str)),
         },
+        "worker_config_template": build_worker_config_template(config),
         "actions": all_actions,
         "summary": {
             "tools": len(TOOLS),

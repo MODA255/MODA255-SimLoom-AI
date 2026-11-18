@@ -34,6 +34,7 @@ SimLoom AI 的工作职责是驱动已经安装的 CATIA、Ansys、Adams 和 VI-
 - `GET /api/settings`：返回运行时连接设置和嵌入式 `profile`；
 - `POST /api/settings`：保存脱敏连接覆盖，并返回保存后的 `profile`；
 - `GET /api/settings/profile`：下载 `simloom-worker-profile.json`；
+- `GET /api/settings/worker-config`：下载脱敏的 `simloom-worker.json` 模板；
 - `POST /api/action-preflight`：对指定 `tool` + `action` 运行单动作 preflight；
 - typed operation `project.action_preflight`：给 MCP、CLI 和 Python 客户端使用同一份单动作检查。
 
@@ -70,6 +71,16 @@ engineering-agent --config configs/my-engineering-agent.json \
 返回的 `step.operation_contract` 与计划级 preflight 使用同一个
 `simloom-ai/software-operation-contract/v1`。如果 typed runner 缺少参数，返回的 `issues[]` 会明确指出
 契约错误；这不会启动软件，也不会因为脚本路径存在而跳过参数和输出校验。
+
+## worker 模板
+
+`/api/settings/worker-config` 生成的是 Windows worker 的起始模板，字段接近 `BridgeConfig`：
+`host`、`port`、`root_dir`、`timeout_seconds`、`commands` 和 `com`。模板会把 `token` 设置成
+`<set-on-windows>`，并同时给出 `token_env` 提示；它不会把控制端或 worker 的真实令牌写入文件。
+
+下载后仍需在 Windows 主机上完成三件事：把 token 替换成受保护的实际值，确认 Python/runner/商业软件路径，
+以及读取 worker 的 `/capabilities` 和 `/diagnostics`。模板中的命令存在只证明配置已导出；它不证明程序可启动，
+更不证明 CATIA、Ansys、Adams 或 VI-grade 的许可证、模型和求解结果有效。
 
 ## 与 plan-level preflight 的关系
 

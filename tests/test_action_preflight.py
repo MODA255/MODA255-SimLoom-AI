@@ -77,6 +77,10 @@ def test_action_preflight_web_endpoint_returns_same_contract(tmp_path):
             result = json.loads(response.read())
         assert result["step"]["ready"] is True
         assert result["step"]["operation_contract"]["definition_digest"]
+        with urllib.request.urlopen(f"http://127.0.0.1:{server.server_address[1]}/api/settings/worker-config") as response:
+            template = json.loads(response.read())
+        assert template["schema_version"] == "simloom-ai/worker-config-template/v1"
+        assert "attachment" in response.headers.get("Content-Disposition", "")
     finally:
         server.shutdown()
         server.server_close()

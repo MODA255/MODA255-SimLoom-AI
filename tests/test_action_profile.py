@@ -1,6 +1,6 @@
 import json
 
-from engineering_agent.action_profile import SCHEMA, build_action_profile
+from engineering_agent.action_profile import SCHEMA, WORKER_CONFIG_SCHEMA, build_action_profile, build_worker_config_template
 
 
 def _config(tmp_path):
@@ -64,6 +64,16 @@ def test_profile_is_redacted_and_digest_is_stable(tmp_path):
     assert "do-not-export" not in encoded
     assert first["windows_bridge"]["com_prog_ids"] == ["catia.application"]
     assert first["tools"]["catia"]["bridge_token_env"] == "SIMLOOM_BRIDGE_TOKEN"
+
+
+def test_worker_config_template_contains_commands_without_a_secret(tmp_path):
+    template = build_worker_config_template(_config(tmp_path))
+    assert template["schema_version"] == WORKER_CONFIG_SCHEMA
+    assert template["template_only"] is True
+    assert template["commands"]["catia.update_parameters"][1] == "{script}"
+    assert template["token"] == "<set-on-windows>"
+    assert template["token_env"] == "SIMLOOM_BRIDGE_TOKEN"
+    assert "do-not-export" not in json.dumps(template, ensure_ascii=False)
 
 
 def test_profile_flags_missing_script_and_invalid_local_command(tmp_path):
