@@ -70,6 +70,7 @@ VI-grade 建模与求解仍由对应软件完成。
 
 接入配置与限制见 [软件操作与 Windows worker](docs/SOFTWARE_INTEGRATION.md)。
 动作可以声明适配器能力和 Windows worker 特性；preflight、执行和结果契约会统一检查这些要求，见 [四软件动作能力要求](docs/SOFTWARE_CAPABILITY_REQUIREMENTS.md)。
+设置页还会生成每个软件动作的脱敏绑定摘要和 worker 配置模板，字段、状态和导出接口见 [动作绑定与 worker profile](docs/ACTION_PROFILE.md)。
 
 真正启动软件前，可以先运行 `preflight` 检查动作绑定、项目内 runner、启动命令和输出契约：
 

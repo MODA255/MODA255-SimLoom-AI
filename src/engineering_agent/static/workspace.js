@@ -711,6 +711,29 @@ function renderSettings(settings) {
     return `<fieldset class="settings-tool"><legend>${escapeHTML(settingsToolLabels[name])}</legend><label>Windows worker 地址<input data-setting-tool="${name}" data-setting-field="bridge_url" value="${escapeHTML(item.bridge_url||'')}" placeholder="http://192.168.1.20:8099"></label><label>本机启动程序提示<input data-setting-tool="${name}" data-setting-field="executable" value="${escapeHTML(item.executable||'')}" placeholder="可选，仅作诊断提示"></label><label>令牌环境变量<input data-setting-tool="${name}" data-setting-field="bridge_token_env" value="${escapeHTML(item.bridge_token_env||'SIMLOOM_BRIDGE_TOKEN')}" placeholder="SIMLOOM_BRIDGE_TOKEN"></label></fieldset>`;
   }).join('')}</div><fieldset class="settings-worker"><legend>Windows worker 默认参数</legend><div class="settings-worker-grid"><label>监听地址<input data-setting-bridge="host" value="${escapeHTML(bridge.host||'127.0.0.1')}" placeholder="127.0.0.1"></label><label>端口<input data-setting-bridge="port" type="number" min="1" max="65535" value="${escapeHTML(bridge.port??8099)}"></label><label>工作目录<input data-setting-bridge="root_dir" value="${escapeHTML(bridge.root_dir||'')}" placeholder="C:/SimLoom/jobs"></label><label>超时（秒）<input data-setting-bridge="timeout_seconds" type="number" min="1" max="86400" value="${escapeHTML(bridge.timeout_seconds??1800)}"></label></div></fieldset>`;
 }
+function actionProfileStatus(item) {
+  const status=item?.status||'missing';
+  if(status==='ready') return {label:'声明完整',className:'green'};
+  if(status==='deferred_to_windows_worker') return {label:'待 Windows 检查',className:'amber'};
+  if(status==='needs_configuration') return {label:'需补配置',className:'red'};
+  return {label:'未绑定',className:'amber'};
+}
+function renderActionProfile(profile) {
+  const summary=profile?.summary||{};
+  $('#actionProfileSummary').innerHTML=profile ? `<div class="profile-counts"><span><strong>${escapeHTML(summary.actions??0)}</strong> 个动作</span><span><strong>${escapeHTML(summary.declared??0)}</strong> 已声明</span><span><strong>${escapeHTML(summary.ready??0)}</strong> 声明完整</span><span><strong>${escapeHTML(summary.needs_configuration??0)}</strong> 需补配置</span><span><strong>${escapeHTML(summary.windows_check_deferred??0)}</strong> 待 Windows 检查</span></div>` : '';
+  const actions=Array.isArray(profile?.actions)?profile.actions:[];
+  $('#actionProfileList').innerHTML=actions.length ? actions.map(item=>{
+    const status=actionProfileStatus(item);
+    const requirements=item.requirements?.declared||{};
+    const issues=Array.isArray(item.issues)?item.issues:[];
+    const issueText=issues.map(issue=>issue.code).join(', ');
+    const command=item.command?.join(' ')||'未声明';
+    const inputs=item.artifacts?.inputs?.join(', ')||'由 typed runner 或计划推导';
+    const outputs=item.artifacts?.outputs?.join(', ')||'由 typed runner 或计划推导';
+    return `<article class="action-profile-row"><div class="action-profile-head"><div><strong>${escapeHTML(item.tool)}.${escapeHTML(item.name)}</strong><p class="muted">${escapeHTML(item.next_action==='run_plan_preflight'?'下一步：带工程目标执行 preflight':'下一步：补充动作绑定或读取诊断')}</p></div><span class="pill ${status.className}">${escapeHTML(status.label)}</span></div><div class="action-profile-meta"><span>脚本：${escapeHTML(item.script?.path||'未声明')}</span><span>命令：${escapeHTML(command)}</span><span>来源：${escapeHTML(item.command_source||'未记录')}</span><span>绑定摘要：${escapeHTML(item.binding_digest||'未记录').slice(0,16)}…</span></div><details><summary>查看契约声明与诊断</summary><div class="action-profile-details"><p><strong>输入：</strong>${escapeHTML(inputs)}</p><p><strong>输出：</strong>${escapeHTML(outputs)}</p><p><strong>适配器能力：</strong>${escapeHTML((requirements.adapter_capabilities||[]).join(', ')||'未声明')}</p><p><strong>worker 特性：</strong>${escapeHTML((requirements.worker_features||[]).join(', ')||'未声明')}</p><p><strong>命令状态：</strong>${escapeHTML(item.command_check?.code||'未检查')} · ${escapeHTML(item.command_check?.status||'未记录')}</p><p><strong>问题：</strong>${escapeHTML(issueText||'无；仍需 plan-level preflight 推导完整 operation contract')}</p></div></details></article>`;
+  }).join('') : '<p class="muted">当前配置没有声明软件动作。</p>';
+  $('#actionProfileNotice').textContent=profile?.profile_digest ? `Profile digest：${profile.profile_digest}。配置摘要不会替代真实软件执行证据。` : '尚未读取动作 profile。';
+}
 function collectSettings() {
   const value={schema_version:'simloom-ai/runtime-config/v1',tools:{},windows_bridge:{}};
   settingsTools.forEach(name=>{ value.tools[name]={}; document.querySelectorAll(`[data-setting-tool="${name}"]`).forEach(input=>{ value.tools[name][input.dataset.settingField]=input.value.trim(); }); });
@@ -720,11 +743,12 @@ function collectSettings() {
 async function refreshSettings() {
   const response=await request('/api/settings');
   renderSettings(response.settings||{});
+  renderActionProfile(response.profile||{});
   $('#settingsStatus').textContent=response.path?`保存到本机运行目录：${response.path}`:'连接设置已读取。';
 }
 async function saveSettings() {
   const button=$('#saveSettings'); button.disabled=true; $('#settingsStatus').textContent='正在保存连接设置…';
-  try { const response=await request('/api/settings',collectSettings()); renderSettings(response.settings||{}); $('#settingsStatus').textContent='已保存；请重新检测连接状态。'; toast('连接设置已保存。'); await refreshDoctor(); }
+  try { const response=await request('/api/settings',collectSettings()); renderSettings(response.settings||{}); renderActionProfile(response.profile||{}); $('#settingsStatus').textContent='已保存；请重新检测连接状态。'; toast('连接设置已保存。'); await refreshDoctor(); }
   catch(error) { $('#settingsStatus').textContent='保存失败：'+error.message; throw error; }
   finally { button.disabled=false; }
 }
@@ -778,7 +802,7 @@ $('#nextWizard').onclick=()=>{if($('#projectName').reportValidity()) wizardPage(
 $('#backWizard').onclick=()=>wizardPage(1); $('#cancelWizard').onclick=()=>$('#projectWizard').close();
 $('#planButton').onclick=plan; $('#preflightButton').onclick=preflight; $('#queueButton').onclick=enqueue; $('#offlineButton').onclick=()=>runOffline();
 $('#refreshTasks').onclick=()=>refreshTasks().catch(reportError); $('#refreshAssets').onclick=()=>refreshAssets().catch(reportError); $('#refreshCadRuns').onclick=()=>refreshCadRuns().catch(reportError);
-$('#refreshDoctor').onclick=()=>refreshDoctor().catch(reportError); $('#reloadSettings').onclick=()=>refreshSettings().catch(reportError); $('#saveSettings').onclick=()=>saveSettings().catch(reportError); $('#viewResults').onclick=()=>choosePanel('assets');
+$('#refreshDoctor').onclick=()=>refreshDoctor().catch(reportError); $('#reloadSettings').onclick=()=>refreshSettings().catch(reportError); $('#saveSettings').onclick=()=>saveSettings().catch(reportError); $('#refreshActionProfile').onclick=()=>refreshSettings().catch(reportError); $('#viewResults').onclick=()=>choosePanel('assets');
 function resetWatchPanel() {
   state.watch=null; $('#watchState').textContent='未启动'; $('#watchState').className='pill';
   $('#watchNotice').textContent='监测器只读取文件并保存指纹，不判断求解是否成功；结果仍需经过工程指标验证。';

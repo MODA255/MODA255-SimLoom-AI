@@ -58,6 +58,7 @@ def test_settings_http_round_trip_is_redacted_and_applies_to_agent(tmp_path):
         with urllib.request.urlopen(base + "/api/settings") as response:
             initial = json.loads(response.read())
         assert initial["settings"]["tools"]["catia"]["bridge_url"] == "http://old"
+        assert initial["profile"]["schema_version"] == "simloom-ai/action-profile/v1"
         payload = json.dumps({"settings": {"tools": {"catia": {
             "bridge_url": "http://new:8099", "bridge_token_env": "SIMLOOM_BRIDGE_TOKEN"}},
             "windows_bridge": {"port": 8100}}}).encode()
@@ -69,6 +70,11 @@ def test_settings_http_round_trip_is_redacted_and_applies_to_agent(tmp_path):
         assert saved["settings"]["tools"]["catia"]["bridge_url"] == "http://new:8099"
         assert agent.adapters[next(key for key in agent.adapters if key.value == "catia")].bridge_url == "http://new:8099"
         assert "bridge_token" not in saved["settings"]["tools"]["catia"]
+        assert saved["profile"]["tools"]["catia"]["mode"] == "bridge"
         assert (tmp_path / "simloom-runtime-config.json").is_file()
+        with urllib.request.urlopen(base + "/api/settings/profile") as response:
+            exported = json.loads(response.read())
+            assert exported["schema_version"] == "simloom-ai/action-profile/v1"
+            assert "attachment" in response.headers.get("Content-Disposition", "")
     finally:
         server.shutdown(); server.server_close(); thread.join(timeout=5)

@@ -19,6 +19,7 @@ from .tasks import TaskRunner, input_snapshot
 from .reports import build_report, render_report
 from .worker_protocol import WorkerError
 from .runtime_config import RuntimeConfigStore, snapshot as runtime_config_snapshot
+from .action_profile import build_action_profile
 
 STATIC_DIR = Path(__file__).with_name("static")
 INDEX_HTML = (STATIC_DIR / "workspace.html").read_text(encoding="utf-8")
@@ -206,9 +207,14 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
                 return self._send(200, {"projects_root": str(workspace.root), "schemaVersion": WEB_SCHEMA_VERSION,
                                        "planner": "llm-with-fallback" if agent.config.get("llm", {}).get("enabled") else "deterministic"})
             if parsed.path == "/api/settings":
+                profile_root = root if "root" in query else None
                 return self._send(200, {"schema_version": "simloom-ai/runtime-config/v1",
                                        "settings": runtime_config_snapshot(agent.config),
+                                       "profile": build_action_profile(agent.config, project_root=profile_root),
                                        "path": str(runtime_config.path), "editable": True})
+            if parsed.path == "/api/settings/profile":
+                profile = build_action_profile(agent.config, project_root=(root if "root" in query else None))
+                return self._send(200, profile, filename="simloom-worker-profile.json")
             if parsed.path == "/api/templates":
                 return self._send(200, {"templates": TEMPLATES, "schemaVersion": WEB_SCHEMA_VERSION})
             if parsed.path == "/api/doctor":
@@ -425,6 +431,7 @@ def create_server(agent: EngineeringAgent, queue: TaskQueue, host: str = "127.0.
                 agent.apply_runtime_config(saved)
                 return self._send(200, {"schema_version": "simloom-ai/runtime-config/v1",
                                        "settings": runtime_config_snapshot(agent.config),
+                                       "profile": build_action_profile(agent.config),
                                        "path": str(runtime_config.path), "saved": True})
             if path in {"/api/plan", "/api/preflight", "/api/tasks"}:
                 root, metadata, project_id = self._project_input(body)

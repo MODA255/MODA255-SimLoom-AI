@@ -26,6 +26,8 @@ SimLoom AI/
 
 保存后当前进程会立即重建 planner、vendor adapters、Windows helper 和 CAD helper，不需要重启工作台。点击“重新检测”才会执行新的健康探测；打开设置页不会自动访问 worker。
 
+设置页同时显示动作绑定与 worker profile。它会汇总主配置中的脚本、命令、输入输出、能力要求和恢复策略，并允许下载脱敏的 `simloom-worker-profile.json`。profile 的字段和状态定义见 [`ACTION_PROFILE.md`](ACTION_PROFILE.md)。它只代表配置诊断；完整输入输出 contract 仍需在具体工程目标下执行 plan-level preflight。
+
 ## 安全边界
 
 运行时配置只接受白名单字段。它拒绝未知工具、未知字段、控制字符、非法 URL、非法环境变量名、越界端口和超时。`bridge_token`、API key、密码和动作命令不会被页面读取或写入；worker 令牌必须由环境变量提供。
@@ -34,7 +36,7 @@ SimLoom AI/
 
 ## HTTP 接口
 
-`GET /api/settings` 返回脱敏后的当前设置和保存路径。`POST /api/settings` 接收同样的 `settings` 对象，并返回保存后的脱敏快照：
+`GET /api/settings` 返回脱敏后的当前设置、动作 profile 和保存路径。`POST /api/settings` 接收同样的 `settings` 对象，并返回保存后的脱敏快照和 profile。`GET /api/settings/profile` 下载脱敏的 worker profile：
 
 ```json
 {
