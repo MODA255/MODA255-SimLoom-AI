@@ -155,6 +155,41 @@ def _records(value: Any) -> list[dict[str, Any]]:
     return records[:512]
 
 
+def _metric_evidence_records(value: Any) -> list[dict[str, Any]]:
+    """Keep metric provenance bounded and JSON-safe before exposing it."""
+    if not isinstance(value, list):
+        return []
+    records: list[dict[str, Any]] = []
+    source_keys = ("path", "format", "value_selector", "unit_selector", "column", "reducer")
+    for item in value[:256]:
+        if not isinstance(item, dict):
+            continue
+        name = _bounded_text(item.get("name"))
+        if name is None:
+            continue
+        record: dict[str, Any] = {"name": name}
+        unit = _bounded_text(item.get("unit"))
+        if unit is not None:
+            record["unit"] = unit
+        raw_value = item.get("value")
+        if isinstance(raw_value, (int, float)) and not isinstance(raw_value, bool) and math.isfinite(float(raw_value)):
+            record["value"] = raw_value
+        source = item.get("source")
+        if isinstance(source, dict):
+            clean_source: dict[str, Any] = {}
+            for key in source_keys:
+                text = _bounded_text(source.get(key))
+                if text is not None:
+                    clean_source[key] = text
+            row_count = source.get("row_count")
+            if isinstance(row_count, int) and not isinstance(row_count, bool) and row_count >= 0:
+                clean_source["row_count"] = min(row_count, 10_000_000)
+            if clean_source:
+                record["source"] = clean_source
+        records.append(record)
+    return records
+
+
 def _acceptance(vendor_validation: Any) -> str:
     if not isinstance(vendor_validation, dict):
         return "not_requested" if vendor_validation in (None, "not_run") else "unknown"
@@ -249,8 +284,7 @@ def normalize_engineering_result(*, tool: str, action: str, status: str,
         if isinstance(raw_verdicts, list):
             metric_verdicts = [item for item in raw_verdicts[:256] if isinstance(item, dict)]
         raw_evidence = vendor_validation.get("metric_evidence")
-        if isinstance(raw_evidence, list):
-            metric_evidence = [item for item in raw_evidence[:256] if isinstance(item, dict)]
+        metric_evidence = _metric_evidence_records(raw_evidence)
         raw_observations = vendor_validation.get("observations")
         if isinstance(raw_observations, dict):
             observations = raw_observations

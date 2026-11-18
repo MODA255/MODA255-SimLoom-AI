@@ -100,6 +100,20 @@ def test_normalized_result_exposes_the_input_output_and_metric_contract():
     assert result["error"]["code"] == "SOFTWARE_TIMEOUT"
 
 
+def test_metric_evidence_is_bounded_and_rejects_nonfinite_values():
+    result = normalize_engineering_result(
+        tool="adams", action="build_and_run_multibody", status="completed",
+        details={"vendor_validation": {"metric_evidence": [
+            {"name": "peak", "value": float("nan"), "unit": "m/s^2",
+             "source": {"path": "x" * 1000, "value_selector": "metrics.peak", "row_count": 99_999_999}},
+            {"name": "valid", "value": 2.5, "unit": "m/s^2",
+             "source": {"path": "result.json", "format": "json", "value_selector": "metrics.valid"}},
+        ]}})
+    assert "value" not in result["metric_evidence"][0]
+    assert len(result["metric_evidence"][0]["source"]["path"]) == 256
+    assert result["metric_evidence"][0]["source"]["row_count"] == 10_000_000
+
+
 def test_lifecycle_marks_completed_validation_separately_from_execution():
     result = normalize_engineering_result(
         tool="ansys", action="solve_configured_model", status="completed",

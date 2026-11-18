@@ -79,7 +79,28 @@ def _metric_evidence(evidence: dict[str, Any] | None) -> list[dict[str, Any]]:
     raw = payload.get("metric_evidence")
     if not isinstance(raw, list):
         return []
-    return [item for item in raw[:256] if isinstance(item, dict) and isinstance(item.get("name"), str)]
+    records: list[dict[str, Any]] = []
+    for item in raw[:256]:
+        if not isinstance(item, dict) or not isinstance(item.get("name"), str):
+            continue
+        record = {"name": item["name"][:256]}
+        if isinstance(item.get("unit"), str):
+            record["unit"] = item["unit"][:64]
+        if isinstance(item.get("value"), (int, float)) and not isinstance(item.get("value"), bool):
+            value = float(item["value"])
+            if value == value and value not in {float("inf"), float("-inf")}:
+                record["value"] = item["value"]
+        source = item.get("source")
+        if isinstance(source, dict):
+            clean = {key: source[key][:512] for key in
+                     ("path", "format", "value_selector", "unit_selector", "column", "reducer")
+                     if isinstance(source.get(key), str)}
+            if isinstance(source.get("row_count"), int) and not isinstance(source.get("row_count"), bool):
+                clean["row_count"] = max(0, min(source["row_count"], 10_000_000))
+            if clean:
+                record["source"] = clean
+        records.append(record)
+    return records
 
 
 def _acceptance(evidence: dict[str, Any] | None) -> str:
