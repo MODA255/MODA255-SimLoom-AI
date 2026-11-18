@@ -74,6 +74,7 @@ def test_action_matrix_preserves_requirements_and_explains_missing_capabilities(
             "real_machine_verified": False,
         },
         "reason": "缺少适配器能力：parametric-geometry；worker 特性：durable_jobs",
+        "next_action": "configure_capabilities",
     }]
 
 
@@ -97,6 +98,7 @@ def test_capabilities_expose_one_shared_matrix_for_agent_clients():
     assert action["status"] == "ready"
     assert action["evidence"]["level"] == "executable_found"
     assert action["real_machine_verified"] is False
+    assert action["next_action"] == "run_preflight"
 
 
 def test_capability_matrix_counts_are_deterministic():

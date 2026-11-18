@@ -66,6 +66,19 @@ def _evidence_level(*, verified: bool, reachable: bool, discovered: bool) -> str
     return "declared"
 
 
+def _next_action(status: str, *, missing_adapter: list[str], missing_worker: list[str]) -> str:
+    """Return a conservative discovery/configuration hint for an Agent."""
+    if status == "ready":
+        return "run_preflight"
+    if status == "not_probed":
+        return "probe_worker"
+    if missing_adapter or missing_worker:
+        return "configure_capabilities"
+    if status == "unavailable":
+        return "configure_action_binding"
+    return "inspect_diagnostics"
+
+
 def build_action_matrix(tool: str, diagnostic: dict[str, Any]) -> list[dict[str, Any]]:
     """Normalize one adapter diagnostic into deterministic action records."""
     if not isinstance(diagnostic, dict):
@@ -111,6 +124,8 @@ def build_action_matrix(tool: str, diagnostic: dict[str, Any]) -> list[dict[str,
                                    missing_worker=missing_worker,
                                    discovered=action_discovered, reachable=reachable,
                                    bridge=bridge)
+        record["next_action"] = _next_action(status, missing_adapter=missing_adapter,
+                                              missing_worker=missing_worker)
         records.append(record)
     return records
 
