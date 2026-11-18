@@ -152,6 +152,46 @@ def test_mcp_capability_resource_is_read_only_and_matches_tool_output():
     assert value["capability_matrix"] == agent.capabilities()["capability_matrix"]
 
 
+def test_mcp_action_profile_resource_exposes_bindings_without_secrets(tmp_path):
+    config = _config()
+    config["tools"]["catia"]["bridge_token"] = "do-not-export"
+    config["windows_bridge"] = {
+        "commands": {
+            "catia.create_or_update_model": ["C:/Python/python.exe", "{script}", "{request_file}"]
+        }
+    }
+    agent = EngineeringAgent(config)
+    server = MCPServer(agent, profile="full")
+
+    listed = server.handle({"jsonrpc": "2.0", "id": 1, "method": "resources/list",
+                            "params": {"root": str(tmp_path)}})
+    assert any(item["uri"].startswith("engineering://action-profile?")
+               for item in listed["result"]["resources"])
+    templates = server.handle({"jsonrpc": "2.0", "id": 2, "method": "resources/templates/list"})
+    assert any(item["uriTemplate"] == "engineering://action-profile?root={root}"
+               for item in templates["result"]["resourceTemplates"])
+
+    uri = f"engineering://action-profile?root={tmp_path}"
+    resource = server.handle({"jsonrpc": "2.0", "id": 3, "method": "resources/read",
+                              "params": {"uri": uri}})
+    value = json.loads(resource["result"]["contents"][0]["text"])
+    assert value["schema_version"] == "simloom-ai/action-profile/v1"
+    assert value["actions"][0]["tool"] == "catia"
+    assert "do-not-export" not in json.dumps(value, ensure_ascii=False)
+
+
+def test_mcp_worker_config_resource_is_redacted_template():
+    agent = EngineeringAgent({"windows_bridge": {"token": "secret-value", "port": 9001}})
+    server = MCPServer(agent, profile="full")
+    resource = server.handle({"jsonrpc": "2.0", "id": 1, "method": "resources/read",
+                              "params": {"uri": "engineering://worker-config"}})
+    value = json.loads(resource["result"]["contents"][0]["text"])
+    assert value["schema_version"] == "simloom-ai/worker-config-template/v1"
+    assert value["template_only"] is True
+    assert value["token"] == "<set-on-windows>"
+    assert "secret-value" not in json.dumps(value, ensure_ascii=False)
+
+
 def test_probe_flag_allows_offline_capability_discovery_without_network(monkeypatch):
     config = _config({"worker_features": ["durable_jobs"]})
     config["tools"]["catia"]["bridge_url"] = "http://worker.invalid"

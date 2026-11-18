@@ -18,6 +18,7 @@ from .validation import validate_plan
 from .versioning import VersionStore
 from .viewer import asset_view
 from .software_preflight import PREFLIGHT_OUTPUT_SCHEMA
+from .action_profile import build_action_profile, build_worker_config_template
 
 
 @dataclass(frozen=True)
@@ -567,6 +568,8 @@ class MCPServer:
         resources = [
             {"uri": "engineering://capabilities", "name": "Software capability matrix", "mimeType": "application/json"},
             {"uri": "engineering://operations", "name": "Operation schemas", "mimeType": "application/json"},
+            {"uri": f"engineering://action-profile?root={root}", "name": "Software action bindings", "mimeType": "application/json"},
+            {"uri": "engineering://worker-config", "name": "Windows worker configuration template", "mimeType": "application/json"},
             {"uri": f"engineering://versions?root={root}", "name": "Project versions", "mimeType": "application/json"},
             {"uri": f"engineering://project?root={root}", "name": "Canonical project object", "mimeType": "application/json"},
             {"uri": f"engineering://dependencies?root={root}", "name": "Project dependency graph", "mimeType": "application/json"},
@@ -591,6 +594,8 @@ class MCPServer:
     def _resource_templates() -> list[dict[str, Any]]:
         return [
             {"uriTemplate": "engineering://capabilities", "name": "Software capability matrix", "mimeType": "application/json"},
+            {"uriTemplate": "engineering://action-profile?root={root}", "name": "Software action bindings", "mimeType": "application/json"},
+            {"uriTemplate": "engineering://worker-config", "name": "Windows worker configuration template", "mimeType": "application/json"},
             {"uriTemplate": "engineering://project?root={root}", "name": "Canonical project object", "mimeType": "application/json"},
             {"uriTemplate": "engineering://versions?root={root}", "name": "Project versions and timeline", "mimeType": "application/json"},
             {"uriTemplate": "engineering://dependencies?root={root}", "name": "Project dependency graph", "mimeType": "application/json"},
@@ -612,6 +617,10 @@ class MCPServer:
             value = self.agent.capabilities(probe=probe)
         elif parsed.netloc == "operations":
             value = self._operation_discovery({"detail": self.toolset == "all", "limit": 500})
+        elif parsed.netloc == "action-profile":
+            value = build_action_profile(self.agent.config, project_root=root)
+        elif parsed.netloc == "worker-config":
+            value = build_worker_config_template(self.agent.config)
         elif parsed.netloc == "versions":
             value = {"versions": VersionStore(root).list(), "timeline": VersionStore(root).timeline(), "schemaVersion": self.schema_version}
         elif parsed.netloc == "project":

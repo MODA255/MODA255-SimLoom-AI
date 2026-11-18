@@ -38,6 +38,20 @@ SimLoom AI 的工作职责是驱动已经安装的 CATIA、Ansys、Adams 和 VI-
 - `POST /api/action-preflight`：对指定 `tool` + `action` 运行单动作 preflight；
 - typed operation `project.action_preflight`：给 MCP、CLI 和 Python 客户端使用同一份单动作检查。
 
+MCP 资源：
+
+- `engineering://action-profile?root={root}`：读取脱敏的动作绑定摘要。`root` 可选；提供后会额外检查脚本是否位于项目目录内、是否存在以及是否为空。
+- `engineering://worker-config`：读取脱敏的 Windows worker 配置模板。返回值中的 `token` 永远是 `<set-on-windows>`，不会读取或回传真实令牌。
+
+这两个资源是只读配置发现入口，适合外部 Agent 在规划前建立软件动作目录。它们不会启动脚本、连接 worker 或调用 CATIA、Ansys、Adams、VI-grade。动作 profile 的 `binding_digest` 追踪配置声明，worker 模板的 `schema_version` 追踪交付格式；真正可执行的参数和文件契约仍要通过 `project.action_preflight` 或计划级 preflight 生成。
+
+MCP 客户端可以按下面的顺序使用：
+
+1. 调用 `resources/list` 或 `resources/templates/list`，发现 profile 和 worker 模板资源；
+2. 读取 `engineering://action-profile?root=...`，筛选 `status` 为 `ready` 或 `deferred_to_windows_worker` 的动作；
+3. 读取 `engineering://worker-config`，把模板交给 Windows 部署人员补齐真实路径和受保护令牌；
+4. 对具体的 `tool`、`action` 和工程目录调用 `project.action_preflight`，确认完整 operation contract 后再执行。
+
 CLI 入口：
 
 ```bash
