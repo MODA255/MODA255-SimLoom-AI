@@ -238,6 +238,29 @@ def test_environment_panel_has_per_vendor_worker_capability_cards():
     assert "action-chip.blocked" in stylesheet
 
 
+def test_workspace_exposes_structured_preflight_guidance():
+    script = (STATIC_DIR / "workspace.js").read_text(encoding="utf-8")
+    stylesheet = (STATIC_DIR / "workspace.css").read_text(encoding="utf-8")
+    assert 'id="preflightButton"' in INDEX_HTML
+    assert 'id="preflightPanel"' in INDEX_HTML
+    assert "renderPreflight" in script
+    assert "next_actions" in script
+    assert "preflight-panel" in stylesheet
+    assert "preflight-action" in stylesheet
+
+
+def test_web_preflight_returns_structured_next_actions(service):
+    call, _, _ = service
+    status, project = call("/api/projects", {"name": "preflight-ui"})
+    assert status == 201
+    status, result = call("/api/preflight", {"project_id": project["id"], "prompt": "CATIA建模"})
+    assert status == 200
+    assert result["schema_version"] == "simloom-ai/software-preflight/v1"
+    assert isinstance(result["next_actions"], list)
+    assert result["steps"]
+    assert result["steps"][0]["next_actions"]
+
+
 def test_windows_installer_includes_worker_dependencies():
     installer = (Path(__file__).resolve().parents[1] / "install-windows.cmd").read_text(encoding="utf-8")
     assert 'pip install -e ".[windows,desktop]"' in installer

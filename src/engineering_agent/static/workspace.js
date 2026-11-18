@@ -147,7 +147,7 @@ async function request(url, body) {
 }
 function busy(value) {
   state.busy=value;
-  document.querySelectorAll('[data-action], .project-open, #planButton, #offlineButton, #queueButton, .run-task, #createProject, #retryTask, #resumeTask, #drawingTools button, #drawingTools input, #drawingTools select').forEach(b=>b.disabled=value);
+  document.querySelectorAll('[data-action], .project-open, #planButton, #preflightButton, #offlineButton, #queueButton, .run-task, #createProject, #retryTask, #resumeTask, #drawingTools button, #drawingTools input, #drawingTools select').forEach(b=>b.disabled=value);
   if(value) $('#runError').textContent='';
 }
 function choosePanel(id) {
@@ -375,10 +375,49 @@ function renderPlan(data) {
   $('#workflow').innerHTML=steps.map((s,i)=>`<div class="stage"><div class="stage-icon">${icons[s.tool]||'◇'}</div><strong>${escapeHTML(s.tool)}</strong><small>${escapeHTML(s.action)}</small></div>${i<steps.length-1?'<span class="arrow">→</span>':''}`).join('')||'<div class="empty">没有可执行阶段，请补充目标。</div>';
   details(data);
 }
+const preflightActionLabels={
+  configure_action_binding:'补充动作绑定',
+  configure_capabilities:'补齐能力声明',
+  probe_worker:'探测 Windows worker',
+  inspect_diagnostics:'查看完整诊断'
+};
+function renderPreflight(data) {
+  const ready=data?.ready===true;
+  const steps=Array.isArray(data?.steps)?data.steps:[];
+  const actions=Array.isArray(data?.next_actions)?data.next_actions:[];
+  $('#preflightPanel').hidden=false;
+  $('#preflightStatus').textContent=ready?'启动条件已满足':'需要处理';
+  $('#preflightStatus').className='pill '+(ready?'green':'amber');
+  $('#preflightNotice').textContent=ready
+    ? `已检查 ${steps.length} 个软件步骤；仍需真实软件、许可证和工程结果证据。`
+    : `有 ${steps.filter(step=>step.ready!==true).length} 个步骤未满足启动条件，不会启动商业软件。`;
+  const actionHtml=actions.map(item=>'<div class="preflight-action"><strong>'
+    +escapeHTML(preflightActionLabels[item.action]||item.action)+'</strong><span>'
+    +escapeHTML(item.reason||'')+'</span><small>'
+    +escapeHTML((item.step_ids||[]).join(', '))+'</small></div>').join('');
+  $('#preflightActions').innerHTML=actions.length
+    ? '<div class="preflight-actions-label">建议下一步</div>'+actionHtml
+    : '<div class="preflight-ok">没有待处理的配置建议。</div>';
+  $('#preflightSteps').innerHTML=steps.length
+    ? steps.map(step=>{
+        const issues=Array.isArray(step.issues)?step.issues:[];
+        const status=step.ready===true?'ready':'blocked';
+        const issueText=issues.map(issue=>`${issue.code||'ERROR'}${issue.message?': '+issue.message:''}`).join(' · ');
+        return `<article class="preflight-step ${status}"><div class="preflight-step-head"><div><strong>${escapeHTML(step.tool||'')}</strong><span>${escapeHTML(step.action||'')}</span></div><span class="pill ${status==='ready'?'green':'amber'}">${status==='ready'?'可执行':'未就绪'}</span></div>${issueText?`<p>${escapeHTML(issueText)}</p>`:''}${(step.next_actions||[]).length?`<small>建议：${escapeHTML(step.next_actions.map(item=>preflightActionLabels[item.action]||item.action).join('、'))}</small>`:''}</article>`;
+      }).join('')
+    : '<div class="empty">没有可检查的软件步骤。</div>';
+  details(data);
+}
 async function plan() {
   if(!projectRequired()||state.busy) return;
   busy(true);
   try { renderPlan(await request('/api/plan',{project_id:state.project.id,prompt:$('#prompt').value})); }
+  catch(error) { reportError(error); } finally { busy(false); }
+}
+async function preflight() {
+  if(!projectRequired()||state.busy) return;
+  busy(true);
+  try { renderPreflight(await request('/api/preflight',{project_id:state.project.id,prompt:$('#prompt').value,probe:false})); }
   catch(error) { reportError(error); } finally { busy(false); }
 }
 async function enqueue() {
@@ -710,7 +749,7 @@ document.addEventListener('click',event=>{
 $('#projectForm').addEventListener('submit',createProject);
 $('#nextWizard').onclick=()=>{if($('#projectName').reportValidity()) wizardPage(2);};
 $('#backWizard').onclick=()=>wizardPage(1); $('#cancelWizard').onclick=()=>$('#projectWizard').close();
-$('#planButton').onclick=plan; $('#queueButton').onclick=enqueue; $('#offlineButton').onclick=()=>runOffline();
+$('#planButton').onclick=plan; $('#preflightButton').onclick=preflight; $('#queueButton').onclick=enqueue; $('#offlineButton').onclick=()=>runOffline();
 $('#refreshTasks').onclick=()=>refreshTasks().catch(reportError); $('#refreshAssets').onclick=()=>refreshAssets().catch(reportError); $('#refreshCadRuns').onclick=()=>refreshCadRuns().catch(reportError);
 $('#refreshDoctor').onclick=()=>refreshDoctor().catch(reportError); $('#viewResults').onclick=()=>choosePanel('assets');
 function resetWatchPanel() {

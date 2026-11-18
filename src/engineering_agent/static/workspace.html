@@ -31,8 +31,13 @@
       <div class="card"><div class="card-head"><div><h3>描述工程目标</h3><p id="projectHint">先创建项目，或从历史中继续。</p></div><span class="pill">01 · 计划</span></div>
         <div class="templates" id="templates"></div>
         <div class="field"><label for="prompt">你希望完成什么？</label><textarea id="prompt" placeholder="例如：为悬架建立模型，检查载荷下的应力和位移，再分析整车操稳。"></textarea></div>
-        <div class="action-row"><button class="btn btn-blue" id="planButton">生成工程计划</button><button class="btn btn-light" id="queueButton">保存排练任务</button><button class="btn btn-light" id="offlineButton">运行离线闭环</button></div>
+        <div class="action-row"><button class="btn btn-blue" id="planButton">生成工程计划</button><button class="btn btn-light" id="preflightButton">检查启动条件</button><button class="btn btn-light" id="queueButton">保存排练任务</button><button class="btn btn-light" id="offlineButton">运行离线闭环</button></div>
         <p class="support-note">模板用于规划。离线闭环始终演示四个阶段，采用项目尺寸和载荷参数；不执行商业软件求解。</p>
+        <section id="preflightPanel" class="preflight-panel" hidden aria-live="polite">
+          <div class="preflight-head"><div><strong>启动条件检查</strong><p id="preflightNotice" class="muted">不会启动 CATIA、Ansys、Adams 或 VI-grade。</p></div><span id="preflightStatus" class="pill">未检查</span></div>
+          <div id="preflightActions" class="preflight-actions"></div>
+          <div id="preflightSteps" class="preflight-steps"></div>
+        </section>
         <p class="error run-error" id="runError" role="alert"></p>
       </div>
       <div class="card"><div class="card-head"><div><h3>工程流程</h3><p id="planHint">生成计划后显示执行顺序。</p></div><span class="pill" id="planStatus">待规划</span></div><div class="workflow" id="workflow"><div class="empty">还没有计划</div></div>

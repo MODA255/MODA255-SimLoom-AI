@@ -45,6 +45,12 @@ typed operation 还发布 `outputSchema.required`，当前必填项是 `schema_v
 `ready`、`ready_count`、`step_count` 和 `next_actions`。客户端可以先做结构校验，再读取
 `next_actions`；这比只检查 HTTP/MCP 调用成功更可靠，也能在输出契约漂移时立即停止调度。
 
+Web 工作台的“检查启动条件”按钮调用 `POST /api/preflight`，默认使用 `probe=false`，只检查本地
+动作绑定、脚本、命令和声明的 contract，不会因为打开页面而访问 Windows worker。结果会在当前工程
+目标下显示每个软件步骤的可执行状态、阻塞错误和计划级建议；需要远程 worker 证据时，先在环境检查页
+执行连接探测，再由 Agent 或 CLI 使用 `probe=true` 重新 preflight。页面显示的建议码与 MCP/CLI 完全相同，
+不会把“连接正常”显示成“商业软件结果已验收”。
+
 这些能力用真实子进程和本地 HTTP 服务测试，fixture 明确标记为测试程序。
 目前没有 CATIA / Ansys / Adams / VI-grade 的许可证、版本及工程操作实机验收证据。
 

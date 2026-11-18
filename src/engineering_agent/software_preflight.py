@@ -151,6 +151,7 @@ def _step_preflight(adapter: Any, step: PlanStep, root: Path, *, probe: bool = F
     }
     if not isinstance(binding, dict):
         result["issues"].append({"code": "ACTION_BINDING_REQUIRED", "message": "未配置该软件动作"})
+        result["next_actions"] = _next_actions(result["issues"])
         return result
 
     requirements = normalize_capability_requirements(binding.get("capability_requirements"))
