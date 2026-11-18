@@ -81,6 +81,8 @@ _ISSUE_NEXT_ACTION = {
     "BRIDGE_UNREACHABLE": ("probe_worker", "检查 bridge 地址、认证令牌和 Windows worker 健康状态"),
     "WORKER_ACTION_NOT_FOUND": ("configure_action_binding", "在 Windows worker 上登记该软件动作"),
     "ACTION_CONTRACT_INVALID": ("inspect_diagnostics", "读取动作 contract 和完整诊断后修正配置"),
+    "PLAN_INVALID": ("inspect_diagnostics", "读取 plan_validation.errors，修正计划步骤后重新执行 preflight"),
+    "CLARIFICATION_REQUIRED": ("inspect_diagnostics", "补充缺失的工程目标或输入约束后重新生成计划"),
 }
 
 
@@ -238,6 +240,16 @@ def preflight_plan(adapters: dict[ToolName, Any], plan: ExecutionPlan, project_d
     skipped = [step.id for step in plan.steps if step.action == "clarify_request"]
     ready_count = sum(bool(item["ready"]) for item in steps)
     guidance: dict[str, dict[str, Any]] = {}
+    plan_issues: list[dict[str, Any]] = []
+    if isinstance(plan_validation, dict) and plan_validation.get("valid") is False:
+        for error in plan_validation.get("errors", []):
+            plan_issues.append({"code": "PLAN_INVALID", "message": str(error)})
+    if skipped:
+        plan_issues.append({"code": "CLARIFICATION_REQUIRED", "message": "计划包含需要澄清的步骤"})
+    for recommendation in _next_actions(plan_issues):
+        action = recommendation["action"]
+        guidance[action] = {"action": action, "reason": recommendation["reason"],
+                            "step_ids": [], "issue_codes": list(recommendation.get("issue_codes", []))}
     for step in steps:
         for recommendation in step.get("next_actions", []):
             action = recommendation["action"]

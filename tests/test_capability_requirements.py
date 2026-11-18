@@ -141,6 +141,23 @@ def test_preflight_groups_multiple_issues_into_stable_next_actions(tmp_path):
     assert result["next_actions"][0]["step_ids"] == ["model"]
 
 
+def test_preflight_surfaces_plan_and_clarification_guidance(tmp_path):
+    root = _project(tmp_path)
+    adapter = CatiaAdapter(_config({})["tools"]["catia"])
+    plan = ExecutionPlan(AgentRequest("test", str(root), {}), [
+        PlanStep("clarify", ToolName.CATIA, "clarify_request", "需要补充输入")
+    ], [])
+    result = preflight_plan({ToolName.CATIA: adapter}, plan, root,
+                            plan_validation={"valid": False, "errors": ["unknown operation"]})
+    assert result["ready"] is False
+    assert result["next_actions"] == [{
+        "action": "inspect_diagnostics",
+        "reason": "读取 plan_validation.errors，修正计划步骤后重新执行 preflight",
+        "step_ids": [],
+        "issue_codes": ["PLAN_INVALID", "CLARIFICATION_REQUIRED"],
+    }]
+
+
 def test_remote_worker_requirement_is_checked_before_job_launch(tmp_path):
     root = _project(tmp_path)
     server = create_bridge_server({"root_dir": str(tmp_path / "worker"), "port": 0,

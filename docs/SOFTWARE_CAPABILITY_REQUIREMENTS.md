@@ -50,6 +50,10 @@ Web 工作台的环境检查页会同时显示“已发现”“可执行”和�
 | `probe_worker` | 远程 worker 尚未探测或当前不可达 | 认证并读取 worker health/capabilities；探测失败时查看连接诊断 |
 | `inspect_diagnostics` | 未知或无法归类的 contract 检查失败 | 读取完整诊断，确认版本、路径和 contract 字段后再处理 |
 
+计划级错误也使用同一建议机制：`PLAN_INVALID` 会提示读取 `plan_validation.errors` 并重新生成计划；
+包含 `clarify_request` 的计划会返回 `CLARIFICATION_REQUIRED`，提示补充工程目标或输入约束。即使没有
+任何可执行步骤，Agent 也能得到明确的下一步，而不会把空的 `next_actions` 误解成“没有问题”。
+
 步骤级建议的形状如下：
 
 ```json
