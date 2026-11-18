@@ -17,6 +17,7 @@ from typing import Any, Iterable
 
 from .engineering_failure import classify_failure
 from .engineering_lifecycle import normalize_lifecycle
+from .engineering_context import validate_engineering_context
 
 
 SCHEMA = "simloom-ai/engineering-result/v1"
@@ -291,6 +292,7 @@ def normalize_engineering_result(*, tool: str, action: str, status: str,
         scope = vendor_validation.get("scope")
         real_machine_verified = vendor_validation.get("real_machine_verified") is True
     context = _engineering_context(details, vendor_validation, tool=tool)
+    context_validation = validate_engineering_context(context, expected_tool=str(tool))
     error = details.get("error")
     if not isinstance(error, dict):
         error = None
@@ -324,6 +326,7 @@ def normalize_engineering_result(*, tool: str, action: str, status: str,
         "metric_evidence": metric_evidence,
         "observations": observations,
         "engineering_context": context,
+        "engineering_context_validation": context_validation,
         "artifacts": {"inputs": input_artifacts, "outputs": output_artifacts},
         "contract": _contract_summary(contract, input_artifacts, output_artifacts),
         "operation_contract": (operation_contract if isinstance(operation_contract, dict)

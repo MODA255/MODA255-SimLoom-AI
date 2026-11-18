@@ -38,6 +38,14 @@
     "load_cases": [{"id": "lc-1", "name": "Gravity", "model_reference": "analysis-1"}],
     "model_references": [{"id": "mesh-1", "kind": "mesh", "path": "mesh.cdb"}]
   },
+  "engineering_context_validation": {
+    "schema_version": "simloom-ai/engineering-context-validation/v1",
+    "checked": true,
+    "valid": true,
+    "errors": [],
+    "warnings": [],
+    "counts": {"native_objects": 1, "coordinate_systems": 1, "load_cases": 1, "model_references": 1}
+  },
   "contract": {
     "schema_version": "simloom-ai/vendor-evidence/v2",
     "kind": "mechanical_solve",
@@ -110,6 +118,7 @@
   工程师和审计报告定位原始证据，不会把来源记录本身当成工程正确性证明。
 - `observations` 保存 runner 报告中的软件观察，例如 CATIA 参数回读、Ansys 解算状态或 Adams/VI-grade 返回码。
 - `engineering_context` 是 `simloom-ai/engineering-context/v1` 的有界原生对象摘要。它可以包含软件版本/构建/许可证状态、CATIA 参数树或文档对象、Ansys/Adams/VI-grade 的坐标系、工况、场景对象和模型引用。runner 可以把它放在统一结果顶层、`vendor_validation.engineering_context`，或 `vendor_validation.observations.engineering_context`；控制端只复制 runner 或 validator 明确导出的字段，不从文件名、进程退出码或工具名称推断原生对象；缺少独立导出时字段为 `null`，不会伪造实机证据。
+- `engineering_context_validation` 是 `simloom-ai/engineering-context-validation/v1` 的独立结构检查。它检查上下文 schema、软件名称、ID 唯一性、父子对象引用、工况到模型/坐标系引用、有限坐标数值和项目相对模型路径。`valid=false` 只说明 runner 导出的上下文内部不一致，不会自动把软件执行标记为失败，也不会把 `valid=true` 当成许可证、模型拓扑或求解正确性证明。
 - runner 还可以从动作绑定的 `vendor_options.engineering_context` 读取项目负责人明确提供的部署上下文。该配置用于补充 build、edition、许可证状态和模板已知对象；runner 从真实厂商 API 读到的版本优先覆盖配置版本。配置声明经过条目和字段边界归一化后才进入统一结果，且永远不会单独提升 `real_machine_verified` 或工程验收结论。
 - `contract` 是本次请求实际使用的输入、输出和验收契约摘要。它包括 evidence schema、报告路径、输入/输出路径、必须检查的指标、期望单位和原始规则。该摘要有长度限制，适合 Agent 做失败归因、修复候选比较和重规划；它不会替代原始报告，也不会因为契约存在就把结果判为通过。
 - `lifecycle` 是 `simloom-ai/engineering-lifecycle/v1` 阶段状态。五个阶段固定为 `preflight`、`execute`、`collect`、`validate`、`recover`。它记录控制端实际到达的阶段、阶段错误和是否可以用原任务 ID 恢复。`completed` 只在声明的输出已回收且验证契约通过后把 `validate` 标为 `passed`；断线或观测超时会把 `recover` 标为 `deferred`，不会把前面的阶段推断成成功。

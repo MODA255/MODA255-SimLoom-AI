@@ -30,6 +30,7 @@ def test_normalized_result_separates_execution_from_engineering_acceptance():
     assert result["metric_evidence"][0]["source"]["value_selector"] == "metrics.equivalent_stress"
     assert result["artifacts"]["inputs"][0]["path"] == "model.mechdat"
     assert result["artifacts"]["outputs"][0]["sha256"] == "b" * 64
+    assert result["engineering_context_validation"]["checked"] is False
 
 
 def test_missing_vendor_contract_is_explicitly_not_requested():
@@ -63,6 +64,7 @@ def test_vendor_operation_schema_advertises_normalized_result():
         "validation", "recovery", "concurrency", "publication", "unknown"]
     assert envelope["properties"]["operation_contract"]["properties"]["definition_digest"]["type"] == "string"
     assert envelope["properties"]["engineering_context"]["properties"]["schema_version"]["const"] == "simloom-ai/engineering-context/v1"
+    assert envelope["properties"]["engineering_context_validation"]["properties"]["valid"]["type"] == "boolean"
     assert envelope["properties"]["operation_contract"]["properties"]["engineering_context"]["type"] == ["object", "null"]
 
 
@@ -184,6 +186,19 @@ def test_normalized_result_carries_bounded_native_engineering_context():
     assert context["coordinate_systems"][0]["origin"] == [0, 0, 0]
     assert context["load_cases"][0]["model_reference"] == "analysis-1"
     assert context["model_references"][0]["path"] == "mesh.cdb"
+    assert result["engineering_context_validation"]["valid"] is True
+
+
+def test_normalized_result_preserves_invalid_context_as_explicit_diagnostic():
+    result = normalize_engineering_result(
+        tool="ansys", action="solve_configured_model", status="completed",
+        details={"engineering_context": {
+            "native_objects": [{"id": "analysis"}],
+            "load_cases": [{"id": "lc", "model_reference": "missing"}],
+        }})
+    assert result["engineering_context"] is not None
+    assert result["engineering_context_validation"]["valid"] is False
+    assert result["engineering_context_validation"]["errors"][0]["code"] == "CONTEXT_MODEL_REFERENCE_NOT_FOUND"
 
 
 def test_context_can_be_read_from_legacy_vendor_validation_fields():

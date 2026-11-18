@@ -45,6 +45,17 @@ ENGINEERING_RESULT_SCHEMA = {
                 "model_references": {"type": "array", "items": {"type": "object"}},
             },
         },
+        "engineering_context_validation": {
+            "type": "object",
+            "description": "Independent structural validation of explicit engineering-context references; not vendor or license evidence",
+            "properties": {
+                "schema_version": {"type": "string", "const": "simloom-ai/engineering-context-validation/v1"},
+                "checked": {"type": "boolean"}, "valid": {"type": "boolean"},
+                "errors": {"type": "array", "items": {"type": "object"}},
+                "warnings": {"type": "array", "items": {"type": "object"}},
+                "counts": {"type": "object", "additionalProperties": {"type": "integer"}},
+            },
+        },
         "contract": {
             "type": "object",
             "properties": {
