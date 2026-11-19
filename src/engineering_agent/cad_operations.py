@@ -4358,6 +4358,42 @@ class CadOperationEngine:
                     "restored_revision": restored["revision"], "history": history.summary(),
                     "document": restored_document, "persisted_validation": validation, "timeline": transaction.events()}
 
+    def _document_create(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Create a blank native DXF through the normal transaction/history path."""
+        raw_output = arguments.get("output_file") or arguments.get("path")
+        if not raw_output:
+            raise ValueError("CAD_OUTPUT_FILE_REQUIRED")
+        output_path = Path(str(raw_output)).expanduser()
+        project_root = Path(arguments.get("project_dir") or output_path.parent).expanduser().resolve()
+        output_file = (project_root / output_path if arguments.get("project_dir") and not output_path.is_absolute() else output_path).resolve()
+        if project_root not in output_file.parents:
+            raise ValueError("PATH_OUTSIDE_PROJECT")
+        if output_file.suffix.lower() != ".dxf":
+            raise ValueError("CAD_DOCUMENT_REQUIRES_DXF")
+        if output_file.exists() and not bool(arguments.get("overwrite", False)):
+            raise ValueError("FILE_EXISTS:" + str(output_file))
+        units = str(arguments.get("units", "mm")).strip().lower() or "mm"
+        if units not in {"unitless", "mm", "cm", "m", "in", "ft"}:
+            raise ValueError("CAD_UNITS_INVALID:" + units)
+        try:
+            annotation_scale = float(arguments.get("annotation_scale", 1))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("ANNOTATION_SCALE_INVALID") from exc
+        if not math.isfinite(annotation_scale) or annotation_scale <= 0:
+            raise ValueError("ANNOTATION_SCALE_INVALID")
+        document = CadDocument(name=output_file.stem, units=units)
+        document.ensure_layer("0")
+        document.metadata["annotation_scale"] = annotation_scale
+        document.metadata["template"] = str(arguments.get("template", "blank"))
+        with RunTransaction(project_root) as transaction:
+            transaction.begin({"operation": "cad.document_create", "output_file": str(output_file),
+                               "units": units, "template": document.metadata["template"]})
+            transaction.checkpoint("before-cad-create", {"entity_count": 0, "units": units})
+            committed, validation, history = self._write(transaction, document, output_file, {}, "document_create")
+            return {"schema_version": "simloom-ai/cad-document-create/v1", "path": committed[str(output_file.relative_to(project_root))],
+                    "document": self.open(output_file).to_dict(), "validation": validation, "history": history,
+                    "run_id": transaction.run_id}
+
     def _script_apply(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Apply a project-local helper script as one validated CAD transaction."""
         configured = bool(self.config.get("allow_scripts")) or bool((self.config.get("cad") or {}).get("allow_scripts"))
@@ -4473,6 +4509,8 @@ class CadOperationEngine:
             return catalog(arguments.get("standard")) if operation == "cad.standard_catalog" else standard_library(arguments.get("category"), arguments.get("query"))
         if operation == "cad.script_apply":
             return self._script_apply(arguments)
+        if operation == "cad.document_create":
+            return self._document_create(arguments)
         if operation == "cad.plot":
             from .plotting import plot_operation
             return plot_operation(arguments)

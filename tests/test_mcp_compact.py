@@ -148,3 +148,21 @@ def test_agentcad_named_cad_facade_uses_same_transaction_and_context_path(tmp_pa
     })
     assert denied["result"]["isError"] is True
     assert "MCP_PROFILE_READ_ONLY" in denied["result"]["structuredContent"]["error"]["message"]
+
+
+def test_agentcad_create_and_inspect_tools_use_native_document_operation(tmp_path):
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="full", toolset="compact")
+    created = _call(server, "create_drawing", {
+        "project_dir": str(tmp_path), "output": "blank.dxf", "units": "mm", "annotation_scale": 2,
+    })
+    assert created["result"].get("isError", False) is False
+    assert created["result"]["structuredContent"]["document"]["entity_count"] == 0
+    inspected = _call(server, "inspect_entities", {
+        "project_dir": str(tmp_path), "document": "blank.dxf", "limit": 10,
+    })
+    assert inspected["result"].get("isError", False) is False
+    assert inspected["result"]["structuredContent"]["total_count"] == 0
+    safe = MCPServer(EngineeringAgent({"tools": {}}), profile="safe", toolset="compact")
+    denied = _call(safe, "create_drawing", {"project_dir": str(tmp_path), "output": "safe.dxf"})
+    assert denied["result"]["isError"] is True
+    assert "MCP_PROFILE_READ_ONLY" in denied["result"]["structuredContent"]["error"]["message"]

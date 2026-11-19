@@ -55,3 +55,5 @@ compact MCP toolset 现在提供五个与 AgentCAD 主工具习惯一致的入�
 - `get_diff` 比较当前图纸和另一份图纸。
 
 这些入口和 `engineering_operation` 共享同一个活动 CAD context、路径约束、error envelope、MCP policy 和事务实现。`apply_operations` 在 safe profile 中保持只读拒绝，full profile 才允许写入。它们是 AgentCAD 风格的调用面，不把本地 DXF 语义误报成 CATIA、Ansys、Adams 或 VI-grade 的原生操作。
+
+`create_drawing` 和 `inspect_entities` 也已在 compact MCP 中提供。前者通过 `cad.document_create` 创建带单位、标注比例和 sidecar 的空 DXF，后者通过 `cad.query` 复用过滤、分页和稳定 `EntityRef`。创建操作仍受 full profile、路径约束和写事务保护。

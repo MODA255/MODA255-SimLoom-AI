@@ -371,10 +371,12 @@ class MCPServer:
             {"name": "measure_entities", "description": "Measure selected drawing entities with analytic geometry", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "target": {}, "entity_ids": {"type": "array"}, "selection_set": {"type": "string"}, "entity_type": {"type": "string"}, "layer": {"type": "string"}, "window": {"type": "array"}, "strict": {"type": "boolean"}}}},
             {"name": "verify_drawing", "description": "Run independent drawing validation and engineering requirements", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "requirements": {"type": "object"}}}},
             {"name": "get_diff", "description": "Compare the active drawing with another drawing", "inputSchema": {"type": "object", "required": ["right_file"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "right_file": {"type": "string"}}}},
+            {"name": "create_drawing", "description": "Create a new blank native DXF drawing", "inputSchema": {"type": "object", "required": ["output"], "properties": {"output": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "units": {"type": "string", "default": "mm"}, "template": {"type": "string", "enum": ["blank", "iso"]}, "annotation_scale": {"type": "number"}, "overwrite": {"type": "boolean"}}}},
+            {"name": "inspect_entities", "description": "Inspect entities using AgentCAD-compatible filters and pagination", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "filter": {"type": "object"}, "ids": {"type": "array"}, "entity_type": {"type": "string"}, "layer": {"type": "string"}, "window": {"type": "array"}, "limit": {"type": "integer"}, "offset": {"type": "integer"}}}},
         ]
         if include_profile and self.profile == "safe":
             tools = [tool for tool in tools if tool["name"] not in {
-                "engineering_run", "engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations"}]
+                "engineering_run", "engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations", "create_drawing"}]
         for tool in tools:
             if tool["name"] in {"engineering_plan", "engineering_preflight", "engineering_run"}:
                 tool["inputSchema"]["properties"]["parameters"] = {"type": "object", "description": "Explicit engineering parameters forwarded to software steps"}
@@ -862,7 +864,7 @@ class MCPServer:
                 raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "arguments must be an object")
             target = operation if operation.startswith("operation.") else "operation." + operation
             return self.call(target, operation_arguments)
-        if name in {"apply_operations", "read_drawing", "measure_entities", "verify_drawing", "get_diff"}:
+        if name in {"apply_operations", "read_drawing", "measure_entities", "verify_drawing", "get_diff", "create_drawing", "inspect_entities"}:
             mapped = dict(arguments)
             if "input_file" not in mapped:
                 for key in ("document", "path"):
@@ -871,6 +873,16 @@ class MCPServer:
                         break
             mapped.pop("document", None)
             mapped.pop("path", None)
+            if name == "create_drawing":
+                if "output_file" not in mapped:
+                    mapped["output_file"] = mapped.get("output") or mapped.get("path")
+                mapped.pop("output", None)
+                mapped.pop("path", None)
+                return self.call("operation.cad.document_create", mapped)
+            if name == "inspect_entities":
+                if "entity_ids" not in mapped and mapped.get("ids") is not None:
+                    mapped["entity_ids"] = mapped.pop("ids")
+                return self.call("operation.cad.query", mapped)
             if name == "apply_operations":
                 operations = mapped.get("operations")
                 if not isinstance(operations, list) or not operations:
