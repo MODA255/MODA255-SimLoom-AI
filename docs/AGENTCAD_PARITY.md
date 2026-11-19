@@ -168,7 +168,7 @@ worker 的独立配置文件、脚本绑定和真实软件验收仍需逐款完�
 
 这里的“接近 AgentCAD”分成两个口径：一是 Agent-facing runtime 是否让模型能够可靠地发现、调用、观察、验证、恢复和复现工程操作；二是 SimLoom 的产品主线是否真的能操作 CATIA、Ansys、Adams 和 VI-grade。前一个口径可以在没有商业软件的机器上持续补齐，后一个口径必须依赖 Windows、软件版本、许可证和真实工程文件。
 
-按当前仓库状态，SimLoom 的 Agent-facing 基础已经具备：统一 operation registry、MCP/CLI/HTTP/Python 入口、事务锁、checkpoint、journal、rollback、版本 diff、分页 discovery、结构化 error envelope、离线 CAD/结果验证、任务队列、工作流恢复和有界修复。当前 operation registry 中有 233 个公开名称，其中 122 个是 `cad.*` typed operation；数量已经超过对照项目的 2D 操作规模，但数量不代表每个操作的语义、性能和真实工程兼容性都达到同一水平。
+按当前仓库状态，SimLoom 的 Agent-facing 基础已经具备：统一 operation registry、MCP/CLI/HTTP/Python 入口、事务锁、checkpoint、journal、rollback、版本 diff、分页 discovery、结构化 error envelope、离线 CAD/结果验证、任务队列、工作流恢复和有界修复。当前 operation registry 中有 234 个公开名称，其中 122 个是 `cad.*` typed operation；数量已经超过对照项目的 2D 操作规模，但数量不代表每个操作的语义、性能和真实工程兼容性都达到同一水平。
 
 真正的核心差距按影响排序如下：
 
