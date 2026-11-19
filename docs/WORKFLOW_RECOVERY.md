@@ -42,6 +42,21 @@ repair decision，便于 Agent 先判断“继续查询、人工检查、修复�
 `repair` 后，已订阅且根目录匹配的工作流资源会收到标准 `notifications/resources/updated`；客户端
 应重新读取 URI，而不是把通知内容当成完整状态。
 
+每个工作流摘要还提供四个统一的调度字段：
+
+| 字段 | 取值 | 含义 |
+| --- | --- | --- |
+| `next_action` | `resume_remote_job`、`fix_inputs_or_contract`、`fix_configuration`、`inspect_software_session`、`evaluate_repair_strategy`、`inspect_results`、`observe_progress`、`finalize_publication`、`manual_review` 等 | 基于已保存状态给 Agent 的保守路由建议，不是自动执行授权 |
+| `next_action_reason` | 短文本 | 说明选择该动作的持久证据来源 |
+| `evidence_state` | `complete`、`partial`、`missing`、`requires_review` | 表示工作流当前是否有足够证据支持下一步判断 |
+| `requires_human` | 布尔值 | 失败分类或状态要求工程师确认时为 `true` |
+
+字段由工作流状态、步骤生命周期、失败分类和失败证据计算，不会根据当前目录中后来出现的文件
+猜测历史任务结果。例如，`waiting` 且有可恢复远程 request 时建议 `resume_remote_job`；输入契约
+失败建议 `fix_inputs_or_contract`；超时或取消建议先 `inspect_software_session`；未知错误或本机
+状态不明则为 `manual_review`。客户端应保留原始 `failure`、`failure_evidence` 和 `lifecycle`，
+把这些字段当作导航提示，而不是替代原生软件报告或人工验收。
+
 ## 恢复依据
 
 保存目录是项目内 `.engineering-agent/workflows/<workflow_id>/`：

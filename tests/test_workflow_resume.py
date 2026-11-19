@@ -191,6 +191,9 @@ def test_terminal_failure_is_not_reexecuted_and_downstream_never_starts(workflow
     assert not (tmp_path/'solve-count').exists()
     state=WorkflowStore(project).read(report.workflow_id)
     summary=WorkflowStore(project).summary(state)
+    assert summary['next_action']=='manual_review'
+    assert summary['evidence_state']=='requires_review'
+    assert summary['requires_human'] is True
     failed_step=next(item for item in summary['steps'] if item['status']=='failed')
     assert failed_step['failure_evidence']['schema_version']=='simloom-ai/failure-evidence/v1'
     assert failed_step['failure_evidence']['error_code']=='SOFTWARE_EXIT_FAILED'
@@ -390,6 +393,24 @@ def test_status_read_does_not_require_long_running_project_lock(workflow_setup):
         with pytest.raises(RuntimeError,match='PROJECT_LOCKED'):
             make().workflow('resume',report.workflow_id,project_dir=str(project))
         txn.rollback('fixture')
+
+
+def test_workflow_summary_exposes_agent_routing_guidance_for_waiting_and_completed(workflow_setup,tmp_path):
+    project,manager,config,plan,make=workflow_setup
+    report=start(workflow_setup)
+    waiting=WorkflowStore(project).summary(WorkflowStore(project).read(report.workflow_id))
+    assert waiting['status']=='waiting'
+    assert waiting['next_action']=='resume_remote_job'
+    assert waiting['evidence_state'] in {'partial','requires_review'}
+    assert waiting['requires_human'] is False
+
+    finished=finish(workflow_setup,tmp_path,report.workflow_id)
+    completed=WorkflowStore(project).summary(WorkflowStore(project).read(report.workflow_id))
+    assert finished['status']=='committed'
+    assert completed['status']=='completed'
+    assert completed['next_action']=='inspect_results'
+    assert completed['evidence_state']=='complete'
+    assert completed['requires_human'] is False
 
 
 @pytest.mark.parametrize('path,code',[('OUTPUTS/MODEL.STEP','WORKFLOW_PATH_CASE_CONFLICT'),

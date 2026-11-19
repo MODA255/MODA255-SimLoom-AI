@@ -83,6 +83,12 @@ preflight 检查。
 - `engineering://workflow?root=<project>&workflow_id=<id>` 返回单条工程链摘要，包括步骤状态、原 request ID、生命周期、失败分类和 `failure_evidence`。
 - 在同一 URI 加上 `detail=failures` 只返回失败步骤及其受限失败证据、日志路径、建议动作和修复循环决策。
 
+工作流摘要中的 `next_action`、`next_action_reason`、`evidence_state` 和 `requires_human` 是统一的
+Agent 路由字段。它们把状态、生命周期和失败证据压缩成下一步提示：例如可恢复远程任务返回
+`resume_remote_job`，输入契约问题返回 `fix_inputs_or_contract`，状态不明返回 `manual_review`。
+这些字段不授予客户端写入或重提请求的权限；客户端仍应读取原始 `failure`、`failure_evidence`、
+`operation_contract` 和 `lifecycle`，并遵守 profile 和事务约束。
+
 这些 URI 是只读观察入口；资源读取不会恢复、重试或启动软件。要继续工程链，使用 full profile 的
 `engineering_workflow` 工具并传 `action=resume`；恢复后可重新读取同一个 workflow resource。对
 `engineering_workflow` 的 `resume` 或 `repair` 调用会向已订阅且根目录匹配的工作流资源发送

@@ -21,8 +21,16 @@ from .worker_protocol import WorkerError, safe_file
 from .repair import (RepairCandidate, build_repair_plan, compare_repair_results,
                      decide_repair, propose_repairs)
 from .engineering_lifecycle import empty_lifecycle
+from .engineering_failure import classify_failure
 
 SCHEMA = 'simloom-ai/workflow/v1'
+
+_GUIDANCE_ACTIONS = {
+    'resume_remote_job', 'fix_inputs_or_contract', 'fix_configuration',
+    'inspect_software_session', 'evaluate_repair_strategy', 'manual_review',
+    'inspect_results', 'finalize_publication', 'observe_progress',
+    'resume_workflow',
+}
 
 
 def fingerprint(value):
@@ -83,6 +91,113 @@ class WorkflowStore:
         return sorted([self.summary(self.read(path.parent.name)) for path in root.glob('*/state.json')],
                       key=lambda s: s['created_at'], reverse=True)
 
+    @staticmethod
+    def _failure_for_step(step_state):
+        failure = step_state.get('failure')
+        if isinstance(failure, dict):
+            return failure
+        lifecycle = step_state.get('lifecycle') if isinstance(step_state.get('lifecycle'), dict) else {}
+        error = step_state.get('error')
+        code = error.get('code') if isinstance(error, dict) else None
+        if code or lifecycle.get('current_stage') == 'recover':
+            return classify_failure(code, status=step_state.get('status', 'failed'),
+                                    lifecycle=lifecycle,
+                                    message=error.get('message') if isinstance(error, dict) else None)
+        return None
+
+    @classmethod
+    def _guidance(cls, state, steps, repair_available):
+        """Derive conservative scheduler guidance from persisted evidence.
+
+        This is a routing summary only. It never claims a vendor application
+        succeeded and never authorizes a write or a second submission. The
+        request, lifecycle, failure and evidence fields remain the audit
+        source of truth.
+        """
+        status = state.get('status')
+        failures = []
+        recoverable = []
+        evidence_count = 0
+        human_required = False
+        for item in steps:
+            step_state = state.get('steps', {}).get(item['id'], {})
+            failure = cls._failure_for_step(step_state)
+            if failure:
+                failures.append((item, step_state, failure))
+                human_required = human_required or bool(failure.get('requires_human'))
+            lifecycle = step_state.get('lifecycle') if isinstance(step_state.get('lifecycle'), dict) else {}
+            if lifecycle.get('recoverable') or (failure and failure.get('category') == 'recovery'):
+                recoverable.append((item, step_state, failure))
+            if step_state.get('failure_evidence') or step_state.get('request_id') or lifecycle.get('current_stage'):
+                evidence_count += 1
+
+        top_error = state.get('error')
+        if not failures and isinstance(top_error, dict):
+            top_failure = classify_failure(top_error.get('code'), status=status or 'failed',
+                                           message=top_error.get('message'))
+            failures.append((None, {}, top_failure))
+            human_required = bool(top_failure.get('requires_human'))
+            evidence_count += 1
+
+        reason = None
+        action = 'manual_review'
+        if status == 'publishing':
+            action, reason = 'finalize_publication', '工程链已完成执行，正在提交事务产物'
+        elif status == 'waiting':
+            if recoverable:
+                action, reason = 'resume_remote_job', '存在可恢复的远程任务或回收阶段'
+            elif failures:
+                action, reason = 'manual_review', '等待状态缺少可安全恢复的任务证据'
+            else:
+                action, reason = 'observe_progress', '工程链仍在等待外部工作站状态'
+        elif status in {'failed', 'blocked'}:
+            if recoverable and not human_required:
+                action, reason = 'resume_remote_job', '失败步骤仍有明确的恢复证据'
+            elif failures:
+                failure = failures[0][2]
+                category = failure.get('category')
+                code = failure.get('error_code')
+                if category == 'input_contract':
+                    action, reason = 'fix_inputs_or_contract', '输入或输出契约未满足，不能重提原请求'
+                elif category == 'configuration':
+                    action, reason = 'fix_configuration', '动作绑定或工作站配置不完整'
+                elif category == 'execution' and code in {'SOFTWARE_TIMEOUT', 'JOB_CANCELLED'}:
+                    action, reason = 'inspect_software_session', '软件会话可能仍占用资源，需要确认停止状态'
+                elif human_required:
+                    action, reason = 'manual_review', '现有证据要求工程师确认软件状态或配置'
+                else:
+                    action, reason = failure.get('recommended_action') or 'manual_review', '已有失败证据可供诊断'
+            else:
+                action, reason = 'manual_review', '缺少足够的失败证据，不能安全地自动恢复'
+        elif status == 'completed':
+            if repair_available:
+                action, reason = 'evaluate_repair_strategy', '工程结果存在失败指标，且声明了有界修复策略'
+            else:
+                action, reason = 'inspect_results', '工程链已提交，可读取结果、版本和报告'
+        elif status == 'running':
+            action, reason = 'observe_progress', '工程链正在执行，继续观察步骤状态'
+        elif status == 'ready':
+            action, reason = 'resume_workflow', '工程链已建立但尚未开始执行'
+        else:
+            action, reason = 'manual_review', '工作流状态未知，不能推断可执行动作'
+
+        if action not in _GUIDANCE_ACTIONS:
+            action = 'manual_review'
+        if human_required or action == 'manual_review':
+            evidence_state = 'requires_review' if evidence_count else 'missing'
+        elif status == 'completed' and evidence_count >= len(steps) and steps:
+            evidence_state = 'complete'
+        elif evidence_count:
+            evidence_state = 'partial'
+        else:
+            evidence_state = 'missing'
+        return {
+            'next_action': action,
+            'next_action_reason': reason,
+            'evidence_state': evidence_state,
+            'requires_human': bool(human_required or action == 'manual_review'),
+        }
+
     def summary(self, state):
         state = dict(state)
         if state["status"] == "completed":
@@ -108,7 +223,17 @@ class WorkflowStore:
 
         repair_available = any(failed_engineering_result(item)
                                for item in report.get("results", []) if isinstance(item, dict))
+        steps = [{'id': s['id'], 'tool': s['tool'], 'action': s['action'],
+                  'objective': s['objective'], 'status': state['steps'][s['id']]['status'],
+                  'request_id': state['steps'][s['id']].get('request_id'),
+                  'operation_contract': copy.deepcopy(state['steps'][s['id']].get('operation_contract')),
+                  'lifecycle': copy.deepcopy(state['steps'][s['id']].get('lifecycle')),
+                  'failure': copy.deepcopy(state['steps'][s['id']].get('failure')),
+                  'failure_evidence': copy.deepcopy(state['steps'][s['id']].get('failure_evidence'))}
+                 for s in state['plan']['steps']]
+        guidance = self._guidance(state, steps, repair_available)
         return {key: state[key] for key in ('workflow_id', 'status', 'created_at', 'updated_at')} | {
+            **guidance,
             'prompt': state['plan']['request']['prompt'], 'error': state.get('error'),
             'parent_workflow_id': state.get('parent_workflow_id'),
             'repair_attempt_id': state.get('repair_attempt_id'),
@@ -116,14 +241,7 @@ class WorkflowStore:
             'repair_decision': copy.deepcopy(state.get('repair_decision')),
             'repair_loop': copy.deepcopy(state.get('repair_loop')),
             'repair_available': state.get('status') == 'completed' and repair_available,
-            'steps': [{'id': s['id'], 'tool': s['tool'], 'action': s['action'],
-                       'objective': s['objective'], 'status': state['steps'][s['id']]['status'],
-                       'request_id': state['steps'][s['id']].get('request_id'),
-                       'operation_contract': copy.deepcopy(state['steps'][s['id']].get('operation_contract')),
-                       'lifecycle': copy.deepcopy(state['steps'][s['id']].get('lifecycle')),
-                       'failure': copy.deepcopy(state['steps'][s['id']].get('failure')),
-                       'failure_evidence': copy.deepcopy(state['steps'][s['id']].get('failure_evidence'))}
-                      for s in state['plan']['steps']]}
+            'steps': steps}
 
 
 class DurableWorkflow:
