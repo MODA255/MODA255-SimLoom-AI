@@ -80,6 +80,8 @@ bulge 弧段、SPLINE 采样段和 HATCH 多段线边界检查自交/重叠；�
 
 `cad.constraints_check` 和 `cad.constraints_enforce` 现已补齐约束检查与顺序施加，支持点引用、线/圆弧/圆常用几何关系、结构化冲突证据和写事务回滚；这与 AgentCAD 的直接约束契约相近，但仍明确不是联立参数求解器。详见 `CAD_CONSTRAINTS.md`。
 
+`cad.draw_from_spec` 现已补齐紧凑的 `plate` 规格编译入口，支持尺寸、四角孔阵列、稳定语义标签、sidecar、原生回读和事务历史；MCP façade 也可以从空工程直接调用。详见 `CAD_DRAW_FROM_SPEC.md`。
+
 `cad.measure_entities` 现已补齐 AgentCAD 的解析几何测量入口。它对 LINE、CIRCLE、ARC、带 bulge 的 LWPOLYLINE/POLYLINE 和简单 HATCH 返回逐实体证据与汇总长度、周长、面积，支持与 `cad.query` 相同的选择器、严格模式和只读失败警告；详见 `CAD_MEASUREMENTS.md`。它增强 Agent-facing 的工程检查，不替代四款商业软件的原生结果读取。
 
 compact MCP toolset 现已补齐 AgentCAD 风格的 `create_drawing`、`apply_operations`、`read_drawing`、`inspect_entities`、`measure_entities`、`apply_constraints`、`verify_drawing` 和 `get_diff` 入口；它们共享活动 CAD context、事务、error envelope 和 profile policy，批次内部的扁平 operation 名称会先归一到 SimLoom canonical operation。详见 `AGENTCAD_COMPAT.md`。

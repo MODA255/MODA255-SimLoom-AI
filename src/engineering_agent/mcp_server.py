@@ -464,6 +464,7 @@ class MCPServer:
                 {"name": "create_drawing", "description": "Create a new blank native DXF drawing", "inputSchema": {"type": "object", "required": ["output"], "properties": {"output": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "units": {"type": "string", "default": "mm"}, "template": {"type": "string", "enum": ["blank", "iso"]}, "annotation_scale": {"type": "number"}, "overwrite": {"type": "boolean"}}}},
                 {"name": "inspect_entities", "description": "Inspect entities using AgentCAD-compatible filters and pagination", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "filter": {"type": "object"}, "ids": {"type": "array"}, "entity_type": {"type": "string"}, "layer": {"type": "string"}, "window": {"type": "array"}, "limit": {"type": "integer"}, "offset": {"type": "integer"}}}},
                 {"name": "apply_constraints", "description": "Check or sequentially enforce geometric constraints", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "output_file": {"type": "string"}, "constraints": {"type": "array"}, "mode": {"type": "string", "enum": ["check", "enforce"], "default": "check"}, "tolerance": {"type": "number"}}}},
+            {"name": "draw_from_spec", "description": "Create a validated drawing from a compact plate specification", "inputSchema": {"type": "object", "required": ["spec", "output"], "properties": {"project_dir": {"type": "string"}, "output": {"type": "string"}, "spec": {"type": "object"}, "overwrite": {"type": "boolean"}}}},
             ]
             tools.extend(facade_tools)
         if toolset == "compact":
@@ -871,7 +872,7 @@ class MCPServer:
                 raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "arguments must be an object")
             target = operation if operation.startswith("operation.") else "operation." + operation
             return self.call(target, operation_arguments)
-        if name in {"apply_operations", "read_drawing", "measure_entities", "verify_drawing", "get_diff", "create_drawing", "inspect_entities", "apply_constraints"}:
+        if name in {"apply_operations", "read_drawing", "measure_entities", "verify_drawing", "get_diff", "create_drawing", "inspect_entities", "apply_constraints", "draw_from_spec"}:
             mapped = dict(arguments)
             if "input_file" not in mapped:
                 for key in ("document", "path"):
@@ -880,6 +881,11 @@ class MCPServer:
                         break
             mapped.pop("document", None)
             mapped.pop("path", None)
+            if name == "draw_from_spec":
+                mapped["output_file"] = mapped.get("output") or mapped.get("path")
+                mapped.pop("output", None)
+                mapped.pop("path", None)
+                return self.call("operation.cad.draw_from_spec", mapped)
             if name == "apply_constraints":
                 mode = str(mapped.pop("mode", "check")).lower()
                 if mode not in {"check", "enforce"}:

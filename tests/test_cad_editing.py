@@ -1298,3 +1298,18 @@ def test_standard_catalog_is_queryable_and_strict_annotations_are_validated(tmp_
             "center": {"x": 1, "y": 1}, "symbol": "NOT_A_STANDARD_SYMBOL", "standard": "ISO", "strict_standard": True,
         })
 
+
+
+def test_draw_from_spec_compiles_plate_and_corner_holes_with_persisted_validation(tmp_path):
+    output = tmp_path / "plate.dxf"
+    result = EngineeringAgent({"tools": {}}).execute_operation("cad.draw_from_spec", {
+        "project_dir": str(tmp_path), "output_file": output.name,
+        "spec": {"kind": "plate", "units": "mm", "width": 100, "height": 60,
+                 "holes": [{"pattern": "corners", "diameter": 8, "edge_offset": 10}]},
+    })
+    assert result["validation"]["valid"]
+    assert result["hole_count"] == 4
+    document = CadDocument.open(output)
+    assert sum(item["type"] == "LWPOLYLINE" for item in document.entities) == 1
+    assert sum(item["type"] == "CIRCLE" for item in document.entities) == 4
+    assert document.metadata["agentcad_spec"]["expanded_hole_count"] == 4

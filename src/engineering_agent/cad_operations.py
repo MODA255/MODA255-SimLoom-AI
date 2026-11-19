@@ -4358,6 +4358,77 @@ class CadOperationEngine:
                     "restored_revision": restored["revision"], "history": history.summary(),
                     "document": restored_document, "persisted_validation": validation, "timeline": transaction.events()}
 
+    def _draw_from_spec(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Compile a compact plate specification into one validated drawing."""
+        spec = copy.deepcopy(arguments.get("spec") or {})
+        if str(spec.get("kind", "")).lower() != "plate":
+            raise ValueError("UNSUPPORTED_SPEC_KIND:" + str(spec.get("kind", "")))
+        try:
+            width, height = float(spec["width"]), float(spec["height"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("PLATE_DIMENSIONS_REQUIRED") from exc
+        if not math.isfinite(width) or not math.isfinite(height) or width <= 0 or height <= 0:
+            raise ValueError("PLATE_DIMENSIONS_INVALID")
+        output_path = Path(str(arguments.get("output_file"))).expanduser()
+        project_root = Path(arguments.get("project_dir") or output_path.parent).expanduser().resolve()
+        output_file = (project_root / output_path if arguments.get("project_dir") and not output_path.is_absolute() else output_path).resolve()
+        if project_root not in output_file.parents:
+            raise ValueError("PATH_OUTSIDE_PROJECT")
+        if output_file.exists() and not bool(arguments.get("overwrite", False)):
+            raise ValueError("FILE_EXISTS:" + str(output_file))
+        input_file = arguments.get("input_file")
+        if input_file:
+            input_path = Path(str(input_file)).expanduser()
+            source = (project_root / input_path if arguments.get("project_dir") and not input_path.is_absolute() else input_path).resolve()
+            if project_root not in source.parents or not source.is_file():
+                raise ValueError("CAD_INPUT_FILE_REQUIRED")
+            document = self.open(source)
+        else:
+            document = CadDocument(name=output_file.stem, units=str(spec.get("units", "mm")))
+            document.ensure_layer("0")
+        origin = _point(spec.get("origin", {"x": 0, "y": 0, "z": 0}))
+        rectangle = {"origin": origin, "width": width, "height": height,
+                     "layer": str(spec.get("outline_layer", "OUTLINE")), "tag": "outline"}
+        self._apply_one(document, "rectangle_create", rectangle)
+        holes = list(spec.get("holes") or [])
+        expanded: list[dict[str, Any]] = []
+        for index, hole in enumerate(holes, start=1):
+            hole = dict(hole)
+            diameter = float(hole.get("diameter", hole.get("size", 0)))
+            if not math.isfinite(diameter) or diameter <= 0:
+                raise ValueError("HOLE_DIAMETER_INVALID")
+            pattern = str(hole.get("pattern", "explicit")).lower()
+            if pattern == "corners":
+                offset = float(hole.get("edge_offset", hole.get("offset", 0)))
+                if offset < 0 or offset * 2 >= min(width, height):
+                    raise ValueError("HOLE_EDGE_OFFSET_INVALID")
+                centers = [
+                    (origin["x"] + offset, origin["y"] + offset),
+                    (origin["x"] + width - offset, origin["y"] + offset),
+                    (origin["x"] + width - offset, origin["y"] + height - offset),
+                    (origin["x"] + offset, origin["y"] + height - offset),
+                ]
+            else:
+                center = _point(hole.get("center"))
+                centers = [(center["x"], center["y"])]
+            for number, (x, y) in enumerate(centers, start=1):
+                expanded.append({"center": {"x": x, "y": y, "z": origin["z"]}, "radius": diameter / 2,
+                                 "layer": str(hole.get("layer", "HOLES")),
+                                 "tag": str(hole.get("tag", f"hole.{index}")) if len(centers) == 1 else f"hole.{index}.{number}"})
+        for hole in expanded:
+            self._apply_one(document, "circle_create", hole)
+        document.metadata["agentcad_spec"] = {"schema_version": "simloom-ai/drawing-spec/v1", **spec,
+                                                "expanded_hole_count": len(expanded)}
+        requirements = {"required_entity_types": ["LWPOLYLINE"], "min_entity_count": 1}
+        with RunTransaction(project_root) as transaction:
+            transaction.begin({"operation": "cad.draw_from_spec", "output_file": str(output_file), "spec": spec})
+            transaction.checkpoint("before-draw-spec", {"entity_count": len(document.entities), "spec": spec})
+            committed, validation, history = self._write(transaction, document, output_file, requirements, "draw_from_spec")
+            persisted = self.open(output_file)
+            return {"schema_version": "simloom-ai/drawing-spec/v1", "path": committed[str(output_file.relative_to(project_root))],
+                    "document": persisted.to_dict(), "spec": copy.deepcopy(spec), "validation": validation,
+                    "history": history, "run_id": transaction.run_id, "hole_count": len(expanded)}
+
     def _document_create(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Create a blank native DXF through the normal transaction/history path."""
         raw_output = arguments.get("output_file") or arguments.get("path")
@@ -4534,6 +4605,8 @@ class CadOperationEngine:
             return self._script_apply(arguments)
         if operation == "cad.document_create":
             return self._document_create(arguments)
+        if operation == "cad.draw_from_spec":
+            return self._draw_from_spec(arguments)
         if operation == "cad.constraints_enforce":
             return self._constraints_enforce(arguments)
         if operation == "cad.plot":

@@ -185,3 +185,13 @@ def test_agentcad_apply_constraints_facade_checks_and_enforces(tmp_path):
     })
     assert enforced["result"].get("isError", False) is False
     assert enforced["result"]["structuredContent"]["checks"][0]["satisfied"] is True
+
+
+def test_agentcad_draw_from_spec_facade_creates_plate(tmp_path):
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="full", toolset="compact")
+    result = _call(server, "draw_from_spec", {
+        "project_dir": str(tmp_path), "output": "plate.dxf",
+        "spec": {"kind": "plate", "width": 20, "height": 10, "holes": []},
+    })
+    assert result["result"].get("isError", False) is False
+    assert result["result"]["structuredContent"]["hole_count"] == 0
