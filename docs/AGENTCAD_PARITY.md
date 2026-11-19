@@ -382,6 +382,12 @@ Agent 仍能看到原 request 的阶段、错误码、日志位置和显式 nati
 文件来补造旧任务信息。这样失败证据从单步 adapter 输出扩展为可回放的 Agent-facing 诊断链，但仍不
 替代四款软件的原生报告、许可证核验或 Windows 实机验收。
 
+随后新增 `engineering://workflows` 和 `engineering://workflow` MCP resources。Agent 可以分页发现
+保存的工程链，并用 `detail=failures` 只读取失败步骤和恢复证据；full profile 的 resume/repair 会
+向已订阅资源发送更新通知。这样“发现 → 执行 → 观察 → 读取证据 → 恢复/修复”的 MCP 闭环不再依赖
+一次性下载完整报告，进一步接近 AgentCAD 的紧凑 agent-facing runtime。资源仍是只读观察接口，不能
+替代四款软件的实机执行、许可证状态或工程验收。
+
 2026-11-17 后续：`EngineeringResult/v1` 增加可选 `engineering-context/v1`。runner 可以明确导出
 软件版本/构建/许可证状态、原生对象、坐标系、工况和模型引用；控制端只做有界字段归一化，不从
 退出码、文件名或工具名称推断原生语义。MCP operation schema 与结果文档同步发布，真实 Windows

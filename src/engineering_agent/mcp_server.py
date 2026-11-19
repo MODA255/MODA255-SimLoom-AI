@@ -4,6 +4,7 @@ import json
 import sys
 import base64
 import hashlib
+import re
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -174,6 +175,7 @@ class MCPServer:
         mutating = (
             tool_name in {"engineering_generate", "engineering_offline_run", "engineering_version"}
             or tool_name == "engineering_run" and not bool(arguments.get("dry_run", True))
+            or tool_name == "engineering_workflow" and arguments.get("action") in {"resume", "repair"}
             or operation_name is not None and self.operations.get(operation_name).safety in {"write", "execute"}
         )
         if not mutating:
@@ -570,6 +572,7 @@ class MCPServer:
             {"uri": "engineering://operations", "name": "Operation schemas", "mimeType": "application/json"},
             {"uri": f"engineering://action-profile?root={root}", "name": "Software action bindings", "mimeType": "application/json"},
             {"uri": "engineering://worker-config", "name": "Windows worker configuration template", "mimeType": "application/json"},
+            {"uri": f"engineering://workflows?root={root}", "name": "Saved software workflows", "mimeType": "application/json"},
             {"uri": f"engineering://versions?root={root}", "name": "Project versions", "mimeType": "application/json"},
             {"uri": f"engineering://project?root={root}", "name": "Canonical project object", "mimeType": "application/json"},
             {"uri": f"engineering://dependencies?root={root}", "name": "Project dependency graph", "mimeType": "application/json"},
@@ -584,6 +587,10 @@ class MCPServer:
         if isinstance(operation_name, str) and operation_name:
             resources.append({"uri": f"engineering://operation?name={quote(operation_name, safe='._-')}",
                               "name": f"Operation schema: {operation_name}", "mimeType": "application/json"})
+        workflow_id = params.get("workflow_id")
+        if isinstance(workflow_id, str) and workflow_id:
+            resources.append({"uri": f"engineering://workflow?root={root}&workflow_id={workflow_id}",
+                              "name": "Saved workflow status and failure evidence", "mimeType": "application/json"})
         watch_id = params.get("watch_id")
         if isinstance(watch_id, str) and watch_id:
             resources.append({"uri": f"engineering://watch?root={root}&watch_id={watch_id}", "name": "External file watch status", "mimeType": "application/json"})
@@ -600,6 +607,8 @@ class MCPServer:
             {"uriTemplate": "engineering://capabilities", "name": "Software capability matrix", "mimeType": "application/json"},
             {"uriTemplate": "engineering://action-profile?root={root}", "name": "Software action bindings", "mimeType": "application/json"},
             {"uriTemplate": "engineering://worker-config", "name": "Windows worker configuration template", "mimeType": "application/json"},
+            {"uriTemplate": "engineering://workflows?root={root}&limit={limit}&cursor={cursor}", "name": "Saved software workflows", "mimeType": "application/json"},
+            {"uriTemplate": "engineering://workflow?root={root}&workflow_id={workflow_id}&detail={detail}", "name": "Saved workflow status and failure evidence", "mimeType": "application/json"},
             {"uriTemplate": "engineering://operations?detail={detail}&category={category}&limit={limit}&cursor={cursor}", "name": "Filtered operation schemas", "mimeType": "application/json"},
             {"uriTemplate": "engineering://operation?name={name}", "name": "Single operation schema", "mimeType": "application/json"},
             {"uriTemplate": "engineering://project?root={root}", "name": "Canonical project object", "mimeType": "application/json"},
@@ -647,6 +656,42 @@ class MCPServer:
             value = build_action_profile(self.agent.config, project_root=root)
         elif parsed.netloc == "worker-config":
             value = build_worker_config_template(self.agent.config)
+        elif parsed.netloc == "workflows":
+            try:
+                limit = int(query.get("limit", ["50"])[0])
+            except ValueError as exc:
+                raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "workflow resource limit must be an integer") from exc
+            workflow_result = self.agent.workflow("list", project_dir=root)
+            workflows = workflow_result.get("workflows") if isinstance(workflow_result, dict) else None
+            if not isinstance(workflows, list):
+                raise ProtocolError(ErrorCode.INTERNAL_ERROR, "workflow list did not return an array")
+            value = self._paged(workflows, {"limit": limit, "cursor": query.get("cursor", [""])[0]}, "workflows")
+        elif parsed.netloc == "workflow":
+            workflow_id = query.get("workflow_id", [""])[0].strip()
+            if not re.fullmatch(r"[0-9a-f]{32}", workflow_id):
+                raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "workflow_id must be a 32-character lowercase hexadecimal id")
+            detail = query.get("detail", ["summary"])[0].strip().lower()
+            if detail not in {"summary", "failures"}:
+                raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "workflow detail must be summary or failures")
+            summary = self.agent.workflow("status", workflow_id, project_dir=root)
+            if not isinstance(summary, dict):
+                raise ProtocolError(ErrorCode.INTERNAL_ERROR, "workflow status did not return an object")
+            if detail == "failures":
+                failures = []
+                for step in summary.get("steps", []) if isinstance(summary.get("steps"), list) else []:
+                    if not isinstance(step, dict):
+                        continue
+                    if step.get("failure") is None and step.get("failure_evidence") is None:
+                        continue
+                    failures.append({key: step[key] for key in (
+                        "id", "tool", "action", "status", "request_id", "failure", "failure_evidence", "lifecycle"
+                    ) if key in step})
+                value = {"schemaVersion": self.schema_version, "workflow_id": workflow_id,
+                         "status": summary.get("status"), "failures": failures[:256],
+                         "repair_decision": summary.get("repair_decision"),
+                         "repair_loop": summary.get("repair_loop")}
+            else:
+                value = summary
         elif parsed.netloc == "versions":
             value = {"versions": VersionStore(root).list(), "timeline": VersionStore(root).timeline(), "schemaVersion": self.schema_version}
         elif parsed.netloc == "project":

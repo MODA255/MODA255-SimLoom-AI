@@ -27,6 +27,21 @@ Python 使用 `agent.workflow('resume', workflow_id, project_dir=...)`；HTTP �
 队列任务也可使用 `POST /api/tasks/<task_id>/resume`。
 MCP 的 `engineering_workflow` 在 safe profile 中仅有 `list/status`，full profile 才允许 `resume`。
 
+Agent 也可以通过只读 MCP resource 观察工程链，而不把完整报告全部载入上下文：
+
+```text
+engineering://workflows?root=<project>&limit=50&cursor=<cursor>
+engineering://workflow?root=<project>&workflow_id=<workflow_id>
+engineering://workflow?root=<project>&workflow_id=<workflow_id>&detail=failures
+```
+
+列表资源按游标分页；单条资源返回工作流摘要、步骤状态、原 request ID、生命周期、失败分类和
+`failure_evidence`。`detail=failures` 只保留失败步骤、脱敏日志路径、显式 native evidence 和
+repair decision，便于 Agent 先判断“继续查询、人工检查、修复输入还是恢复原任务”。读取资源不会
+启动 runner，也不会改变工作流状态。full profile 中执行 `engineering_workflow` 的 `resume` 或
+`repair` 后，已订阅且根目录匹配的工作流资源会收到标准 `notifications/resources/updated`；客户端
+应重新读取 URI，而不是把通知内容当成完整状态。
+
 ## 恢复依据
 
 保存目录是项目内 `.engineering-agent/workflows/<workflow_id>/`：
@@ -36,7 +51,8 @@ MCP 的 `engineering_workflow` 在 safe profile 中仅有 `list/status`，full p
 - 每步在调用软件前保存的请求、请求摘要和稳定任务编号。
 - 每步原始输出响应及哈希；恢复时重新解码文件并按原证据契约校验。
 - 原目标文件哈希、步骤状态、失败原因及最终发布记录。
-- 每一步最后已确认的 `engineering_result.lifecycle` 和 `engineering_result.failure` 摘要；工作流列表和状态页可以在不读取完整报告的情况下显示当前阶段、是否可恢复以及建议动作。
+- 每一步最后已确认的 `engineering_result.lifecycle`、`engineering_result.failure` 和
+  `engineering_result.failure_evidence` 摘要；工作流列表、状态页和 MCP workflow resource 可以在不读取完整报告的情况下显示当前阶段、是否可恢复、建议动作、日志位置和显式 native evidence。
 
 恢复允许更新连接凭据和观察超时；输入、脚本、动作绑定或连接地址改变会阻止继续。
 控制端不会用当前配置中的新阈值替换已提交任务的旧阈值。工作站自身的软件版本、许可证、

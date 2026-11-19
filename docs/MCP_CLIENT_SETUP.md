@@ -77,6 +77,18 @@ PYTHONPATH=src python -m engineering_agent.cli \
 Windows worker 或改变工程文件；真正执行前仍需通过 MCP profile、operation policy 和对应的
 preflight 检查。
 
+工作流也可以通过资源接口按需观察，适合不希望把完整任务报告放入上下文的 Agent：
+
+- `engineering://workflows?root=<project>&limit=50&cursor=<cursor>` 返回项目内保存的工程链列表，使用与其他 MCP 资源相同的游标分页。
+- `engineering://workflow?root=<project>&workflow_id=<id>` 返回单条工程链摘要，包括步骤状态、原 request ID、生命周期、失败分类和 `failure_evidence`。
+- 在同一 URI 加上 `detail=failures` 只返回失败步骤及其受限失败证据、日志路径、建议动作和修复循环决策。
+
+这些 URI 是只读观察入口；资源读取不会恢复、重试或启动软件。要继续工程链，使用 full profile 的
+`engineering_workflow` 工具并传 `action=resume`；恢复后可重新读取同一个 workflow resource。对
+`engineering_workflow` 的 `resume` 或 `repair` 调用会向已订阅且根目录匹配的工作流资源发送
+`notifications/resources/updated`，客户端再读取 URI 获取最新状态。失败证据只来自已保存的 worker
+或 runner 结果，不会从当前项目文件补造历史任务信息。
+
 生成器只写 MCP 客户端配置，不会启动 server，也不会修改工程文件。`--output` 使用临时文件替换
 目标文件，父目录不存在时会创建。
 

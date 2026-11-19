@@ -345,6 +345,31 @@ def test_safe_mcp_exposes_read_only_workflow_actions(workflow_setup):
         server.call('engineering_workflow',{'action':'resume','workflow_id':report.workflow_id,'project_dir':str(project)})
 
 
+def test_mcp_workflow_resources_expose_paginated_status_and_failure_evidence(workflow_setup):
+    from engineering_agent.mcp_server import MCPServer
+    project,manager,config,plan,make=workflow_setup
+    plan.steps[0].parameters['fail']=True
+    report=make().run('fixture',project_dir=str(project),dry_run=False)
+    assert report.status=='failed'
+    server=MCPServer(make(), profile='full')
+    listed=server.handle({'jsonrpc':'2.0','id':1,'method':'resources/list','params':{'root':str(project)}})
+    assert any(item['uri'].startswith('engineering://workflows?') for item in listed['result']['resources'])
+    workflows=server.handle({'jsonrpc':'2.0','id':2,'method':'resources/read','params':{
+        'uri':f'engineering://workflows?root={project}&limit=1'}})
+    workflow_value=json.loads(workflows['result']['contents'][0]['text'])
+    assert workflow_value['workflows'][0]['workflow_id']==report.workflow_id
+    uri=f'engineering://workflow?root={project}&workflow_id={report.workflow_id}'
+    status=server.handle({'jsonrpc':'2.0','id':3,'method':'resources/read','params':{'uri':uri}})
+    status_value=json.loads(status['result']['contents'][0]['text'])
+    assert status_value['workflow_id']==report.workflow_id
+    failed_step=next(item for item in status_value['steps'] if item['status']=='failed')
+    assert failed_step['failure_evidence']['schema_version']=='simloom-ai/failure-evidence/v1'
+    failures=server.handle({'jsonrpc':'2.0','id':4,'method':'resources/read','params':{
+        'uri':uri+'&detail=failures'}})
+    failure_value=json.loads(failures['result']['contents'][0]['text'])
+    assert failure_value['failures'][0]['failure_evidence']['error_code']=='SOFTWARE_EXIT_FAILED'
+
+
 def test_status_read_does_not_require_long_running_project_lock(workflow_setup):
     project,manager,config,plan,make=workflow_setup
     report=start(workflow_setup)
