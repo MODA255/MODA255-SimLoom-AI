@@ -949,6 +949,14 @@ class MCPServer:
                         "workspace": mapped.get("project_dir"), "cad_context": dict(self._cad_context) if self._cad_context else None,
                         "schemaVersion": self.schema_version}
             if name == "standard_library":
+                if mapped.get("item") and not mapped.get("category"):
+                    item = str(mapped["item"]).lower()
+                    mapped["category"] = item if item in {"pid_symbols", "gdt_characteristics", "fasteners", "bearings", "holes"} else None
+                    if mapped.get("category") is None:
+                        mapped["query"] = mapped.get("query") or mapped["item"]
+                if mapped.get("size"):
+                    mapped["query"] = mapped.get("query") or mapped["size"]
+                mapped.pop("item", None); mapped.pop("size", None); mapped.pop("drawing", None)
                 return self.call("operation.cad.standard_library", mapped)
             if name == "run_script":
                 mapped["input_file"] = mapped.get("input_file") or mapped.get("document") or mapped.get("path")

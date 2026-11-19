@@ -310,3 +310,12 @@ def test_validate_drawing_facade_accepts_generic_dxf_and_requirements(tmp_path):
     })
     assert result["result"].get("isError", False) is False
     assert result["result"]["structuredContent"]["validation"]["valid"] is True
+
+
+def test_agentcad_standard_library_facade_maps_item_and_size_queries(tmp_path):
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="full", toolset="compact")
+    result = _call(server, "standard_library", {"item": "fasteners", "size": "M8"})
+    assert result["result"].get("isError", False) is False
+    categories = result["result"]["structuredContent"]["categories"]
+    assert "fasteners" in categories
+    assert any("M8" in str(item) for item in categories["fasteners"])
