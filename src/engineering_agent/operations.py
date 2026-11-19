@@ -306,6 +306,16 @@ OPERATION_SPECS: tuple[OperationSpec, ...] = (
         "include_geometry": {"type": "boolean", "default": True}},
         output_schema={"entities": {"type": "array"}, "total_count": {"type": "integer"}, "matched_ids": {"type": "array"}, "query": {"type": "object"}, "warnings": {"type": "array", "items": {"type": "string"}}},
         output_kinds=("cad_document",), safety="read"),
+    OperationSpec("cad.measure_entities", ToolName.CATIA, "Compute exact planar length, perimeter and area for selected CAD entities", required_parameters=("input_file",), parameters_schema={
+        "input_file": {"type": "string"}, "project_dir": {"type": "string"},
+        "entity_ids": {"type": "array", "items": {"type": "string"}}, "selection_set": {"type": "string"},
+        "entity_type": {"type": "string"}, "layer": {"type": "string"},
+        "window": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "object"}},
+        "filter": {"type": "object"}, "target": {"description": "AgentCAD-compatible entity selector"},
+        "strict": {"type": "boolean", "default": False}, "include_geometry": {"type": "boolean", "default": False},
+        "tolerance": {"type": "number", "minimum": 0, "default": 1e-9}},
+        output_schema={"schema_version": {"type": "string"}, "measurements": {"type": "array"}, "summary": {"type": "object"}, "warnings": {"type": "array"}},
+        output_kinds=("cad_measurements", "validation"), safety="read"),
     OperationSpec("cad.verify_dimensions", ToolName.CATIA, "Verify physical and optional displayed dimension values against tolerances", required_parameters=("input_file", "checks"), parameters_schema={
         "input_file": {"type": "string"}, "project_dir": {"type": "string"},
         "checks": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["value"], "properties": {

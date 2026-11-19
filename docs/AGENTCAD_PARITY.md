@@ -78,6 +78,8 @@ bulge 弧段、SPLINE 采样段和 HATCH 多段线边界检查自交/重叠；�
 工程要求设置 `reject_self_intersections` 或 `reject_curve_topology` 后升级为错误，细节见
 `CURVE_TOPOLOGY.md`。
 
+`cad.measure_entities` 现已补齐 AgentCAD 的解析几何测量入口。它对 LINE、CIRCLE、ARC、带 bulge 的 LWPOLYLINE/POLYLINE 和简单 HATCH 返回逐实体证据与汇总长度、周长、面积，支持与 `cad.query` 相同的选择器、严格模式和只读失败警告；详见 `CAD_MEASUREMENTS.md`。它增强 Agent-facing 的工程检查，不替代四款商业软件的原生结果读取。
+
 ## 必须逐项证明的能力
 
 | 能力 | 本地证据及现状 | 完成所需证据 / 下一步 |

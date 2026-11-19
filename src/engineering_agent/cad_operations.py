@@ -1161,6 +1161,127 @@ def _query_entities(document: CadDocument, arguments: dict[str, Any]) -> dict[st
             "warnings": sorted(set(query_warnings))}
 
 
+
+def _bulged_path_metrics(vertices: list[dict[str, Any]], bulges: list[Any] | None = None,
+                         *, closed: bool = False) -> dict[str, Any]:
+    """Return analytic length and signed area for a polyline with bulge arcs."""
+    points = [_point(value) for value in vertices]
+    if len(points) < 2:
+        return {"area": 0.0 if closed else None, "perimeter": 0.0, "exact": True, "method": "analytic_bulge"}
+    values = list(bulges or [])
+    count = len(points) if closed else len(points) - 1
+    area = 0.0
+    perimeter = 0.0
+    for index in range(count):
+        start = points[index]
+        end = points[(index + 1) % len(points)]
+        chord = math.dist((start["x"], start["y"]), (end["x"], end["y"]))
+        bulge = float(values[index]) if index < len(values) else 0.0
+        area += (start["x"] * end["y"] - end["x"] * start["y"]) / 2.0
+        if abs(bulge) <= 1e-12 or chord <= 1e-12:
+            perimeter += chord
+            continue
+        theta = 4.0 * math.atan(bulge)
+        radius = chord * (1.0 + bulge * bulge) / (4.0 * abs(bulge))
+        area += radius * radius * (theta - math.sin(theta)) / 2.0
+        perimeter += abs(radius * theta)
+    return {"area": abs(area) if closed else None, "perimeter": perimeter,
+            "exact": True, "method": "analytic_bulge", "closed": bool(closed)}
+
+
+def _measure_entity(entity: dict[str, Any]) -> dict[str, Any]:
+    """Measure one canonical entity without changing the source document."""
+    entity_type = str(entity.get("type", "")).upper()
+    result: dict[str, Any] = {
+        "id": str(entity.get("id", "")), "handle": entity.get("handle"),
+        "type": entity_type, "layer": str(entity.get("layer", "0")),
+        "exact": True,
+    }
+    if entity_type == "LINE":
+        start, end = _point(entity.get("start")), _point(entity.get("end"))
+        result.update(length=math.dist((start["x"], start["y"], start["z"]),
+                                       (end["x"], end["y"], end["z"])), method="euclidean")
+    elif entity_type == "CIRCLE":
+        radius = float(entity.get("radius", 0.0))
+        if not math.isfinite(radius) or radius < 0:
+            raise ValueError("INVALID_CIRCLE_RADIUS")
+        result.update(radius=radius, area=math.pi * radius * radius,
+                      perimeter=2.0 * math.pi * radius, method="analytic_circle")
+    elif entity_type == "ARC":
+        radius = float(entity.get("radius", 0.0))
+        start = float(entity.get("start_angle", entity.get("start", 0.0)))
+        end = float(entity.get("end_angle", entity.get("end", 0.0)))
+        if not all(math.isfinite(value) for value in (radius, start, end)) or radius < 0:
+            raise ValueError("INVALID_ARC_GEOMETRY")
+        span = math.radians((end - start) % 360.0)
+        if abs(span) <= 1e-12 and radius > 0:
+            span = 2.0 * math.pi
+        result.update(radius=radius, sweep_degrees=math.degrees(span),
+                      perimeter=radius * span, method="analytic_circle")
+    elif entity_type in {"LWPOLYLINE", "POLYLINE"}:
+        result.update(_bulged_path_metrics(entity.get("vertices") or [], entity.get("bulges"),
+                                           closed=bool(entity.get("closed", False))))
+    elif entity_type == "HATCH":
+        paths = entity.get("boundary_paths") or []
+        if paths and all(isinstance(path, dict) and path.get("vertices") for path in paths):
+            metrics = [_bulged_path_metrics(path["vertices"], path.get("bulges"), closed=True) for path in paths]
+            result.update(area=sum(float(item.get("area") or 0.0) for item in metrics),
+                          perimeter=sum(float(item.get("perimeter") or 0.0) for item in metrics),
+                          method="analytic_bulge", paths=len(metrics))
+        else:
+            vertices = entity.get("boundary_vertices") or []
+            if len(vertices) < 3:
+                raise ValueError("EMPTY_HATCH_BOUNDARY")
+            result.update(_bulged_path_metrics(vertices, entity.get("bulges"), closed=True), paths=1)
+            result["method"] = "analytic_bulge"
+    else:
+        result.update(exact=False, supported=False, error_code="UNSUPPORTED_MEASUREMENT")
+    result.setdefault("supported", True)
+    return result
+
+
+def _measure_entities(document: CadDocument, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Measure selected entities and retain per-entity evidence for an Agent."""
+    query_arguments = copy.deepcopy(arguments)
+    target = query_arguments.pop("target", None)
+    if target is not None and not any(query_arguments.get(key) for key in ("entity_ids", "selection_set", "filter")):
+        query_arguments["entity_ids"] = target if isinstance(target, list) else [target]
+    query_arguments["limit"] = 1000
+    query_arguments["include_geometry"] = True
+    query = _query_entities(document, query_arguments)
+    measurements: list[dict[str, Any]] = []
+    warnings = list(query.get("warnings") or [])
+    totals = {"length": 0.0, "perimeter": 0.0, "area": 0.0}
+    for entity in query["entities"]:
+        try:
+            measured = _measure_entity(entity)
+        except ValueError as exc:
+            measured = {"id": str(entity.get("id", "")), "handle": entity.get("handle"),
+                        "type": str(entity.get("type", "")).upper(), "layer": str(entity.get("layer", "0")),
+                        "supported": False, "exact": False, "error_code": str(exc)}
+        for key in totals:
+            value = measured.get(key)
+            if isinstance(value, (int, float)) and math.isfinite(float(value)):
+                totals[key] += float(value)
+        if not measured.get("supported", True):
+            warnings.append(f"{measured.get('error_code', 'UNSUPPORTED_MEASUREMENT')}:{measured.get('id', '')}")
+        if not arguments.get("include_geometry", False):
+            measured.pop("vertices", None)
+            measured.pop("boundary_vertices", None)
+        measurements.append(measured)
+    unsupported = [item for item in measurements if not item.get("supported", True)]
+    if arguments.get("strict") and unsupported:
+        raise ValueError("UNSUPPORTED_MEASUREMENT:" + ",".join(str(item.get("id", "")) for item in unsupported))
+    return {
+        "schema_version": "simloom-ai/cad-measurements/v1",
+        "document_id": document.document_id, "units": document.units,
+        "measurements": measurements,
+        "summary": {"selected_count": len(measurements), "measured_count": len(measurements) - len(unsupported),
+                     "unsupported_count": len(unsupported), "length": totals["length"],
+                     "perimeter": totals["perimeter"], "area": totals["area"]},
+        "selection": query.get("query", {}), "warnings": sorted(set(warnings)),
+    }
+
 def _expand_associative_refs(document: CadDocument, ids: list[str]) -> list[str]:
     """Expand a transform selection to keep associative HATCH boundaries intact."""
     by_ref = {str(item.get("id")): item for item in document.entities}
@@ -4365,7 +4486,7 @@ class CadOperationEngine:
             raise ValueError("PATH_OUTSIDE_PROJECT")
         if operation in {"cad.history", "cad.undo", "cad.redo"}:
             return self._history_operation(operation, project_root, input_file)
-        if operation in {"cad.audit", "cad.document_diff", "cad.visual_diff", "cad.pid_audit", "cad.standard_parts_audit", "cad.document_open", "cad.document_inspect", "cad.document_recompute", "cad.query", "cad.verify_dimensions"}:
+        if operation in {"cad.audit", "cad.document_diff", "cad.visual_diff", "cad.pid_audit", "cad.standard_parts_audit", "cad.document_open", "cad.document_inspect", "cad.document_recompute", "cad.query", "cad.measure_entities", "cad.verify_dimensions"}:
             with RunTransaction.read_lock(project_root):
                 if not input_file.is_file():
                     raise FileNotFoundError(input_file)
@@ -4378,6 +4499,10 @@ class CadOperationEngine:
                 result = {"document": document.to_dict(), "validation": validation}
                 if operation == "cad.query":
                     result = _query_entities(document, arguments)
+                    result["path"] = str(input_file)
+                    result["validation"] = validation
+                elif operation == "cad.measure_entities":
+                    result = _measure_entities(document, arguments)
                     result["path"] = str(input_file)
                     result["validation"] = validation
                 elif operation == "cad.verify_dimensions":

@@ -45,6 +45,7 @@ AGENTCAD_OPERATION_ALIASES: dict[str, str] = {
     "add_spline": "cad.spline_create",
     "add_xline": "cad.xline_create",
     "trace_boundary": "cad.trace_boundary",
+    "measure_entities": "cad.measure_entities",
     "array_polar": "cad.entity_array_polar",
     "array_rect": "cad.entity_array_rectangular",
     "break": "cad.entity_break",
