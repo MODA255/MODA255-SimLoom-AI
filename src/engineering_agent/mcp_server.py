@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, quote, urlparse
 from typing import Any
 
 from .agent import EngineeringAgent
+from .agentcad_compat import normalize_operation
 from .cad_model import CadDocument
 from .operations import OperationRegistry
 from .protocol import ErrorCode, ProtocolError, failure, parse_json_line
@@ -173,7 +174,7 @@ class MCPServer:
         elif tool_name.startswith("operation."):
             operation_name = tool_name[len("operation."):]
         mutating = (
-            tool_name in {"engineering_generate", "engineering_offline_run", "engineering_version"}
+            tool_name in {"engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations"}
             or tool_name == "engineering_run" and not bool(arguments.get("dry_run", True))
             or tool_name == "engineering_workflow" and arguments.get("action") in {"resume", "repair"}
             or operation_name is not None and self.operations.get(operation_name).safety in {"write", "execute"}
@@ -365,10 +366,15 @@ class MCPServer:
             {"name": "engineering_measure_image", "description": "Read-only source-pixel color measurement with optional pixel-to-drawing coordinate mapping and annotated PNG overlay", "inputSchema": {"type": "object", "required": ["root", "path", "target_color"], "properties": {"root": {"type": "string"}, "path": {"type": "string"}, "region": {"type": "array", "items": {"type": "integer"}, "minItems": 4, "maxItems": 4}, "target_color": {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 255}, "minItems": 3, "maxItems": 3}, "tolerance": {"type": "integer", "minimum": 0, "maximum": 255, "default": 16}, "alpha_threshold": {"type": "integer", "minimum": 0, "maximum": 255, "default": 1}, "max_size": {"type": "integer", "minimum": 64, "maximum": 2048, "default": 1024}, "overlay": {"type": "boolean", "default": True}, "coordinate_system": {"type": "object", "description": "Full-image drawing coordinate extents; y_axis is up or down", "required": ["x_min", "x_max", "y_min", "y_max", "y_axis"], "properties": {"x_min": {"type": "number"}, "x_max": {"type": "number"}, "y_min": {"type": "number"}, "y_max": {"type": "number"}, "y_axis": {"type": "string", "enum": ["up", "down"]}}}}}},
             {"name": "engineering_version", "description": "Create an immutable project snapshot", "inputSchema": {"type": "object", "required": ["project_dir", "label", "paths"], "properties": {"project_dir": {"type": "string"}, "label": {"type": "string"}, "paths": {"type": "array"}}}},
             {"name": "engineering_diff", "description": "Compare two immutable snapshots", "inputSchema": {"type": "object", "required": ["project_dir", "left", "right"], "properties": {"project_dir": {"type": "string"}, "left": {"type": "string"}, "right": {"type": "string"}}}},
+            {"name": "apply_operations", "description": "Apply an AgentCAD-compatible atomic operation batch to the active drawing", "inputSchema": {"type": "object", "required": ["operations"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "output_file": {"type": "string"}, "operations": {"type": "array", "items": {"type": "object"}}, "requirements": {"type": "object"}, "auto_repair": {"type": "boolean", "default": True}}}},
+            {"name": "read_drawing", "description": "Read the active drawing into the canonical document model", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}}}},
+            {"name": "measure_entities", "description": "Measure selected drawing entities with analytic geometry", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "target": {}, "entity_ids": {"type": "array"}, "selection_set": {"type": "string"}, "entity_type": {"type": "string"}, "layer": {"type": "string"}, "window": {"type": "array"}, "strict": {"type": "boolean"}}}},
+            {"name": "verify_drawing", "description": "Run independent drawing validation and engineering requirements", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "requirements": {"type": "object"}}}},
+            {"name": "get_diff", "description": "Compare the active drawing with another drawing", "inputSchema": {"type": "object", "required": ["right_file"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "right_file": {"type": "string"}}}},
         ]
         if include_profile and self.profile == "safe":
             tools = [tool for tool in tools if tool["name"] not in {
-                "engineering_run", "engineering_generate", "engineering_offline_run", "engineering_version"}]
+                "engineering_run", "engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations"}]
         for tool in tools:
             if tool["name"] in {"engineering_plan", "engineering_preflight", "engineering_run"}:
                 tool["inputSchema"]["properties"]["parameters"] = {"type": "object", "description": "Explicit engineering parameters forwarded to software steps"}
@@ -835,7 +841,7 @@ class MCPServer:
     def call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         self._check_access(name)
         if self.profile == "safe":
-            mutating = name in {"engineering_run", "engineering_generate", "engineering_offline_run", "engineering_version"}
+            mutating = name in {"engineering_run", "engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations"}
             if name.startswith("operation."):
                 mutating = self.operations.get(name[len("operation."):]).safety in {"write", "execute"}
             if mutating:
@@ -856,6 +862,38 @@ class MCPServer:
                 raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "arguments must be an object")
             target = operation if operation.startswith("operation.") else "operation." + operation
             return self.call(target, operation_arguments)
+        if name in {"apply_operations", "read_drawing", "measure_entities", "verify_drawing", "get_diff"}:
+            mapped = dict(arguments)
+            if "input_file" not in mapped:
+                for key in ("document", "path"):
+                    if mapped.get(key):
+                        mapped["input_file"] = mapped[key]
+                        break
+            mapped.pop("document", None)
+            mapped.pop("path", None)
+            if name == "apply_operations":
+                operations = mapped.get("operations")
+                if not isinstance(operations, list) or not operations:
+                    raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "operations must be a non-empty array")
+                normalized = []
+                for item in operations:
+                    if not isinstance(item, dict):
+                        raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "each operation must be an object")
+                    item = dict(item)
+                    operation_name = item.pop("operation", item.pop("op", None))
+                    if not isinstance(operation_name, str) or not operation_name.strip():
+                        raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "each operation requires operation or op")
+                    canonical, params, _ = normalize_operation(operation_name, item)
+                    normalized.append({"operation": canonical, **params})
+                mapped["operations"] = normalized
+                return self.call("operation.cad.batch_apply", mapped)
+            target = {"read_drawing": "operation.cad.document_inspect",
+                      "measure_entities": "operation.measure_entities",
+                      "verify_drawing": "operation.cad.audit",
+                      "get_diff": "operation.cad.document_diff"}[name]
+            if name == "get_diff" and "right_file" not in mapped:
+                raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "right_file is required")
+            return self.call(target, mapped)
         operation_arguments = arguments
         operation_spec = None
         operation_name = None

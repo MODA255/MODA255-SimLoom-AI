@@ -43,3 +43,15 @@ CAD 数值字段同时接受 JSON number 和带单位字符串，例如 `25mm`�
 `rad`；无量纲 `1`、`%`。MCP 的 `tools/list` 会在数量字段上公开
 `x-quantity-dimension` 和 `x-quantity-format`，因此客户端可以在生成参数时发现这项兼容能力。
 普通文本、文件名、实体 ID、参数引用和标准件型号不会被转换。
+
+## MCP 兼容工具入口
+
+compact MCP toolset 现在提供五个与 AgentCAD 主工具习惯一致的入口：
+
+- `apply_operations` 将 `op`/`operation` 和 AgentCAD 参数名映射到事务化的 `cad.batch_apply`。批次中的每一步仍保存 checkpoint、diff、验证和回放快照。
+- `read_drawing` 读取当前图纸的统一工程对象。
+- `measure_entities` 返回解析几何测量证据。
+- `verify_drawing` 调用独立原生 DXF 审计和工程要求检查。
+- `get_diff` 比较当前图纸和另一份图纸。
+
+这些入口和 `engineering_operation` 共享同一个活动 CAD context、路径约束、error envelope、MCP policy 和事务实现。`apply_operations` 在 safe profile 中保持只读拒绝，full profile 才允许写入。它们是 AgentCAD 风格的调用面，不把本地 DXF 语义误报成 CATIA、Ansys、Adams 或 VI-grade 的原生操作。

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from engineering_agent import EngineeringAgent
+from engineering_agent.cad_model import CadDocument
 from engineering_agent.formats import write_dxf
 from engineering_agent.mcp_config import build_config
 from engineering_agent.mcp_server import MCPServer
@@ -100,3 +101,50 @@ def test_mcp_config_can_select_compact_toolset(tmp_path):
     args = config["mcpServers"]["simloom-ai"]["args"]
     assert "--toolset" in args
     assert args[args.index("--toolset") + 1] == "compact"
+
+
+def test_agentcad_named_cad_facade_uses_same_transaction_and_context_path(tmp_path):
+    source = tmp_path / "source.dxf"
+    edited = tmp_path / "edited.dxf"
+    write_dxf(source, lines=[{"x1": 0, "y1": 0, "x2": 1, "y2": 0}])
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="full", toolset="compact")
+
+    listed = server.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {"limit": 500}})
+    names = {item["name"] for item in listed["result"]["tools"]}
+    assert {"apply_operations", "read_drawing", "measure_entities", "verify_drawing", "get_diff"} <= names
+
+    applied = _call(server, "apply_operations", {
+        "project_dir": str(tmp_path), "document": source.name, "output_file": edited.name,
+        "operations": [{"op": "add_line", "p1": {"x": 2, "y": 0}, "p2": {"x": 3, "y": 1}}],
+    })
+    assert applied["result"].get("isError", False) is False
+    assert len(CadDocument.open(edited).entities) == 2
+    assert applied["result"]["structuredContent"]["operation"] == "cad.batch_apply"
+
+    measured = _call(server, "measure_entities", {
+        "project_dir": str(tmp_path), "document": edited.name, "entity_type": "LINE",
+    })
+    assert measured["result"].get("isError", False) is False
+    assert measured["result"]["structuredContent"]["summary"]["measured_count"] == 2
+
+    inspected = _call(server, "read_drawing", {"project_dir": str(tmp_path), "document": edited.name})
+    assert inspected["result"].get("isError", False) is False
+    assert inspected["result"]["structuredContent"]["document"]["entity_count"] == 2
+
+    verified = _call(server, "verify_drawing", {"project_dir": str(tmp_path), "document": edited.name})
+    assert verified["result"].get("isError", False) is False
+    assert verified["result"]["structuredContent"]["validation"]["valid"] is True
+
+    diff = _call(server, "get_diff", {
+        "project_dir": str(tmp_path), "document": source.name, "right_file": edited.name,
+    })
+    assert diff["result"].get("isError", False) is False
+    assert diff["result"]["structuredContent"]["diff"]["change_count"] >= 1
+
+    safe = MCPServer(EngineeringAgent({"tools": {}}), profile="safe", toolset="compact")
+    denied = _call(safe, "apply_operations", {
+        "project_dir": str(tmp_path), "document": source.name,
+        "operations": [{"op": "add_line", "p1": {"x": 4, "y": 0}, "p2": {"x": 5, "y": 1}}],
+    })
+    assert denied["result"]["isError"] is True
+    assert "MCP_PROFILE_READ_ONLY" in denied["result"]["structuredContent"]["error"]["message"]
