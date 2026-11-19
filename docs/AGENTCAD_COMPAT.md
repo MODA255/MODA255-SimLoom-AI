@@ -64,4 +64,6 @@ compact MCP toolset 现在提供五个与 AgentCAD 主工具习惯一致的入�
 
 MCP compact façade 还提供 `run_script`、`standard_library`、`agentcad_status`、`extract_requirements` 和 `revise_from_document`。脚本入口仍要求显式启用受控脚本策略，标准库读取复用 SimLoom catalog，状态入口返回当前工作区和 CAD context，不把本地连接状态当作商业软件验收。文档提取使用规则化事实和源文件哈希，文档修订继续经过规格验证。
 
+`validate_drawing` 现在调用通用 `cad.audit`，可以验证普通 DXF 和显式工程 requirements；规格专用检查仍由 `cad.validate_spec` 负责。
+
 `history` 和 `rollback` 复用 durable CAD history。`history` 是只读观察，`rollback` 只回滚最新提交并受 full profile、外部编辑冲突检查和事务恢复保护。

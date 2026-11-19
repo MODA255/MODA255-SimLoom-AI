@@ -298,3 +298,15 @@ def test_agentcad_history_and_rollback_facades_use_durable_cad_history(tmp_path)
     safe = MCPServer(EngineeringAgent({"tools": {}}), profile="safe", toolset="compact")
     denied = _call(safe, "rollback", {"project_dir": str(tmp_path), "document": "history.dxf"})
     assert denied["result"]["isError"] is True
+
+
+def test_validate_drawing_facade_accepts_generic_dxf_and_requirements(tmp_path):
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="full", toolset="compact")
+    drawing = tmp_path / "generic-validate.dxf"
+    write_dxf(drawing, lines=[{"x1": 0, "y1": 0, "x2": 10, "y2": 0}])
+    result = _call(server, "validate_drawing", {
+        "project_dir": str(tmp_path), "document": drawing.name,
+        "requirements": {"required_entity_types": ["LINE"], "min_entity_count": 1},
+    })
+    assert result["result"].get("isError", False) is False
+    assert result["result"]["structuredContent"]["validation"]["valid"] is True

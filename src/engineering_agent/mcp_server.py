@@ -901,7 +901,11 @@ class MCPServer:
             if name == "revise_drawing":
                 return self.call("operation.cad.revise_drawing", mapped)
             if name == "validate_drawing":
-                return self.call("operation.cad.validate_spec", mapped)
+                result = self.call("operation.cad.audit", mapped)
+                if isinstance(result, dict) and isinstance(result.get("validation"), dict):
+                    result = dict(result)
+                    result["valid"] = bool(result["validation"].get("valid"))
+                return result
             if name == "apply_constraints":
                 mode = str(mapped.pop("mode", "check")).lower()
                 if mode not in {"check", "enforce"}:
