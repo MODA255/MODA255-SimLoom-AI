@@ -174,7 +174,7 @@ class MCPServer:
         elif tool_name.startswith("operation."):
             operation_name = tool_name[len("operation."):]
         mutating = (
-            tool_name in {"engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations"}
+            tool_name in {"engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations", "apply_batch"}
             or tool_name == "engineering_run" and not bool(arguments.get("dry_run", True))
             or tool_name == "engineering_workflow" and arguments.get("action") in {"resume", "repair"}
             or operation_name is not None and self.operations.get(operation_name).safety in {"write", "execute"}
@@ -369,7 +369,7 @@ class MCPServer:
         ]
         if include_profile and self.profile == "safe":
             tools = [tool for tool in tools if tool["name"] not in {
-                "engineering_run", "engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations", "create_drawing"}]
+                "engineering_run", "engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations", "apply_batch", "create_drawing"}]
         for tool in tools:
             if tool["name"] in {"engineering_plan", "engineering_preflight", "engineering_run"}:
                 tool["inputSchema"]["properties"]["parameters"] = {"type": "object", "description": "Explicit engineering parameters forwarded to software steps"}
@@ -457,6 +457,7 @@ class MCPServer:
         if self.profile == "full" or self.profile == "safe" or toolset == "compact":
             facade_tools = [
                 {"name": "apply_operations", "description": "Apply an AgentCAD-compatible atomic operation batch to the active drawing", "inputSchema": {"type": "object", "required": ["operations"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "output_file": {"type": "string"}, "operations": {"type": "array", "items": {"type": "object"}}, "requirements": {"type": "object"}, "auto_repair": {"type": "boolean", "default": True}}}},
+            {"name": "apply_batch", "description": "Apply independent operation batches to multiple drawings", "inputSchema": {"type": "object", "required": ["jobs"], "properties": {"jobs": {"type": "array", "items": {"type": "object"}}, "stop_on_error": {"type": "boolean", "default": True}}}},
                 {"name": "read_drawing", "description": "Read the active drawing into the canonical document model", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}}}},
                 {"name": "measure_entities", "description": "Measure selected drawing entities with analytic geometry", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "target": {}, "entity_ids": {"type": "array"}, "selection_set": {"type": "string"}, "entity_type": {"type": "string"}, "layer": {"type": "string"}, "window": {"type": "array"}, "strict": {"type": "boolean"}}}},
                 {"name": "verify_drawing", "description": "Run independent drawing validation and engineering requirements", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "requirements": {"type": "object"}}}},
@@ -853,7 +854,7 @@ class MCPServer:
     def call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         self._check_access(name)
         if self.profile == "safe":
-            mutating = name in {"engineering_run", "engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations"}
+            mutating = name in {"engineering_run", "engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations", "apply_batch"}
             if name.startswith("operation."):
                 mutating = self.operations.get(name[len("operation."):]).safety in {"write", "execute"}
             if mutating:
@@ -874,7 +875,7 @@ class MCPServer:
                 raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "arguments must be an object")
             target = operation if operation.startswith("operation.") else "operation." + operation
             return self.call(target, operation_arguments)
-        if name in {"apply_operations", "read_drawing", "measure_entities", "verify_drawing", "get_diff", "create_drawing", "inspect_entities", "apply_constraints", "draw_from_spec", "revise_drawing", "validate_drawing"}:
+        if name in {"apply_operations", "apply_batch", "read_drawing", "measure_entities", "verify_drawing", "get_diff", "create_drawing", "inspect_entities", "apply_constraints", "draw_from_spec", "revise_drawing", "validate_drawing"}:
             mapped = dict(arguments)
             if "input_file" not in mapped:
                 for key in ("document", "path"):
@@ -908,6 +909,45 @@ class MCPServer:
                 if "entity_ids" not in mapped and mapped.get("ids") is not None:
                     mapped["entity_ids"] = mapped.pop("ids")
                 return self.call("operation.cad.query", mapped)
+            if name == "apply_batch":
+                jobs = mapped.get("jobs")
+                if not isinstance(jobs, list) or not jobs:
+                    raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "jobs must be a non-empty array")
+                stop_on_error = bool(mapped.get("stop_on_error", True))
+                results = []
+                for index, job in enumerate(jobs):
+                    if not isinstance(job, dict):
+                        raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "each job must be an object")
+                    job_args = dict(job)
+                    operations = job_args.pop("operations", None)
+                    if not isinstance(operations, list) or not operations:
+                        raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "each job requires a non-empty operations array")
+                    source = job_args.get("document") or job_args.get("path")
+                    if source and "input_file" not in job_args:
+                        job_args["input_file"] = source
+                    job_args.pop("document", None); job_args.pop("path", None)
+                    normalized = []
+                    for item in operations:
+                        if not isinstance(item, dict):
+                            raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "each operation must be an object")
+                        item = dict(item)
+                        operation_name = item.pop("operation", item.pop("op", None))
+                        if not isinstance(operation_name, str) or not operation_name.strip():
+                            raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "each operation requires operation or op")
+                        canonical, params, _ = normalize_operation(operation_name, item)
+                        normalized.append({"operation": canonical, **params})
+                    job_args["operations"] = normalized
+                    try:
+                        result = self.call("operation.cad.batch_apply", job_args)
+                        results.append({"index": index, "ok": True, "result": result})
+                    except Exception as exc:
+                        results.append({"index": index, "ok": False, "error": self._error_payload(exc)})
+                        if stop_on_error:
+                            break
+                return {"schema_version": "simloom-ai/mcp-batch/v1", "results": results,
+                        "completed": sum(1 for item in results if item["ok"]),
+                        "failed": sum(1 for item in results if not item["ok"]),
+                        "stopped_early": len(results) < len(jobs)}
             if name == "apply_operations":
                 operations = mapped.get("operations")
                 if not isinstance(operations, list) or not operations:

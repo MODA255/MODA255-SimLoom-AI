@@ -212,3 +212,22 @@ def test_agentcad_revise_and_validate_facade(tmp_path):
     checked = _call(server, "validate_drawing", {"project_dir": str(tmp_path), "document": "plate.dxf"})
     assert checked["result"].get("isError", False) is False
     assert checked["result"]["structuredContent"]["valid"] is True
+
+
+def test_agentcad_apply_batch_processes_multiple_drawings_and_reports_each_result(tmp_path):
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="full", toolset="compact")
+    write_dxf(tmp_path / "one.dxf", lines=[])
+    write_dxf(tmp_path / "two.dxf", lines=[])
+    result = _call(server, "apply_batch", {
+        "jobs": [
+            {"project_dir": str(tmp_path), "document": "one.dxf", "operations": [
+                {"op": "add_line", "p1": {"x": 0, "y": 0}, "p2": {"x": 1, "y": 0}}]},
+            {"project_dir": str(tmp_path), "document": "two.dxf", "operations": [
+                {"op": "add_circle", "center": {"x": 2, "y": 2}, "radius": 1}]},
+        ],
+    })
+    assert result["result"].get("isError", False) is False
+    batch = result["result"]["structuredContent"]
+    assert batch["completed"] == 2 and batch["failed"] == 0
+    assert len(CadDocument.open(tmp_path / "one.dxf").entities) == 1
+    assert len(CadDocument.open(tmp_path / "two.dxf").entities) == 1

@@ -57,3 +57,5 @@ compact MCP toolset 现在提供五个与 AgentCAD 主工具习惯一致的入�
 这些入口和 `engineering_operation` 共享同一个活动 CAD context、路径约束、error envelope、MCP policy 和事务实现。`apply_operations` 在 safe profile 中保持只读拒绝，full profile 才允许写入。它们是 AgentCAD 风格的调用面，不把本地 DXF 语义误报成 CATIA、Ansys、Adams 或 VI-grade 的原生操作。
 
 `create_drawing`、`draw_from_spec`、`revise_drawing`、`validate_drawing`、`inspect_entities` 和 `apply_constraints` 也已在 compact MCP 中提供。前者通过 `cad.document_create` 创建带单位、标注比例和 sidecar 的空 DXF，后者通过 `cad.query` 复用过滤、分页和稳定 `EntityRef`。创建和规格修订操作仍受 full profile、路径约束和写事务保护。`apply_constraints` 的 check 模式只读，enforce 模式沿用写事务并在冲突时回滚。规格修订会按标签保留实体引用，并在提交后重新验证规格。
+
+`apply_batch` 现在支持一次 MCP 调用处理多个独立 drawing。每个 job 都单独进入 `cad.batch_apply`，结果包含 `index`、成功/失败状态和原始结构化错误；`stop_on_error` 可以在第一份图纸失败后停止后续 job。每份图纸仍有独立事务和回滚边界。
