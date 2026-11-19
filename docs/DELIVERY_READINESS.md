@@ -41,7 +41,7 @@ NODE_PATH="$browser_tmp/node_modules" \
   scripts/ci/run_browser_test.sh tests/browser/software_jobs.cjs
 ```
 
-交付节点的本地基线是全量 Python 测试通过、工作台 JavaScript 语法检查通过、浏览器工程链恢复和移动视口无横向溢出。公共 CI 还会在 Python 3.10/3.11/3.12、Ubuntu、macOS 和 Windows 上运行 portability 与浏览器任务。
+交付节点的本地基线是全量 Python 测试通过、工作台 JavaScript 语法检查通过、浏览器工程链恢复和移动视口无横向溢出。浏览器检查使用 390px 宽视口，覆盖工程链恢复、软件任务日志/结果回收、取消与人工释放，以及设置页动作 profile；设置页中的长路径、profile 摘要和装饰性 hero 图形都必须保持在视口内。公共 CI 还会在 Python 3.10/3.11/3.12、Ubuntu、macOS 和 Windows 上运行 portability 与浏览器任务。
 
 ## Windows 实机闸门
 

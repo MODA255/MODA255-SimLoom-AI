@@ -23,6 +23,7 @@ async function main(){
     await page.locator(`[data-project="${info.project}"]`).click();
     await page.locator('.sidebar [data-panel="settings"]').click();
     await page.locator('#refreshWorkflows').click();
+    await page.locator('#actionProfileList .action-profile-row').first().waitFor();
     const resume=page.locator(`[data-resume-workflow="${info.workflow_id}"]`);
     await resume.waitFor();
     await page.locator('.workflows-card').screenshot({path:path.join(temp,'workflow-before-resume.png')});
