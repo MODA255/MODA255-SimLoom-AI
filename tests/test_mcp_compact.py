@@ -279,3 +279,22 @@ def test_agentcad_requirement_extraction_and_document_revision_facade(tmp_path):
     })
     assert revised["result"].get("isError", False) is False
     assert revised["result"]["structuredContent"]["revision"]["drawing_spec"]["valid"] is True
+
+
+def test_agentcad_history_and_rollback_facades_use_durable_cad_history(tmp_path):
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="full", toolset="compact")
+    write_dxf(tmp_path / "history.dxf", lines=[])
+    applied = _call(server, "apply_operations", {
+        "project_dir": str(tmp_path), "document": "history.dxf",
+        "operations": [{"op": "add_line", "p1": {"x": 0, "y": 0}, "p2": {"x": 1, "y": 0}}],
+    })
+    assert applied["result"].get("isError", False) is False
+    history = _call(server, "history", {"project_dir": str(tmp_path), "document": "history.dxf"})
+    assert history["result"].get("isError", False) is False
+    assert history["result"]["structuredContent"]["history"]["can_undo"] is True
+    rollback = _call(server, "rollback", {"project_dir": str(tmp_path), "document": "history.dxf"})
+    assert rollback["result"].get("isError", False) is False
+    assert len(CadDocument.open(tmp_path / "history.dxf").entities) == 0
+    safe = MCPServer(EngineeringAgent({"tools": {}}), profile="safe", toolset="compact")
+    denied = _call(safe, "rollback", {"project_dir": str(tmp_path), "document": "history.dxf"})
+    assert denied["result"]["isError"] is True

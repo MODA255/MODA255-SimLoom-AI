@@ -174,7 +174,7 @@ class MCPServer:
         elif tool_name.startswith("operation."):
             operation_name = tool_name[len("operation."):]
         mutating = (
-            tool_name in {"engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations", "apply_batch"}
+            tool_name in {"engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations", "apply_batch", "rollback"}
             or tool_name == "engineering_run" and not bool(arguments.get("dry_run", True))
             or tool_name == "engineering_workflow" and arguments.get("action") in {"resume", "repair"}
             or operation_name is not None and self.operations.get(operation_name).safety in {"write", "execute"}
@@ -369,7 +369,7 @@ class MCPServer:
         ]
         if include_profile and self.profile == "safe":
             tools = [tool for tool in tools if tool["name"] not in {
-                "engineering_run", "engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations", "apply_batch", "create_drawing"}]
+                "engineering_run", "engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations", "apply_batch", "rollback", "create_drawing"}]
         for tool in tools:
             if tool["name"] in {"engineering_plan", "engineering_preflight", "engineering_run"}:
                 tool["inputSchema"]["properties"]["parameters"] = {"type": "object", "description": "Explicit engineering parameters forwarded to software steps"}
@@ -464,6 +464,8 @@ class MCPServer:
             {"name": "agentcad_status", "description": "Inspect the active CAD context and runtime connection state", "inputSchema": {"type": "object", "properties": {"label": {"type": "string"}}}},
             {"name": "extract_requirements", "description": "Conservatively extract drawing requirements from TXT, Markdown, JSON or PDF", "inputSchema": {"type": "object", "required": ["document"], "properties": {"document": {"type": "string"}, "project_dir": {"type": "string"}, "overrides": {"type": "object"}}}},
             {"name": "revise_from_document", "description": "Extract requirements from a document and revise a stored plate drawing specification", "inputSchema": {"type": "object", "required": ["document", "drawing"], "properties": {"document": {"type": "string"}, "drawing": {"type": "string"}, "project_dir": {"type": "string"}, "output_file": {"type": "string"}, "overrides": {"type": "object"}}}},
+            {"name": "history", "description": "Read the durable CAD revision history for a drawing", "inputSchema": {"type": "object", "required": ["document"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}}}},
+            {"name": "rollback", "description": "Undo the latest committed CAD revision through the transaction history", "inputSchema": {"type": "object", "required": ["document"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}}}},
                 {"name": "read_drawing", "description": "Read the active drawing into the canonical document model", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}}}},
                 {"name": "measure_entities", "description": "Measure selected drawing entities with analytic geometry", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "target": {}, "entity_ids": {"type": "array"}, "selection_set": {"type": "string"}, "entity_type": {"type": "string"}, "layer": {"type": "string"}, "window": {"type": "array"}, "strict": {"type": "boolean"}}}},
                 {"name": "verify_drawing", "description": "Run independent drawing validation and engineering requirements", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "requirements": {"type": "object"}}}},
@@ -860,7 +862,7 @@ class MCPServer:
     def call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         self._check_access(name)
         if self.profile == "safe":
-            mutating = name in {"engineering_run", "engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations", "apply_batch"}
+            mutating = name in {"engineering_run", "engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations", "apply_batch", "rollback"}
             if name.startswith("operation."):
                 mutating = self.operations.get(name[len("operation."):]).safety in {"write", "execute"}
             if mutating:
@@ -881,14 +883,14 @@ class MCPServer:
                 raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "arguments must be an object")
             target = operation if operation.startswith("operation.") else "operation." + operation
             return self.call(target, operation_arguments)
-        if name in {"apply_operations", "apply_batch", "export_drawing", "run_script", "standard_library", "agentcad_status", "extract_requirements", "revise_from_document", "read_drawing", "measure_entities", "verify_drawing", "get_diff", "create_drawing", "inspect_entities", "apply_constraints", "draw_from_spec", "revise_drawing", "validate_drawing"}:
+        if name in {"apply_operations", "apply_batch", "export_drawing", "run_script", "standard_library", "agentcad_status", "extract_requirements", "revise_from_document", "history", "rollback", "read_drawing", "measure_entities", "verify_drawing", "get_diff", "create_drawing", "inspect_entities", "apply_constraints", "draw_from_spec", "revise_drawing", "validate_drawing"}:
             mapped = dict(arguments)
             if "input_file" not in mapped:
                 for key in ("document", "path"):
                     if mapped.get(key):
                         mapped["input_file"] = mapped[key]
                         break
-            if name not in {"extract_requirements", "revise_from_document"}:
+            if name not in {"extract_requirements", "revise_from_document", "history", "rollback"}:
                 mapped.pop("document", None)
                 mapped.pop("path", None)
             if name == "draw_from_spec":
@@ -932,6 +934,12 @@ class MCPServer:
                 return {"requirements": facts_result, "revision": self.call("operation.cad.revise_drawing", {
                     "project_dir": project_dir, "input_file": drawing_path,
                     "output_file": mapped.get("output_file") or drawing_path, "changes": changes})}
+            if name == "history":
+                mapped["input_file"] = mapped.get("input_file") or mapped.get("document") or mapped.get("path")
+                return self.call("operation.cad.history", mapped)
+            if name == "rollback":
+                mapped["input_file"] = mapped.get("input_file") or mapped.get("document") or mapped.get("path")
+                return self.call("operation.cad.undo", mapped)
             if name == "agentcad_status":
                 return {"ok": True, "connected": True, "app": "simloom-ai", "label": mapped.get("label"),
                         "workspace": mapped.get("project_dir"), "cad_context": dict(self._cad_context) if self._cad_context else None,
