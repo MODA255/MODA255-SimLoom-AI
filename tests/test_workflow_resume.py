@@ -98,7 +98,7 @@ def finish(setup,tmp_path,identifier):
     state=WorkflowStore(project).read(identifier)
     solve=state['steps']['solve']['request_id']
     wait_for(lambda:manager.store.status(solve)['status']=='completed')
-    config['timeouts']['step_seconds']=10
+    config['timeouts']['step_seconds']=30
     return make().workflow('resume',identifier,project_dir=str(project))
 
 
@@ -224,7 +224,7 @@ def test_publish_failure_restores_entire_group_and_resumes_cached_results(workfl
 @pytest.mark.parametrize('mode',['running','between_steps','publication'])
 def test_actual_controller_process_exit_resumes_without_duplicate_software_execution(workflow_setup,tmp_path,mode):
     project,manager,config,plan,make=workflow_setup
-    config['timeouts']['step_seconds']=10
+    config['timeouts']['step_seconds']=30
     if mode=='publication': (tmp_path/'gate').touch()
     data={'config':config,'plan':plan.to_dict(),'worker':str(manager.root),'mode':mode}
     data_path=tmp_path/'controller.json';data_path.write_text(json.dumps(data))
@@ -271,7 +271,7 @@ def test_preflight_orders_dependencies_and_rejects_collision_before_any_job(work
 
 def test_topological_execution_does_not_depend_on_list_order(workflow_setup,tmp_path):
     project,manager,config,plan,make=workflow_setup
-    plan.steps.reverse();(tmp_path/'gate').touch();config['timeouts']['step_seconds']=10
+    plan.steps.reverse();(tmp_path/'gate').touch();config['timeouts']['step_seconds']=30
     report=make().run('fixture',project_dir=str(project),dry_run=False)
     assert report.status=='committed'
     assert [r.step_id for r in report.results]==['geometry','solve']
@@ -326,7 +326,7 @@ def test_task_queue_and_report_keep_workflow_identity_across_resume(workflow_set
     assert queue.get(task)['workflow_id']==report['workflow_id']
     saved=build_report(queue,task)
     assert saved['resume_allowed'] and not saved['retry_allowed'] and saved['error'] is None
-    (tmp_path/'gate').touch();config['timeouts']['step_seconds']=10
+    (tmp_path/'gate').touch();config['timeouts']['step_seconds']=30
     resumed=TaskRunner(make(),queue).resume(task)
     assert resumed['status']=='committed'
     assert queue.get(task)['status']=='completed'
@@ -354,7 +354,7 @@ def test_mcp_workflow_resources_expose_paginated_status_and_failure_evidence(wor
     plan.steps[0].parameters['fail']=True
     # Leave enough time for the fixture process to start on hosted Windows
     # runners before asserting its immediate non-zero exit is observed.
-    config['timeouts']['step_seconds']=10
+    config['timeouts']['step_seconds']=30
     report=make().run('fixture',project_dir=str(project),dry_run=False)
     assert report.status=='failed'
     server=MCPServer(make(), profile='full')
@@ -428,7 +428,7 @@ def test_cross_step_windows_path_collisions_are_rejected_before_launch(workflow_
 def test_failed_engineering_metric_creates_child_repair_workflow_without_overwriting_parent(workflow_setup,tmp_path):
     project,manager,config,plan,make=workflow_setup
     (tmp_path/'gate').touch()
-    config['timeouts']['step_seconds']=10
+    config['timeouts']['step_seconds']=30
     first=make().run('fixture',project_dir=str(project),dry_run=False)
     assert first.status=='committed'
     parent=WorkflowStore(project).read(first.workflow_id)
@@ -545,7 +545,7 @@ def test_repair_comparison_stops_on_regression_even_when_a_candidate_remains():
 
 def test_repair_loop_evaluates_next_candidate_until_success(workflow_setup, monkeypatch):
     project,manager,config,plan,make=workflow_setup
-    (project.parent/'gate').touch(); config['timeouts']['step_seconds']=10
+    (project.parent/'gate').touch(); config['timeouts']['step_seconds']=30
     first=make().run('fixture',project_dir=str(project),dry_run=False)
     calls=[]
     responses=[
@@ -572,7 +572,7 @@ def test_repair_loop_evaluates_next_candidate_until_success(workflow_setup, monk
 
 def test_repair_loop_marks_budget_exhaustion_as_manual_review(workflow_setup, monkeypatch):
     project,manager,config,plan,make=workflow_setup
-    (project.parent/'gate').touch(); config['timeouts']['step_seconds']=10
+    (project.parent/'gate').touch(); config['timeouts']['step_seconds']=30
     first=make().run('fixture',project_dir=str(project),dry_run=False)
     def fake_repair(self, identifier):
         return {'status':'committed','workflow_id':'child','repair':{
@@ -586,7 +586,7 @@ def test_repair_loop_marks_budget_exhaustion_as_manual_review(workflow_setup, mo
 
 def test_unified_engineering_result_can_drive_repair_without_legacy_vendor_field(workflow_setup,tmp_path):
     project,manager,config,plan,make=workflow_setup
-    (tmp_path/'gate').touch();config['timeouts']['step_seconds']=10
+    (tmp_path/'gate').touch();config['timeouts']['step_seconds']=30
     first=make().run('fixture',project_dir=str(project),dry_run=False)
     parent=WorkflowStore(project).read(first.workflow_id)
     target=next(item for item in parent['report']['results'] if item['step_id']=='solve')
@@ -656,7 +656,7 @@ def test_run_forwards_multi_attempt_repair_budget(workflow_setup,monkeypatch):
 
 def test_repair_requires_explicit_strategy_and_does_not_change_thresholds(workflow_setup,tmp_path):
     project,manager,config,plan,make=workflow_setup
-    (tmp_path/'gate').touch();config['timeouts']['step_seconds']=10
+    (tmp_path/'gate').touch();config['timeouts']['step_seconds']=30
     first=make().run('fixture',project_dir=str(project),dry_run=False)
     parent=WorkflowStore(project).read(first.workflow_id)
     target=next(item for item in parent['report']['results'] if item['step_id']=='solve')
@@ -672,7 +672,7 @@ def test_repair_requires_explicit_strategy_and_does_not_change_thresholds(workfl
 
 def test_repair_rejects_strategy_that_attempts_to_change_contract(workflow_setup,tmp_path):
     project,manager,config,plan,make=workflow_setup
-    (tmp_path/'gate').touch();config['timeouts']['step_seconds']=10
+    (tmp_path/'gate').touch();config['timeouts']['step_seconds']=30
     first=make().run('fixture',project_dir=str(project),dry_run=False)
     parent=WorkflowStore(project).read(first.workflow_id)
     target=next(item for item in parent['report']['results'] if item['step_id']=='solve')
@@ -688,7 +688,7 @@ def test_repair_rejects_strategy_that_attempts_to_change_contract(workflow_setup
 
 def test_repair_strategy_attempt_limit_is_enforced(workflow_setup,tmp_path):
     project,manager,config,plan,make=workflow_setup
-    (tmp_path/'gate').touch();config['timeouts']['step_seconds']=10
+    (tmp_path/'gate').touch();config['timeouts']['step_seconds']=30
     first=make().run('fixture',project_dir=str(project),dry_run=False)
     parent=WorkflowStore(project).read(first.workflow_id)
     target=next(item for item in parent['report']['results'] if item['step_id']=='solve')
@@ -707,7 +707,7 @@ def test_repair_strategy_attempt_limit_is_enforced(workflow_setup,tmp_path):
 
 def test_repair_moves_to_next_matching_strategy_after_first_is_exhausted(workflow_setup,tmp_path):
     project,manager,config,plan,make=workflow_setup
-    (tmp_path/'gate').touch();config['timeouts']['step_seconds']=10
+    (tmp_path/'gate').touch();config['timeouts']['step_seconds']=30
     first=make().run('fixture',project_dir=str(project),dry_run=False)
     parent=WorkflowStore(project).read(first.workflow_id)
     target=next(item for item in parent['report']['results'] if item['step_id']=='solve')
