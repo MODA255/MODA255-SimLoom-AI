@@ -82,6 +82,8 @@ bulge 弧段、SPLINE 采样段和 HATCH 多段线边界检查自交/重叠；�
 
 `cad.draw_from_spec` 现已补齐紧凑的 `plate` 规格编译入口，支持尺寸、四角孔阵列、稳定语义标签、sidecar、原生回读和事务历史；MCP façade 也可以从空工程直接调用。详见 `CAD_DRAW_FROM_SPEC.md`。
 
+`cad.revise_drawing` 和 `cad.validate_spec` 现已补齐规格修订与独立验收，MCP façade 提供 `revise_drawing` 和 `validate_drawing`；更新按语义标签保留稳定实体引用，并在回读后核对尺寸、孔阵列和直径。详见 `CAD_SPEC_REVISION.md`。
+
 `cad.measure_entities` 现已补齐 AgentCAD 的解析几何测量入口。它对 LINE、CIRCLE、ARC、带 bulge 的 LWPOLYLINE/POLYLINE 和简单 HATCH 返回逐实体证据与汇总长度、周长、面积，支持与 `cad.query` 相同的选择器、严格模式和只读失败警告；详见 `CAD_MEASUREMENTS.md`。它增强 Agent-facing 的工程检查，不替代四款商业软件的原生结果读取。
 
 compact MCP toolset 现已补齐 AgentCAD 风格的 `create_drawing`、`apply_operations`、`read_drawing`、`inspect_entities`、`measure_entities`、`apply_constraints`、`verify_drawing` 和 `get_diff` 入口；它们共享活动 CAD context、事务、error envelope 和 profile policy，批次内部的扁平 operation 名称会先归一到 SimLoom canonical operation。详见 `AGENTCAD_COMPAT.md`。

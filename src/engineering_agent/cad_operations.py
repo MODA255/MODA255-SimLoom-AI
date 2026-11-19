@@ -1282,6 +1282,109 @@ def _measure_entities(document: CadDocument, arguments: dict[str, Any]) -> dict[
         "selection": query.get("query", {}), "warnings": sorted(set(warnings)),
     }
 
+
+def _plate_spec_geometry(spec: dict[str, Any]) -> tuple[float, float, dict[str, float], list[dict[str, Any]]]:
+    """Expand the compact plate spec into deterministic outline and hole geometry."""
+    if str(spec.get("kind", "")).lower() != "plate":
+        raise ValueError("UNSUPPORTED_SPEC_KIND:" + str(spec.get("kind", "")))
+    try:
+        width, height = float(spec["width"]), float(spec["height"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("PLATE_DIMENSIONS_REQUIRED") from exc
+    if not math.isfinite(width) or not math.isfinite(height) or width <= 0 or height <= 0:
+        raise ValueError("PLATE_DIMENSIONS_INVALID")
+    origin = _point(spec.get("origin", {"x": 0, "y": 0, "z": 0}))
+    holes: list[dict[str, Any]] = []
+    for index, raw_hole in enumerate(spec.get("holes") or [], start=1):
+        hole = dict(raw_hole)
+        try:
+            diameter = float(hole.get("diameter", hole.get("size", 0)))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("HOLE_DIAMETER_INVALID") from exc
+        if not math.isfinite(diameter) or diameter <= 0:
+            raise ValueError("HOLE_DIAMETER_INVALID")
+        pattern = str(hole.get("pattern", "explicit")).lower()
+        if pattern == "corners":
+            try:
+                offset = float(hole.get("edge_offset", hole.get("offset", 0)))
+            except (TypeError, ValueError) as exc:
+                raise ValueError("HOLE_EDGE_OFFSET_INVALID") from exc
+            if not math.isfinite(offset) or offset < 0 or offset * 2 >= min(width, height):
+                raise ValueError("HOLE_EDGE_OFFSET_INVALID")
+            centers = [
+                (origin["x"] + offset, origin["y"] + offset),
+                (origin["x"] + width - offset, origin["y"] + offset),
+                (origin["x"] + width - offset, origin["y"] + height - offset),
+                (origin["x"] + offset, origin["y"] + height - offset),
+            ]
+        else:
+            center = _point(hole.get("center"))
+            centers = [(center["x"], center["y"])]
+        for number, (x, y) in enumerate(centers, start=1):
+            tag = str(hole.get("tag", f"hole.{index}"))
+            if len(centers) > 1:
+                tag = f"hole.{index}.{number}"
+            holes.append({"tag": tag, "center": {"x": x, "y": y, "z": origin["z"]},
+                          "radius": diameter / 2, "diameter": diameter,
+                          "layer": str(hole.get("layer", "HOLES"))})
+    return width, height, origin, holes
+
+
+def _plate_spec_validation(document: CadDocument, spec: dict[str, Any], tolerance: float = 1e-6) -> dict[str, Any]:
+    """Validate a stored plate spec against the current canonical entities."""
+    try:
+        width, height, origin, holes = _plate_spec_geometry(spec)
+    except ValueError as exc:
+        return {"schema_version": "simloom-ai/drawing-spec-validation/v1", "valid": False,
+                "errors": [{"code": str(exc).split(":", 1)[0], "message": str(exc)}],
+                "warnings": [], "expected": {}, "actual": {}}
+    outline = next((item for item in document.entities if _entity_tag(item) == "outline"
+                    and str(item.get("type", "")).upper() == "LWPOLYLINE"), None)
+    errors: list[dict[str, Any]] = []
+    actual_outline: dict[str, Any] = {}
+    if outline is None:
+        errors.append({"code": "SPEC_OUTLINE_MISSING", "tag": "outline"})
+    else:
+        vertices = [_point(value) for value in outline.get("vertices") or []]
+        if not vertices:
+            errors.append({"code": "SPEC_OUTLINE_EMPTY", "tag": "outline"})
+        else:
+            actual_width = max(value["x"] for value in vertices) - min(value["x"] for value in vertices)
+            actual_height = max(value["y"] for value in vertices) - min(value["y"] for value in vertices)
+            actual_outline = {"width": actual_width, "height": actual_height,
+                              "origin": {"x": min(value["x"] for value in vertices),
+                                         "y": min(value["y"] for value in vertices)}}
+            if not math.isclose(actual_width, width, rel_tol=0, abs_tol=tolerance):
+                errors.append({"code": "SPEC_WIDTH_MISMATCH", "expected": width, "actual": actual_width})
+            if not math.isclose(actual_height, height, rel_tol=0, abs_tol=tolerance):
+                errors.append({"code": "SPEC_HEIGHT_MISMATCH", "expected": height, "actual": actual_height})
+    actual_holes = {str(_entity_tag(item)): item for item in document.entities
+                    if str(item.get("type", "")).upper() == "CIRCLE"
+                    and str(_entity_tag(item) or "").startswith("hole.")}
+    expected_holes = {str(item["tag"]): item for item in holes}
+    if set(actual_holes) != set(expected_holes):
+        errors.append({"code": "SPEC_HOLE_TAGS_MISMATCH", "expected": sorted(expected_holes),
+                       "actual": sorted(actual_holes)})
+    hole_records = []
+    for tag, expected in expected_holes.items():
+        actual = actual_holes.get(tag)
+        if actual is None:
+            continue
+        center = _point(actual.get("center"))
+        radius = float(actual.get("radius", 0))
+        hole_records.append({"tag": tag, "center": center, "diameter": radius * 2})
+        if _distance(center, expected["center"]) > tolerance:
+            errors.append({"code": "SPEC_HOLE_CENTER_MISMATCH", "tag": tag,
+                           "expected": expected["center"], "actual": center})
+        if not math.isclose(radius, expected["radius"], rel_tol=0, abs_tol=tolerance):
+            errors.append({"code": "SPEC_HOLE_DIAMETER_MISMATCH", "tag": tag,
+                           "expected": expected["diameter"], "actual": radius * 2})
+    return {"schema_version": "simloom-ai/drawing-spec-validation/v1", "valid": not errors,
+            "errors": errors, "warnings": [],
+            "expected": {"kind": "plate", "width": width, "height": height,
+                         "origin": origin, "holes": expected_holes, "hole_count": len(holes)},
+            "actual": {"outline": actual_outline, "holes": hole_records, "hole_count": len(actual_holes)}}
+
 def _expand_associative_refs(document: CadDocument, ids: list[str]) -> list[str]:
     """Expand a transform selection to keep associative HATCH boundaries intact."""
     by_ref = {str(item.get("id")): item for item in document.entities}
@@ -4311,6 +4414,13 @@ class CadOperationEngine:
             validation["mechanical_assembly"] = mechanical
             integrity["mechanical_assembly_metadata"] = persisted_assembly.get("schema_version") == expected_assembly.get("schema_version")
             integrity["mechanical_assembly_dimensions"] = mechanical["valid"]
+        if "agentcad_spec" in expected.metadata:
+            spec_validation = _plate_spec_validation(persisted, expected.metadata.get("agentcad_spec") or {})
+            validation["drawing_spec"] = spec_validation
+            validation["valid"] = validation["valid"] and bool(spec_validation.get("valid"))
+            if not spec_validation.get("valid"):
+                validation.setdefault("errors", []).append({"code": "PERSISTED_DRAWING_SPEC_MISMATCH",
+                                                             "details": spec_validation})
         if "pid" in expected.metadata:
             expected_pid = expected.metadata.get("pid") or {}
             from .pid_validation import audit_pid
@@ -4428,6 +4538,73 @@ class CadOperationEngine:
             return {"schema_version": "simloom-ai/drawing-spec/v1", "path": committed[str(output_file.relative_to(project_root))],
                     "document": persisted.to_dict(), "spec": copy.deepcopy(spec), "validation": validation,
                     "history": history, "run_id": transaction.run_id, "hole_count": len(expanded)}
+
+    def _revise_drawing(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Revise a stored plate spec in place while preserving stable entities."""
+        raw_input = arguments.get("input_file") or arguments.get("path")
+        if not raw_input:
+            raise ValueError("CAD_INPUT_FILE_REQUIRED")
+        input_path = Path(str(raw_input)).expanduser()
+        project_root = Path(arguments.get("project_dir") or input_path.parent).expanduser().resolve()
+        input_file = (project_root / input_path if arguments.get("project_dir") and not input_path.is_absolute() else input_path).resolve()
+        output_path = Path(str(arguments.get("output_file") or input_file)).expanduser()
+        output_file = (project_root / output_path if arguments.get("project_dir") and not output_path.is_absolute() else output_path).resolve()
+        if project_root not in input_file.parents or project_root not in output_file.parents:
+            raise ValueError("PATH_OUTSIDE_PROJECT")
+        if not input_file.is_file():
+            raise FileNotFoundError(input_file)
+        document = self.open(input_file)
+        previous = copy.deepcopy(document.metadata.get("agentcad_spec"))
+        if not isinstance(previous, dict) or str(previous.get("kind", "")).lower() != "plate":
+            raise ValueError("DRAWING_SPEC_MISSING")
+        changes = copy.deepcopy(arguments.get("changes") or {})
+        if not isinstance(changes, dict):
+            raise ValueError("DRAWING_CHANGES_INVALID")
+        if isinstance(changes.get("spec"), dict):
+            changes = changes["spec"]
+        updated = copy.deepcopy(previous)
+        for key, value in changes.items():
+            if key in {"width", "height", "origin", "holes", "units", "outline_layer"}:
+                updated[key] = copy.deepcopy(value)
+        width, height, origin, holes = _plate_spec_geometry(updated)
+        outline = next((item for item in document.entities if _entity_tag(item) == "outline"
+                        and str(item.get("type", "")).upper() == "LWPOLYLINE"), None)
+        if outline is None:
+            raise ValueError("SPEC_OUTLINE_MISSING")
+        rectangle_arguments = {"origin": origin, "width": width, "height": height}
+        outline["vertices"] = _rectangle_vertices(rectangle_arguments)
+        outline["closed"] = True
+        existing = {str(_entity_tag(item)): item for item in document.entities
+                    if str(_entity_tag(item) or "").startswith("hole.")
+                    and str(item.get("type", "")).upper() == "CIRCLE"}
+        desired_tags = {str(item["tag"]) for item in holes}
+        for tag, item in list(existing.items()):
+            if tag not in desired_tags:
+                document.entities.remove(item)
+        for hole in holes:
+            target = existing.get(str(hole["tag"]))
+            if target is None or target not in document.entities:
+                self._apply_one(document, "circle_create", hole)
+                continue
+            target["center"] = _point(hole["center"])
+            target["radius"] = float(hole["radius"])
+            target["layer"] = str(hole["layer"])
+        updated["expanded_hole_count"] = len(holes)
+        document.metadata["agentcad_spec"] = updated
+        requirements = {"required_entity_types": ["LWPOLYLINE"], "min_entity_count": 1}
+        with RunTransaction(project_root) as transaction:
+            transaction.begin({"operation": "cad.revise_drawing", "input_file": str(input_file),
+                               "output_file": str(output_file), "changes": changes})
+            transaction.checkpoint("before-revise-spec", {"spec": previous, "changes": changes})
+            committed, validation, history = self._write(transaction, document, output_file, requirements, "revise_drawing")
+            persisted = self.open(output_file)
+            spec_validation = _plate_spec_validation(persisted, updated)
+            if not spec_validation["valid"]:
+                raise ValueError("CAD_SPEC_VALIDATION_FAILED:" + json.dumps(spec_validation["errors"], ensure_ascii=False))
+            return {"schema_version": "simloom-ai/drawing-spec/v1", "path": committed[str(output_file.relative_to(project_root))],
+                    "document": persisted.to_dict(), "previous_spec": previous, "spec": updated,
+                    "changes": changes, "validation": validation, "drawing_spec": spec_validation,
+                    "history": history, "run_id": transaction.run_id, "hole_count": len(holes)}
 
     def _document_create(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Create a blank native DXF through the normal transaction/history path."""
@@ -4607,6 +4784,8 @@ class CadOperationEngine:
             return self._document_create(arguments)
         if operation == "cad.draw_from_spec":
             return self._draw_from_spec(arguments)
+        if operation == "cad.revise_drawing":
+            return self._revise_drawing(arguments)
         if operation == "cad.constraints_enforce":
             return self._constraints_enforce(arguments)
         if operation == "cad.plot":
@@ -4622,7 +4801,7 @@ class CadOperationEngine:
             raise ValueError("PATH_OUTSIDE_PROJECT")
         if operation in {"cad.history", "cad.undo", "cad.redo"}:
             return self._history_operation(operation, project_root, input_file)
-        if operation in {"cad.audit", "cad.document_diff", "cad.visual_diff", "cad.pid_audit", "cad.standard_parts_audit", "cad.document_open", "cad.document_inspect", "cad.document_recompute", "cad.query", "cad.measure_entities", "cad.constraints_check", "cad.verify_dimensions"}:
+        if operation in {"cad.audit", "cad.document_diff", "cad.visual_diff", "cad.pid_audit", "cad.standard_parts_audit", "cad.document_open", "cad.document_inspect", "cad.document_recompute", "cad.query", "cad.measure_entities", "cad.constraints_check", "cad.validate_spec", "cad.verify_dimensions"}:
             with RunTransaction.read_lock(project_root):
                 if not input_file.is_file():
                     raise FileNotFoundError(input_file)
@@ -4646,6 +4825,13 @@ class CadOperationEngine:
                     checks = check_constraints(document, list(arguments.get("constraints") or []), tolerance=float(arguments.get("tolerance", 1e-6)))
                     result = {"schema_version": "simloom-ai/cad-constraints/v1", "checks": checks,
                               "valid": all(item.get("satisfied", False) for item in checks)}
+                    result["path"] = str(input_file)
+                    result["validation"] = validation
+                elif operation == "cad.validate_spec":
+                    spec = document.metadata.get("agentcad_spec")
+                    if not isinstance(spec, dict):
+                        raise ValueError("DRAWING_SPEC_MISSING")
+                    result = _plate_spec_validation(document, spec, tolerance=float(arguments.get("tolerance", 1e-6)))
                     result["path"] = str(input_file)
                     result["validation"] = validation
                 elif operation == "cad.verify_dimensions":

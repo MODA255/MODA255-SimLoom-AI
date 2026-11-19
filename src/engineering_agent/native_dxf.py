@@ -672,7 +672,7 @@ def build_native(*, entities: list[dict[str, Any]], blocks=(), coordinate_system
                 if line_type not in drawing.linetypes:
                     raise ValueError("LINETYPE_NOT_FOUND:" + line_type)
                 layer.dxf.linetype = line_type
-    if source is not None and sheets is not None:
+    if source is not None and sheets:
         for layout in list(drawing.layouts):
             if layout.name != "Model" and layout.name not in sheets:
                 drawing.layouts.delete(layout.name)

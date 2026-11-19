@@ -195,3 +195,20 @@ def test_agentcad_draw_from_spec_facade_creates_plate(tmp_path):
     })
     assert result["result"].get("isError", False) is False
     assert result["result"]["structuredContent"]["hole_count"] == 0
+
+
+def test_agentcad_revise_and_validate_facade(tmp_path):
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="full", toolset="compact")
+    created = _call(server, "draw_from_spec", {
+        "project_dir": str(tmp_path), "output": "plate.dxf",
+        "spec": {"kind": "plate", "width": 20, "height": 10, "holes": []},
+    })
+    assert created["result"].get("isError", False) is False
+    revised = _call(server, "revise_drawing", {
+        "project_dir": str(tmp_path), "document": "plate.dxf", "output_file": "plate.dxf",
+        "changes": {"width": 30},
+    })
+    assert revised["result"].get("isError", False) is False
+    checked = _call(server, "validate_drawing", {"project_dir": str(tmp_path), "document": "plate.dxf"})
+    assert checked["result"].get("isError", False) is False
+    assert checked["result"]["structuredContent"]["valid"] is True

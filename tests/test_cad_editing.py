@@ -1313,3 +1313,25 @@ def test_draw_from_spec_compiles_plate_and_corner_holes_with_persisted_validatio
     assert sum(item["type"] == "LWPOLYLINE" for item in document.entities) == 1
     assert sum(item["type"] == "CIRCLE" for item in document.entities) == 4
     assert document.metadata["agentcad_spec"]["expanded_hole_count"] == 4
+
+
+def test_revise_drawing_updates_stored_spec_in_place_and_validates(tmp_path):
+    agent = EngineeringAgent({"tools": {}})
+    output = tmp_path / "plate.dxf"
+    agent.execute_operation("cad.draw_from_spec", {
+        "project_dir": str(tmp_path), "output_file": output.name,
+        "spec": {"kind": "plate", "width": 100, "height": 60,
+                 "holes": [{"pattern": "corners", "diameter": 8, "edge_offset": 10}]},
+    })
+    before = {item["tag"]: item.get("handle") for item in CadDocument.open(output).entities if item.get("tag")}
+    revised = agent.execute_operation("cad.revise_drawing", {
+        "project_dir": str(tmp_path), "input_file": output.name, "output_file": output.name,
+        "changes": {"width": 120, "height": 70},
+    })
+    assert revised["drawing_spec"]["valid"]
+    assert revised["spec"]["width"] == 120
+    assert agent.execute_operation("cad.validate_spec", {"project_dir": str(tmp_path), "input_file": output.name})["valid"]
+    after = {item["tag"]: item.get("handle") for item in CadDocument.open(output).entities if item.get("tag")}
+    assert before.keys() == after.keys()
+    assert before["outline"] == after["outline"]
+    assert CadDocument.open(output).to_dict()["bbox"]["x"]["max"] == pytest.approx(120)

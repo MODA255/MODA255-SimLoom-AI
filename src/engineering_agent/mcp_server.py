@@ -465,6 +465,8 @@ class MCPServer:
                 {"name": "inspect_entities", "description": "Inspect entities using AgentCAD-compatible filters and pagination", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "filter": {"type": "object"}, "ids": {"type": "array"}, "entity_type": {"type": "string"}, "layer": {"type": "string"}, "window": {"type": "array"}, "limit": {"type": "integer"}, "offset": {"type": "integer"}}}},
                 {"name": "apply_constraints", "description": "Check or sequentially enforce geometric constraints", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "output_file": {"type": "string"}, "constraints": {"type": "array"}, "mode": {"type": "string", "enum": ["check", "enforce"], "default": "check"}, "tolerance": {"type": "number"}}}},
             {"name": "draw_from_spec", "description": "Create a validated drawing from a compact plate specification", "inputSchema": {"type": "object", "required": ["spec", "output"], "properties": {"project_dir": {"type": "string"}, "output": {"type": "string"}, "spec": {"type": "object"}, "overwrite": {"type": "boolean"}}}},
+            {"name": "revise_drawing", "description": "Revise a stored drawing specification while preserving stable entity references", "inputSchema": {"type": "object", "required": ["changes"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "output_file": {"type": "string"}, "changes": {"type": "object"}}}},
+            {"name": "validate_drawing", "description": "Validate a persisted drawing against its stored specification", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "tolerance": {"type": "number"}}}},
             ]
             tools.extend(facade_tools)
         if toolset == "compact":
@@ -872,7 +874,7 @@ class MCPServer:
                 raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "arguments must be an object")
             target = operation if operation.startswith("operation.") else "operation." + operation
             return self.call(target, operation_arguments)
-        if name in {"apply_operations", "read_drawing", "measure_entities", "verify_drawing", "get_diff", "create_drawing", "inspect_entities", "apply_constraints", "draw_from_spec"}:
+        if name in {"apply_operations", "read_drawing", "measure_entities", "verify_drawing", "get_diff", "create_drawing", "inspect_entities", "apply_constraints", "draw_from_spec", "revise_drawing", "validate_drawing"}:
             mapped = dict(arguments)
             if "input_file" not in mapped:
                 for key in ("document", "path"):
@@ -886,6 +888,10 @@ class MCPServer:
                 mapped.pop("output", None)
                 mapped.pop("path", None)
                 return self.call("operation.cad.draw_from_spec", mapped)
+            if name == "revise_drawing":
+                return self.call("operation.cad.revise_drawing", mapped)
+            if name == "validate_drawing":
+                return self.call("operation.cad.validate_spec", mapped)
             if name == "apply_constraints":
                 mode = str(mapped.pop("mode", "check")).lower()
                 if mode not in {"check", "enforce"}:
