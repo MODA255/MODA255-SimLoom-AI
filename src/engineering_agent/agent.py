@@ -527,6 +527,11 @@ class EngineeringAgent:
                     "visual_diff": visual_diff(left_geometry, right_geometry,
                                                 width=max(320, min(int(arguments.get("width", 900)), 2400)),
                                                 height=max(240, min(int(arguments.get("height", 560)), 1600)))}
+        if name == "project.extract_requirements":
+            from .requirements import extract_requirements
+            root = Path(arguments.get("project_dir", ".")).resolve()
+            document = _project_path(root, arguments["document"], must_exist=True, require_file=True)
+            return extract_requirements(document, overrides=arguments.get("overrides"))
         if name == "project.asset_export":
             project_root = Path(arguments.get("project_dir", ".")).resolve()
             input_path = _project_path(project_root, arguments["input_file"], must_exist=True, require_file=True)

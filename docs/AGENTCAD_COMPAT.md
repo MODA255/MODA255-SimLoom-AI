@@ -62,4 +62,4 @@ compact MCP toolset 现在提供五个与 AgentCAD 主工具习惯一致的入�
 
 `export_drawing` 现在把 AgentCAD 风格的导出调用映射到 `cad.plot`，支持 PDF、PNG 和 SVG，并返回审计报告、源文件哈希和输出验证。绘图输出仍走 SimLoom 的事务与路径约束。
 
-MCP compact façade 还提供 `run_script`、`standard_library` 和 `agentcad_status`。脚本入口仍要求显式启用受控脚本策略，标准库读取复用 SimLoom catalog，状态入口返回当前工作区和 CAD context，不把本地连接状态当作商业软件验收。
+MCP compact façade 还提供 `run_script`、`standard_library`、`agentcad_status`、`extract_requirements` 和 `revise_from_document`。脚本入口仍要求显式启用受控脚本策略，标准库读取复用 SimLoom catalog，状态入口返回当前工作区和 CAD context，不把本地连接状态当作商业软件验收。文档提取使用规则化事实和源文件哈希，文档修订继续经过规格验证。

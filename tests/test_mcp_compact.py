@@ -260,3 +260,22 @@ def test_agentcad_runtime_facades_expose_status_library_and_controlled_script(tm
     })
     assert denied["result"]["isError"] is True
     assert "CAD_SCRIPTS_DISABLED" in denied["result"]["structuredContent"]["error"]["message"]
+
+
+def test_agentcad_requirement_extraction_and_document_revision_facade(tmp_path):
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="full", toolset="compact")
+    spec = tmp_path / "requirements.md"
+    spec.write_text("plate width 120 mm, height 70 mm, hole diameter 10 mm, edge offset 12 mm", encoding="utf-8")
+    extracted = _call(server, "extract_requirements", {"project_dir": str(tmp_path), "document": spec.name})
+    assert extracted["result"].get("isError", False) is False
+    assert extracted["result"]["structuredContent"]["facts"]["width"] == 120
+    created = _call(server, "draw_from_spec", {
+        "project_dir": str(tmp_path), "output": "plate.dxf",
+        "spec": {"kind": "plate", "width": 100, "height": 60, "holes": [{"pattern": "corners", "diameter": 8, "edge_offset": 10}]},
+    })
+    assert created["result"].get("isError", False) is False
+    revised = _call(server, "revise_from_document", {
+        "project_dir": str(tmp_path), "document": spec.name, "drawing": "plate.dxf", "output_file": "plate.dxf",
+    })
+    assert revised["result"].get("isError", False) is False
+    assert revised["result"]["structuredContent"]["revision"]["drawing_spec"]["valid"] is True

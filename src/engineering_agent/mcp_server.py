@@ -462,6 +462,8 @@ class MCPServer:
             {"name": "run_script", "description": "Run an explicitly enabled controlled CAD helper script", "inputSchema": {"type": "object", "required": ["document", "output", "code"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "output": {"type": "string"}, "code": {"type": "string"}, "allow_scripts": {"type": "boolean"}, "parameters": {"type": "object"}}}},
             {"name": "standard_library", "description": "Read the built-in standard parts, holes, symbols and GD&T catalog", "inputSchema": {"type": "object", "properties": {"category": {"type": "string"}, "query": {"type": "string"}, "item": {"type": "string"}, "size": {"type": "string"}}}},
             {"name": "agentcad_status", "description": "Inspect the active CAD context and runtime connection state", "inputSchema": {"type": "object", "properties": {"label": {"type": "string"}}}},
+            {"name": "extract_requirements", "description": "Conservatively extract drawing requirements from TXT, Markdown, JSON or PDF", "inputSchema": {"type": "object", "required": ["document"], "properties": {"document": {"type": "string"}, "project_dir": {"type": "string"}, "overrides": {"type": "object"}}}},
+            {"name": "revise_from_document", "description": "Extract requirements from a document and revise a stored plate drawing specification", "inputSchema": {"type": "object", "required": ["document", "drawing"], "properties": {"document": {"type": "string"}, "drawing": {"type": "string"}, "project_dir": {"type": "string"}, "output_file": {"type": "string"}, "overrides": {"type": "object"}}}},
                 {"name": "read_drawing", "description": "Read the active drawing into the canonical document model", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}}}},
                 {"name": "measure_entities", "description": "Measure selected drawing entities with analytic geometry", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "target": {}, "entity_ids": {"type": "array"}, "selection_set": {"type": "string"}, "entity_type": {"type": "string"}, "layer": {"type": "string"}, "window": {"type": "array"}, "strict": {"type": "boolean"}}}},
                 {"name": "verify_drawing", "description": "Run independent drawing validation and engineering requirements", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "requirements": {"type": "object"}}}},
@@ -879,15 +881,16 @@ class MCPServer:
                 raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "arguments must be an object")
             target = operation if operation.startswith("operation.") else "operation." + operation
             return self.call(target, operation_arguments)
-        if name in {"apply_operations", "apply_batch", "export_drawing", "run_script", "standard_library", "agentcad_status", "read_drawing", "measure_entities", "verify_drawing", "get_diff", "create_drawing", "inspect_entities", "apply_constraints", "draw_from_spec", "revise_drawing", "validate_drawing"}:
+        if name in {"apply_operations", "apply_batch", "export_drawing", "run_script", "standard_library", "agentcad_status", "extract_requirements", "revise_from_document", "read_drawing", "measure_entities", "verify_drawing", "get_diff", "create_drawing", "inspect_entities", "apply_constraints", "draw_from_spec", "revise_drawing", "validate_drawing"}:
             mapped = dict(arguments)
             if "input_file" not in mapped:
                 for key in ("document", "path"):
                     if mapped.get(key):
                         mapped["input_file"] = mapped[key]
                         break
-            mapped.pop("document", None)
-            mapped.pop("path", None)
+            if name not in {"extract_requirements", "revise_from_document"}:
+                mapped.pop("document", None)
+                mapped.pop("path", None)
             if name == "draw_from_spec":
                 mapped["output_file"] = mapped.get("output") or mapped.get("path")
                 mapped.pop("output", None)
@@ -913,6 +916,22 @@ class MCPServer:
                 if "entity_ids" not in mapped and mapped.get("ids") is not None:
                     mapped["entity_ids"] = mapped.pop("ids")
                 return self.call("operation.cad.query", mapped)
+            if name == "extract_requirements":
+                return self.call("operation.project.extract_requirements", mapped)
+            if name == "revise_from_document":
+                from .requirements import extract_requirements
+                project_dir = str(mapped.get("project_dir") or ".")
+                document_path = mapped.get("document")
+                drawing_path = mapped.get("drawing")
+                facts_result = extract_requirements(Path(project_dir).resolve() / str(document_path), overrides=mapped.get("overrides"))
+                facts = facts_result.get("facts") or {}
+                changes = {key: facts[key] for key in ("width", "height") if key in facts}
+                if "hole_diameter" in facts or "edge_offset" in facts:
+                    changes["holes"] = [{"pattern": "corners", "diameter": facts.get("hole_diameter", 8),
+                                         "edge_offset": facts.get("edge_offset", 10)}]
+                return {"requirements": facts_result, "revision": self.call("operation.cad.revise_drawing", {
+                    "project_dir": project_dir, "input_file": drawing_path,
+                    "output_file": mapped.get("output_file") or drawing_path, "changes": changes})}
             if name == "agentcad_status":
                 return {"ok": True, "connected": True, "app": "simloom-ai", "label": mapped.get("label"),
                         "workspace": mapped.get("project_dir"), "cad_context": dict(self._cad_context) if self._cad_context else None,
