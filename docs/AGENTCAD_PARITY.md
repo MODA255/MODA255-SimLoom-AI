@@ -86,7 +86,7 @@ bulge 弧段、SPLINE 采样段和 HATCH 多段线边界检查自交/重叠；�
 
 `cad.measure_entities` 现已补齐 AgentCAD 的解析几何测量入口。它对 LINE、CIRCLE、ARC、带 bulge 的 LWPOLYLINE/POLYLINE 和简单 HATCH 返回逐实体证据与汇总长度、周长、面积，支持与 `cad.query` 相同的选择器、严格模式和只读失败警告；详见 `CAD_MEASUREMENTS.md`。它增强 Agent-facing 的工程检查，不替代四款商业软件的原生结果读取。
 
-compact MCP toolset 现已补齐 AgentCAD 风格的 `create_drawing`、`apply_operations`、`read_drawing`、`inspect_entities`、`measure_entities`、`apply_constraints`、`verify_drawing` 和 `get_diff` 入口；它们共享活动 CAD context、事务、error envelope 和 profile policy，批次内部的扁平 operation 名称会先归一到 SimLoom canonical operation。详见 `AGENTCAD_COMPAT.md`。
+compact MCP toolset 现已补齐 AgentCAD 风格的 `create_drawing`、`draw_from_spec`、`revise_drawing`、`read_drawing`、`inspect_entities`、`measure_entities`、`apply_constraints`、`validate_drawing`、`verify_drawing` 和 `get_diff` 入口；它们共享活动 CAD context、事务、error envelope 和 profile policy，批次内部的扁平 operation 名称会先归一到 SimLoom canonical operation。详见 `AGENTCAD_COMPAT.md`。
 
 ## 必须逐项证明的能力
 
@@ -168,7 +168,7 @@ worker 的独立配置文件、脚本绑定和真实软件验收仍需逐款完�
 
 这里的“接近 AgentCAD”分成两个口径：一是 Agent-facing runtime 是否让模型能够可靠地发现、调用、观察、验证、恢复和复现工程操作；二是 SimLoom 的产品主线是否真的能操作 CATIA、Ansys、Adams 和 VI-grade。前一个口径可以在没有商业软件的机器上持续补齐，后一个口径必须依赖 Windows、软件版本、许可证和真实工程文件。
 
-按当前仓库状态，SimLoom 的 Agent-facing 基础已经具备：统一 operation registry、MCP/CLI/HTTP/Python 入口、事务锁、checkpoint、journal、rollback、版本 diff、分页 discovery、结构化 error envelope、离线 CAD/结果验证、任务队列、工作流恢复和有界修复。当前 operation registry 中有 224 个公开名称，其中 115 个是 `cad.*` typed operation；数量已经超过对照项目的 2D 操作规模，但数量不代表每个操作的语义、性能和真实工程兼容性都达到同一水平。
+按当前仓库状态，SimLoom 的 Agent-facing 基础已经具备：统一 operation registry、MCP/CLI/HTTP/Python 入口、事务锁、checkpoint、journal、rollback、版本 diff、分页 discovery、结构化 error envelope、离线 CAD/结果验证、任务队列、工作流恢复和有界修复。当前 operation registry 中有 233 个公开名称，其中 122 个是 `cad.*` typed operation；数量已经超过对照项目的 2D 操作规模，但数量不代表每个操作的语义、性能和真实工程兼容性都达到同一水平。
 
 真正的核心差距按影响排序如下：
 
