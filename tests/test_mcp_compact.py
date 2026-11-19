@@ -231,3 +231,15 @@ def test_agentcad_apply_batch_processes_multiple_drawings_and_reports_each_resul
     assert batch["completed"] == 2 and batch["failed"] == 0
     assert len(CadDocument.open(tmp_path / "one.dxf").entities) == 1
     assert len(CadDocument.open(tmp_path / "two.dxf").entities) == 1
+
+
+def test_agentcad_export_drawing_facade_uses_audited_plot_pipeline(tmp_path):
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="full", toolset="compact")
+    source = tmp_path / "export-source.dxf"
+    write_dxf(source, lines=[{"x1": 0, "y1": 0, "x2": 20, "y2": 0}])
+    result = _call(server, "export_drawing", {
+        "project_dir": str(tmp_path), "document": source.name, "output": "preview.svg", "format": "svg",
+    })
+    assert result["result"].get("isError", False) is False
+    assert (tmp_path / "preview.svg").is_file()
+    assert result["result"]["structuredContent"]["validation"]["valid"] is True

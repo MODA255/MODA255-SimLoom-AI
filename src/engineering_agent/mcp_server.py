@@ -458,6 +458,7 @@ class MCPServer:
             facade_tools = [
                 {"name": "apply_operations", "description": "Apply an AgentCAD-compatible atomic operation batch to the active drawing", "inputSchema": {"type": "object", "required": ["operations"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "output_file": {"type": "string"}, "operations": {"type": "array", "items": {"type": "object"}}, "requirements": {"type": "object"}, "auto_repair": {"type": "boolean", "default": True}}}},
             {"name": "apply_batch", "description": "Apply independent operation batches to multiple drawings", "inputSchema": {"type": "object", "required": ["jobs"], "properties": {"jobs": {"type": "array", "items": {"type": "object"}}, "stop_on_error": {"type": "boolean", "default": True}}}},
+            {"name": "export_drawing", "description": "Export a drawing to PDF, PNG or SVG through the audited plot pipeline", "inputSchema": {"type": "object", "required": ["document", "output"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "output": {"type": "string"}, "format": {"type": "string", "enum": ["pdf", "png", "svg"]}, "layout": {"type": "string"}, "scale": {"type": "string"}, "overwrite": {"type": "boolean"}}}},
                 {"name": "read_drawing", "description": "Read the active drawing into the canonical document model", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}}}},
                 {"name": "measure_entities", "description": "Measure selected drawing entities with analytic geometry", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "target": {}, "entity_ids": {"type": "array"}, "selection_set": {"type": "string"}, "entity_type": {"type": "string"}, "layer": {"type": "string"}, "window": {"type": "array"}, "strict": {"type": "boolean"}}}},
                 {"name": "verify_drawing", "description": "Run independent drawing validation and engineering requirements", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "requirements": {"type": "object"}}}},
@@ -875,7 +876,7 @@ class MCPServer:
                 raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "arguments must be an object")
             target = operation if operation.startswith("operation.") else "operation." + operation
             return self.call(target, operation_arguments)
-        if name in {"apply_operations", "apply_batch", "read_drawing", "measure_entities", "verify_drawing", "get_diff", "create_drawing", "inspect_entities", "apply_constraints", "draw_from_spec", "revise_drawing", "validate_drawing"}:
+        if name in {"apply_operations", "apply_batch", "export_drawing", "read_drawing", "measure_entities", "verify_drawing", "get_diff", "create_drawing", "inspect_entities", "apply_constraints", "draw_from_spec", "revise_drawing", "validate_drawing"}:
             mapped = dict(arguments)
             if "input_file" not in mapped:
                 for key in ("document", "path"):
@@ -909,6 +910,17 @@ class MCPServer:
                 if "entity_ids" not in mapped and mapped.get("ids") is not None:
                     mapped["entity_ids"] = mapped.pop("ids")
                 return self.call("operation.cad.query", mapped)
+            if name == "export_drawing":
+                output = mapped.get("output") or mapped.get("output_file")
+                if not output:
+                    raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "output is required")
+                fmt = str(mapped.get("format", "")).lower().lstrip(".")
+                if fmt and not str(output).lower().endswith("." + fmt):
+                    output = str(output) + "." + fmt
+                mapped["output_file"] = output
+                mapped["input_file"] = mapped.get("input_file") or mapped.get("document") or mapped.get("path")
+                mapped.pop("output", None); mapped.pop("document", None); mapped.pop("path", None); mapped.pop("format", None)
+                return self.call("operation.cad.plot", mapped)
             if name == "apply_batch":
                 jobs = mapped.get("jobs")
                 if not isinstance(jobs, list) or not jobs:
