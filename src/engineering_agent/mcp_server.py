@@ -459,6 +459,9 @@ class MCPServer:
                 {"name": "apply_operations", "description": "Apply an AgentCAD-compatible atomic operation batch to the active drawing", "inputSchema": {"type": "object", "required": ["operations"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "output_file": {"type": "string"}, "operations": {"type": "array", "items": {"type": "object"}}, "requirements": {"type": "object"}, "auto_repair": {"type": "boolean", "default": True}}}},
             {"name": "apply_batch", "description": "Apply independent operation batches to multiple drawings", "inputSchema": {"type": "object", "required": ["jobs"], "properties": {"jobs": {"type": "array", "items": {"type": "object"}}, "stop_on_error": {"type": "boolean", "default": True}}}},
             {"name": "export_drawing", "description": "Export a drawing to PDF, PNG or SVG through the audited plot pipeline", "inputSchema": {"type": "object", "required": ["document", "output"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "output": {"type": "string"}, "format": {"type": "string", "enum": ["pdf", "png", "svg"]}, "layout": {"type": "string"}, "scale": {"type": "string"}, "overwrite": {"type": "boolean"}}}},
+            {"name": "run_script", "description": "Run an explicitly enabled controlled CAD helper script", "inputSchema": {"type": "object", "required": ["document", "output", "code"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "output": {"type": "string"}, "code": {"type": "string"}, "allow_scripts": {"type": "boolean"}, "parameters": {"type": "object"}}}},
+            {"name": "standard_library", "description": "Read the built-in standard parts, holes, symbols and GD&T catalog", "inputSchema": {"type": "object", "properties": {"category": {"type": "string"}, "query": {"type": "string"}, "item": {"type": "string"}, "size": {"type": "string"}}}},
+            {"name": "agentcad_status", "description": "Inspect the active CAD context and runtime connection state", "inputSchema": {"type": "object", "properties": {"label": {"type": "string"}}}},
                 {"name": "read_drawing", "description": "Read the active drawing into the canonical document model", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}}}},
                 {"name": "measure_entities", "description": "Measure selected drawing entities with analytic geometry", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "target": {}, "entity_ids": {"type": "array"}, "selection_set": {"type": "string"}, "entity_type": {"type": "string"}, "layer": {"type": "string"}, "window": {"type": "array"}, "strict": {"type": "boolean"}}}},
                 {"name": "verify_drawing", "description": "Run independent drawing validation and engineering requirements", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "requirements": {"type": "object"}}}},
@@ -876,7 +879,7 @@ class MCPServer:
                 raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "arguments must be an object")
             target = operation if operation.startswith("operation.") else "operation." + operation
             return self.call(target, operation_arguments)
-        if name in {"apply_operations", "apply_batch", "export_drawing", "read_drawing", "measure_entities", "verify_drawing", "get_diff", "create_drawing", "inspect_entities", "apply_constraints", "draw_from_spec", "revise_drawing", "validate_drawing"}:
+        if name in {"apply_operations", "apply_batch", "export_drawing", "run_script", "standard_library", "agentcad_status", "read_drawing", "measure_entities", "verify_drawing", "get_diff", "create_drawing", "inspect_entities", "apply_constraints", "draw_from_spec", "revise_drawing", "validate_drawing"}:
             mapped = dict(arguments)
             if "input_file" not in mapped:
                 for key in ("document", "path"):
@@ -910,6 +913,18 @@ class MCPServer:
                 if "entity_ids" not in mapped and mapped.get("ids") is not None:
                     mapped["entity_ids"] = mapped.pop("ids")
                 return self.call("operation.cad.query", mapped)
+            if name == "agentcad_status":
+                return {"ok": True, "connected": True, "app": "simloom-ai", "label": mapped.get("label"),
+                        "workspace": mapped.get("project_dir"), "cad_context": dict(self._cad_context) if self._cad_context else None,
+                        "schemaVersion": self.schema_version}
+            if name == "standard_library":
+                return self.call("operation.cad.standard_library", mapped)
+            if name == "run_script":
+                mapped["input_file"] = mapped.get("input_file") or mapped.get("document") or mapped.get("path")
+                mapped["output_file"] = mapped.get("output_file") or mapped.get("output")
+                mapped["script"] = mapped.get("script") or mapped.get("code")
+                mapped.pop("document", None); mapped.pop("path", None); mapped.pop("output", None); mapped.pop("code", None)
+                return self.call("operation.cad.script_apply", mapped)
             if name == "export_drawing":
                 output = mapped.get("output") or mapped.get("output_file")
                 if not output:

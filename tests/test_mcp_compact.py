@@ -243,3 +243,20 @@ def test_agentcad_export_drawing_facade_uses_audited_plot_pipeline(tmp_path):
     assert result["result"].get("isError", False) is False
     assert (tmp_path / "preview.svg").is_file()
     assert result["result"]["structuredContent"]["validation"]["valid"] is True
+
+
+def test_agentcad_runtime_facades_expose_status_library_and_controlled_script(tmp_path):
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="full", toolset="compact")
+    status = _call(server, "agentcad_status", {"project_dir": str(tmp_path), "label": "test"})
+    assert status["result"]["structuredContent"]["connected"] is True
+    library = _call(server, "standard_library", {"category": "fasteners", "query": "M8"})
+    assert library["result"].get("isError", False) is False
+    source = tmp_path / "script-source.dxf"
+    output = tmp_path / "script-output.dxf"
+    write_dxf(source, lines=[])
+    denied = _call(server, "run_script", {
+        "project_dir": str(tmp_path), "document": source.name, "output": output.name,
+        "code": "print('x')",
+    })
+    assert denied["result"]["isError"] is True
+    assert "CAD_SCRIPTS_DISABLED" in denied["result"]["structuredContent"]["error"]["message"]

@@ -61,3 +61,5 @@ compact MCP toolset 现在提供五个与 AgentCAD 主工具习惯一致的入�
 `apply_batch` 现在支持一次 MCP 调用处理多个独立 drawing。每个 job 都单独进入 `cad.batch_apply`，结果包含 `index`、成功/失败状态和原始结构化错误；`stop_on_error` 可以在第一份图纸失败后停止后续 job。每份图纸仍有独立事务和回滚边界。
 
 `export_drawing` 现在把 AgentCAD 风格的导出调用映射到 `cad.plot`，支持 PDF、PNG 和 SVG，并返回审计报告、源文件哈希和输出验证。绘图输出仍走 SimLoom 的事务与路径约束。
+
+MCP compact façade 还提供 `run_script`、`standard_library` 和 `agentcad_status`。脚本入口仍要求显式启用受控脚本策略，标准库读取复用 SimLoom catalog，状态入口返回当前工作区和 CAD context，不把本地连接状态当作商业软件验收。
