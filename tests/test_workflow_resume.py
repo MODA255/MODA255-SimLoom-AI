@@ -364,6 +364,16 @@ def test_mcp_workflow_resources_expose_paginated_status_and_failure_evidence(wor
     assert status_value['workflow_id']==report.workflow_id
     failed_step=next(item for item in status_value['steps'] if item['status']=='failed')
     assert failed_step['failure_evidence']['schema_version']=='simloom-ai/failure-evidence/v1'
+    subscribed=server.handle({'jsonrpc':'2.0','id':5,'method':'resources/subscribe',
+                              'params':{'uri':uri}})
+    assert subscribed['result']['subscribed'] is True
+    repaired=server.handle({'jsonrpc':'2.0','id':6,'method':'tools/call','params':{
+        'name':'engineering_workflow','arguments':{'action':'repair','workflow_id':report.workflow_id,
+                                                    'project_dir':str(project)}}})
+    assert repaired['result']['structuredContent']['status']=='needs_review'
+    notifications=server.drain_notifications()
+    assert any(item['method']=='notifications/resources/updated' and item['params']['uri']==uri
+               for item in notifications)
     failures=server.handle({'jsonrpc':'2.0','id':4,'method':'resources/read','params':{
         'uri':uri+'&detail=failures'}})
     failure_value=json.loads(failures['result']['contents'][0]['text'])
