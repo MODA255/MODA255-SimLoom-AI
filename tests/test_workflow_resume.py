@@ -352,6 +352,9 @@ def test_mcp_workflow_resources_expose_paginated_status_and_failure_evidence(wor
     from engineering_agent.mcp_server import MCPServer
     project,manager,config,plan,make=workflow_setup
     plan.steps[0].parameters['fail']=True
+    # Leave enough time for the fixture process to start on hosted Windows
+    # runners before asserting its immediate non-zero exit is observed.
+    config['timeouts']['step_seconds']=10
     report=make().run('fixture',project_dir=str(project),dry_run=False)
     assert report.status=='failed'
     server=MCPServer(make(), profile='full')
