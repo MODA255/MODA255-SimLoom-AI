@@ -166,3 +166,22 @@ def test_agentcad_create_and_inspect_tools_use_native_document_operation(tmp_pat
     denied = _call(safe, "create_drawing", {"project_dir": str(tmp_path), "output": "safe.dxf"})
     assert denied["result"]["isError"] is True
     assert "MCP_PROFILE_READ_ONLY" in denied["result"]["structuredContent"]["error"]["message"]
+
+
+def test_agentcad_apply_constraints_facade_checks_and_enforces(tmp_path):
+    source = tmp_path / "constraints.dxf"
+    output = tmp_path / "constraints-enforced.dxf"
+    write_dxf(source, lines=[{"x1": 0, "y1": 0, "x2": 3, "y2": 4}])
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="full", toolset="compact")
+    checked = _call(server, "apply_constraints", {
+        "project_dir": str(tmp_path), "document": source.name,
+        "constraints": [{"type": "horizontal", "a": "e00001"}], "mode": "check",
+    })
+    assert checked["result"].get("isError", False) is False
+    assert checked["result"]["structuredContent"]["valid"] is False
+    enforced = _call(server, "apply_constraints", {
+        "project_dir": str(tmp_path), "document": source.name, "output_file": output.name,
+        "constraints": [{"type": "horizontal", "a": "e00001"}], "mode": "enforce",
+    })
+    assert enforced["result"].get("isError", False) is False
+    assert enforced["result"]["structuredContent"]["checks"][0]["satisfied"] is True

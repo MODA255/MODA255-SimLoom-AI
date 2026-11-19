@@ -373,6 +373,7 @@ class MCPServer:
             {"name": "get_diff", "description": "Compare the active drawing with another drawing", "inputSchema": {"type": "object", "required": ["right_file"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "right_file": {"type": "string"}}}},
             {"name": "create_drawing", "description": "Create a new blank native DXF drawing", "inputSchema": {"type": "object", "required": ["output"], "properties": {"output": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "units": {"type": "string", "default": "mm"}, "template": {"type": "string", "enum": ["blank", "iso"]}, "annotation_scale": {"type": "number"}, "overwrite": {"type": "boolean"}}}},
             {"name": "inspect_entities", "description": "Inspect entities using AgentCAD-compatible filters and pagination", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "filter": {"type": "object"}, "ids": {"type": "array"}, "entity_type": {"type": "string"}, "layer": {"type": "string"}, "window": {"type": "array"}, "limit": {"type": "integer"}, "offset": {"type": "integer"}}}},
+            {"name": "apply_constraints", "description": "Check or sequentially enforce geometric constraints", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "output_file": {"type": "string"}, "constraints": {"type": "array"}, "mode": {"type": "string", "enum": ["check", "enforce"], "default": "check"}, "tolerance": {"type": "number"}}}},
         ]
         if include_profile and self.profile == "safe":
             tools = [tool for tool in tools if tool["name"] not in {
@@ -864,7 +865,7 @@ class MCPServer:
                 raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "arguments must be an object")
             target = operation if operation.startswith("operation.") else "operation." + operation
             return self.call(target, operation_arguments)
-        if name in {"apply_operations", "read_drawing", "measure_entities", "verify_drawing", "get_diff", "create_drawing", "inspect_entities"}:
+        if name in {"apply_operations", "read_drawing", "measure_entities", "verify_drawing", "get_diff", "create_drawing", "inspect_entities", "apply_constraints"}:
             mapped = dict(arguments)
             if "input_file" not in mapped:
                 for key in ("document", "path"):
@@ -873,6 +874,12 @@ class MCPServer:
                         break
             mapped.pop("document", None)
             mapped.pop("path", None)
+            if name == "apply_constraints":
+                mode = str(mapped.pop("mode", "check")).lower()
+                if mode not in {"check", "enforce"}:
+                    raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "mode must be check or enforce")
+                target = "operation.cad.constraints_enforce" if mode == "enforce" else "operation.cad.constraints_check"
+                return self.call(target, mapped)
             if name == "create_drawing":
                 if "output_file" not in mapped:
                     mapped["output_file"] = mapped.get("output") or mapped.get("path")

@@ -4394,6 +4394,29 @@ class CadOperationEngine:
                     "document": self.open(output_file).to_dict(), "validation": validation, "history": history,
                     "run_id": transaction.run_id}
 
+    def _constraints_enforce(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        from .cad_constraints import enforce_constraints
+        raw_input = arguments.get("input_file") or arguments.get("path")
+        if not raw_input:
+            raise ValueError("CAD_INPUT_FILE_REQUIRED")
+        input_path = Path(str(raw_input)).expanduser()
+        project_root = Path(arguments.get("project_dir") or input_path.parent).expanduser().resolve()
+        input_file = (project_root / input_path if arguments.get("project_dir") and not input_path.is_absolute() else input_path).resolve()
+        output_path = Path(str(arguments.get("output_file") or input_file)).expanduser()
+        output_file = (project_root / output_path if arguments.get("project_dir") and not output_path.is_absolute() else output_path).resolve()
+        if project_root not in input_file.parents or project_root not in output_file.parents:
+            raise ValueError("PATH_OUTSIDE_PROJECT")
+        with RunTransaction(project_root) as transaction:
+            transaction.begin({"operation": "cad.constraints_enforce", "input_file": str(input_file), "output_file": str(output_file)})
+            document = self.open(input_file)
+            transaction.checkpoint("before-constraints", {"entity_count": len(document.entities), "constraints": arguments.get("constraints", [])})
+            result = enforce_constraints(document, list(arguments.get("constraints") or []), tolerance=float(arguments.get("tolerance", 1e-6)))
+            committed, validation, history = self._write(transaction, document, output_file, {}, "constraints_enforce")
+            result.update({"schema_version": "simloom-ai/cad-constraints/v1", "document": self.open(output_file).to_dict(),
+                           "path": committed[str(output_file.relative_to(project_root))], "validation": validation,
+                           "history": history, "run_id": transaction.run_id})
+            return result
+
     def _script_apply(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Apply a project-local helper script as one validated CAD transaction."""
         configured = bool(self.config.get("allow_scripts")) or bool((self.config.get("cad") or {}).get("allow_scripts"))
@@ -4511,6 +4534,8 @@ class CadOperationEngine:
             return self._script_apply(arguments)
         if operation == "cad.document_create":
             return self._document_create(arguments)
+        if operation == "cad.constraints_enforce":
+            return self._constraints_enforce(arguments)
         if operation == "cad.plot":
             from .plotting import plot_operation
             return plot_operation(arguments)
@@ -4524,7 +4549,7 @@ class CadOperationEngine:
             raise ValueError("PATH_OUTSIDE_PROJECT")
         if operation in {"cad.history", "cad.undo", "cad.redo"}:
             return self._history_operation(operation, project_root, input_file)
-        if operation in {"cad.audit", "cad.document_diff", "cad.visual_diff", "cad.pid_audit", "cad.standard_parts_audit", "cad.document_open", "cad.document_inspect", "cad.document_recompute", "cad.query", "cad.measure_entities", "cad.verify_dimensions"}:
+        if operation in {"cad.audit", "cad.document_diff", "cad.visual_diff", "cad.pid_audit", "cad.standard_parts_audit", "cad.document_open", "cad.document_inspect", "cad.document_recompute", "cad.query", "cad.measure_entities", "cad.constraints_check", "cad.verify_dimensions"}:
             with RunTransaction.read_lock(project_root):
                 if not input_file.is_file():
                     raise FileNotFoundError(input_file)
@@ -4541,6 +4566,13 @@ class CadOperationEngine:
                     result["validation"] = validation
                 elif operation == "cad.measure_entities":
                     result = _measure_entities(document, arguments)
+                    result["path"] = str(input_file)
+                    result["validation"] = validation
+                elif operation == "cad.constraints_check":
+                    from .cad_constraints import check_constraints
+                    checks = check_constraints(document, list(arguments.get("constraints") or []), tolerance=float(arguments.get("tolerance", 1e-6)))
+                    result = {"schema_version": "simloom-ai/cad-constraints/v1", "checks": checks,
+                              "valid": all(item.get("satisfied", False) for item in checks)}
                     result["path"] = str(input_file)
                     result["validation"] = validation
                 elif operation == "cad.verify_dimensions":
