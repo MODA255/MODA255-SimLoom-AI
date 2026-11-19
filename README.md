@@ -745,3 +745,6 @@ SimLoom-AI/
 策略时才继续。可用 `repair_budget` 或 CLI 的 `--repair-budget` 限制连续尝试次数；出现回归、
 单位不一致或证据不足则转人工复核。详见
 [工程链恢复与修复](docs/WORKFLOW_RECOVERY.md)。
+
+交付节点、验证命令和 Windows 实机闸门见
+[2026-11-20 交付闭环清单](docs/DELIVERY_READINESS.md)。
