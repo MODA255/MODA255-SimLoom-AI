@@ -67,3 +67,5 @@ MCP compact façade 还提供 `run_script`、`standard_library`、`agentcad_stat
 `validate_drawing` 现在调用通用 `cad.audit`，可以验证普通 DXF 和显式工程 requirements；规格专用检查仍由 `cad.validate_spec` 负责。
 
 `history` 和 `rollback` 复用 durable CAD history。`history` 是只读观察，`rollback` 只回滚最新提交并受 full profile、外部编辑冲突检查和事务恢复保护。
+
+`list_checkpoints` 和 `recover` 现在暴露 durable transaction checkpoints 与 stale transaction recovery。`list_checkpoints` 只读，`recover` 受 full profile 保护并返回恢复的 run ID，底层仍使用同一套锁、before-image 和冲突保护。

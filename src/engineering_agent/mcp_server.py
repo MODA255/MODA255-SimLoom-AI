@@ -174,7 +174,7 @@ class MCPServer:
         elif tool_name.startswith("operation."):
             operation_name = tool_name[len("operation."):]
         mutating = (
-            tool_name in {"engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations", "apply_batch", "rollback"}
+            tool_name in {"engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations", "apply_batch", "rollback", "recover"}
             or tool_name == "engineering_run" and not bool(arguments.get("dry_run", True))
             or tool_name == "engineering_workflow" and arguments.get("action") in {"resume", "repair"}
             or operation_name is not None and self.operations.get(operation_name).safety in {"write", "execute"}
@@ -369,7 +369,7 @@ class MCPServer:
         ]
         if include_profile and self.profile == "safe":
             tools = [tool for tool in tools if tool["name"] not in {
-                "engineering_run", "engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations", "apply_batch", "rollback", "create_drawing"}]
+                "engineering_run", "engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations", "apply_batch", "rollback", "recover", "create_drawing"}]
         for tool in tools:
             if tool["name"] in {"engineering_plan", "engineering_preflight", "engineering_run"}:
                 tool["inputSchema"]["properties"]["parameters"] = {"type": "object", "description": "Explicit engineering parameters forwarded to software steps"}
@@ -466,6 +466,8 @@ class MCPServer:
             {"name": "revise_from_document", "description": "Extract requirements from a document and revise a stored plate drawing specification", "inputSchema": {"type": "object", "required": ["document", "drawing"], "properties": {"document": {"type": "string"}, "drawing": {"type": "string"}, "project_dir": {"type": "string"}, "output_file": {"type": "string"}, "overrides": {"type": "object"}}}},
             {"name": "history", "description": "Read the durable CAD revision history for a drawing", "inputSchema": {"type": "object", "required": ["document"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}}}},
             {"name": "rollback", "description": "Undo the latest committed CAD revision through the transaction history", "inputSchema": {"type": "object", "required": ["document"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}}}},
+            {"name": "list_checkpoints", "description": "List durable CAD transaction checkpoints for a project", "inputSchema": {"type": "object", "properties": {"project_dir": {"type": "string"}, "run_id": {"type": "string"}}}},
+            {"name": "recover", "description": "Recover stale interrupted CAD transactions", "inputSchema": {"type": "object", "properties": {"project_dir": {"type": "string"}, "max_age_seconds": {"type": "integer", "default": 3600}}}},
                 {"name": "read_drawing", "description": "Read the active drawing into the canonical document model", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}}}},
                 {"name": "measure_entities", "description": "Measure selected drawing entities with analytic geometry", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "target": {}, "entity_ids": {"type": "array"}, "selection_set": {"type": "string"}, "entity_type": {"type": "string"}, "layer": {"type": "string"}, "window": {"type": "array"}, "strict": {"type": "boolean"}}}},
                 {"name": "verify_drawing", "description": "Run independent drawing validation and engineering requirements", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "requirements": {"type": "object"}}}},
@@ -862,7 +864,7 @@ class MCPServer:
     def call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         self._check_access(name)
         if self.profile == "safe":
-            mutating = name in {"engineering_run", "engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations", "apply_batch", "rollback"}
+            mutating = name in {"engineering_run", "engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations", "apply_batch", "rollback", "recover"}
             if name.startswith("operation."):
                 mutating = self.operations.get(name[len("operation."):]).safety in {"write", "execute"}
             if mutating:
@@ -883,7 +885,7 @@ class MCPServer:
                 raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "arguments must be an object")
             target = operation if operation.startswith("operation.") else "operation." + operation
             return self.call(target, operation_arguments)
-        if name in {"apply_operations", "apply_batch", "export_drawing", "run_script", "standard_library", "agentcad_status", "extract_requirements", "revise_from_document", "history", "rollback", "read_drawing", "measure_entities", "verify_drawing", "get_diff", "create_drawing", "inspect_entities", "apply_constraints", "draw_from_spec", "revise_drawing", "validate_drawing"}:
+        if name in {"apply_operations", "apply_batch", "export_drawing", "run_script", "standard_library", "agentcad_status", "extract_requirements", "revise_from_document", "history", "rollback", "list_checkpoints", "recover", "read_drawing", "measure_entities", "verify_drawing", "get_diff", "create_drawing", "inspect_entities", "apply_constraints", "draw_from_spec", "revise_drawing", "validate_drawing"}:
             mapped = dict(arguments)
             if "input_file" not in mapped:
                 for key in ("document", "path"):
@@ -938,6 +940,37 @@ class MCPServer:
                 return {"requirements": facts_result, "revision": self.call("operation.cad.revise_drawing", {
                     "project_dir": project_dir, "input_file": drawing_path,
                     "output_file": mapped.get("output_file") or drawing_path, "changes": changes})}
+            if name == "list_checkpoints":
+                import json
+                root = Path(mapped.get("project_dir") or ".").resolve()
+                run_id = mapped.get("run_id")
+                runs_root = root / "artifacts" / "runs"
+                rows = []
+                if runs_root.is_dir():
+                    run_dirs = [runs_root / str(run_id)] if run_id else sorted(item for item in runs_root.iterdir() if item.is_dir())
+                    for run_dir in run_dirs:
+                        checkpoint_root = run_dir / "checkpoints"
+                        if not checkpoint_root.is_dir():
+                            continue
+                        for checkpoint in sorted(item for item in checkpoint_root.iterdir() if item.is_dir()):
+                            state_path = checkpoint / "state.json"
+                            payload = {}
+                            if state_path.is_file():
+                                try:
+                                    value = json.loads(state_path.read_text(encoding="utf-8"))
+                                    if isinstance(value, dict): payload = value
+                                except (OSError, ValueError):
+                                    payload = {"invalid": True}
+                            rows.append({"run_id": run_dir.name, "label": checkpoint.name,
+                                         "path": str(checkpoint.relative_to(root)), "state": payload})
+                return {"schema_version": "simloom-ai/cad-checkpoints/v1", "checkpoints": rows, "count": len(rows)}
+            if name == "recover":
+                from .transactions import RunTransaction
+                root = Path(mapped.get("project_dir") or ".").resolve()
+                age = int(mapped.get("max_age_seconds", 3600))
+                recovered = RunTransaction.recover_stale(root, max_age_seconds=age)
+                return {"schema_version": "simloom-ai/cad-recovery/v1", "project_dir": str(root),
+                        "recovered_runs": recovered, "recovered_count": len(recovered), "max_age_seconds": age}
             if name == "history":
                 mapped["input_file"] = mapped.get("input_file") or mapped.get("document") or mapped.get("path")
                 return self.call("operation.cad.history", mapped)

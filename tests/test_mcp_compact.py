@@ -319,3 +319,22 @@ def test_agentcad_standard_library_facade_maps_item_and_size_queries(tmp_path):
     categories = result["result"]["structuredContent"]["categories"]
     assert "fasteners" in categories
     assert any("M8" in str(item) for item in categories["fasteners"])
+
+
+def test_agentcad_checkpoint_and_recover_facades_expose_durable_transactions(tmp_path):
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="full", toolset="compact")
+    write_dxf(tmp_path / "checkpoint.dxf", lines=[])
+    applied = _call(server, "apply_operations", {
+        "project_dir": str(tmp_path), "document": "checkpoint.dxf",
+        "operations": [{"op": "add_line", "p1": {"x": 0, "y": 0}, "p2": {"x": 1, "y": 0}}],
+    })
+    assert applied["result"].get("isError", False) is False
+    checkpoints = _call(server, "list_checkpoints", {"project_dir": str(tmp_path)})
+    assert checkpoints["result"].get("isError", False) is False
+    assert checkpoints["result"]["structuredContent"]["count"] >= 1
+    recovered = _call(server, "recover", {"project_dir": str(tmp_path), "max_age_seconds": 0})
+    assert recovered["result"].get("isError", False) is False
+    assert recovered["result"]["structuredContent"]["schema_version"] == "simloom-ai/cad-recovery/v1"
+    safe = MCPServer(EngineeringAgent({"tools": {}}), profile="safe", toolset="compact")
+    denied = _call(safe, "recover", {"project_dir": str(tmp_path)})
+    assert denied["result"]["isError"] is True
