@@ -421,3 +421,12 @@ def test_deliver_drawing_facade_exports_requested_plot_formats_into_manifest(tmp
     assert manifest["formats"] == ["dxf", "svg"]
     assert (tmp_path / "multi-delivery" / "multi-delivery.svg").is_file()
     assert len(manifest["artifacts"]) == 2
+
+
+def test_autocad_live_facade_reports_status_and_explicit_bridge_gap(tmp_path):
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="full", toolset="compact")
+    status = _call(server, "autocad_live", {"action": "status"})
+    assert status["result"].get("isError", False) is False
+    opened = _call(server, "autocad_live", {"action": "open", "document": "drawing.dxf"})
+    assert opened["result"]["isError"] is True
+    assert "LIVE_AUTOCAD_SESSION_UNAVAILABLE" in opened["result"]["structuredContent"]["error"]["message"]

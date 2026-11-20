@@ -465,6 +465,7 @@ class MCPServer:
             {"name": "export_drawing", "description": "Export a drawing to PDF, PNG or SVG through the audited plot pipeline", "inputSchema": {"type": "object", "required": ["document", "output"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "output": {"type": "string"}, "format": {"type": "string", "enum": ["pdf", "png", "svg"]}, "layout": {"type": "string"}, "scale": {"type": "string"}, "overwrite": {"type": "boolean"}}}},
             {"name": "import_drawing", "description": "Import or round-trip a DWG/DXF through optional AutoCAD Core Console", "inputSchema": {"type": "object", "required": ["source", "output"], "properties": {"source": {"type": "string"}, "output": {"type": "string"}, "project_dir": {"type": "string"}, "audit": {"type": "boolean", "default": True}, "timeout_seconds": {"type": "integer"}}}},
             {"name": "autocad_audit", "description": "Run local and optional native AutoCAD AUDIT evidence", "inputSchema": {"type": "object", "required": ["document"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "native": {"type": "boolean"}, "timeout_seconds": {"type": "integer"}}}},
+            {"name": "autocad_live", "description": "Inspect or control an optional live AutoCAD session", "inputSchema": {"type": "object", "required": ["action"], "properties": {"action": {"type": "string", "enum": ["status", "open", "reload", "pull", "zoom", "command"]}, "document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "start": {"type": "boolean"}, "discard": {"type": "boolean"}, "force": {"type": "boolean"}, "command": {"type": "string"}, "ids": {"type": "array"}, "window": {"type": "array"}}}},
             {"name": "run_script", "description": "Run an explicitly enabled controlled CAD helper script", "inputSchema": {"type": "object", "required": ["document", "output", "code"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "output": {"type": "string"}, "code": {"type": "string"}, "allow_scripts": {"type": "boolean"}, "parameters": {"type": "object"}}}},
             {"name": "standard_library", "description": "Read the built-in standard parts, holes, symbols and GD&T catalog", "inputSchema": {"type": "object", "properties": {"category": {"type": "string"}, "query": {"type": "string"}, "item": {"type": "string"}, "size": {"type": "string"}}}},
             {"name": "agentcad_status", "description": "Inspect the active CAD context and runtime connection state", "inputSchema": {"type": "object", "properties": {"label": {"type": "string"}}}},
@@ -900,7 +901,7 @@ class MCPServer:
                 raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "arguments must be an object")
             target = operation if operation.startswith("operation.") else "operation." + operation
             return self.call(target, operation_arguments)
-        if name in {"apply_operations", "apply_batch", "export_drawing", "import_drawing", "autocad_audit", "run_script", "standard_library", "agentcad_status", "search_tools", "list_operations", "tool_schema", "call_tool", "get_metrics", "preflight", "action_preflight", "extract_requirements", "revise_from_document", "history", "rollback", "list_checkpoints", "recover", "refine_drawing", "deliver_drawing", "read_drawing", "measure_entities", "verify_drawing", "get_diff", "create_drawing", "inspect_entities", "apply_constraints", "draw_from_spec", "revise_drawing", "validate_drawing"}:
+        if name in {"apply_operations", "apply_batch", "export_drawing", "import_drawing", "autocad_audit", "autocad_live", "run_script", "standard_library", "agentcad_status", "search_tools", "list_operations", "tool_schema", "call_tool", "get_metrics", "preflight", "action_preflight", "extract_requirements", "revise_from_document", "history", "rollback", "list_checkpoints", "recover", "refine_drawing", "deliver_drawing", "read_drawing", "measure_entities", "verify_drawing", "get_diff", "create_drawing", "inspect_entities", "apply_constraints", "draw_from_spec", "revise_drawing", "validate_drawing"}:
             mapped = dict(arguments)
             if "input_file" not in mapped:
                 for key in ("document", "path"):
@@ -1125,6 +1126,13 @@ class MCPServer:
                 mapped["dry_run"] = False
                 mapped.pop("source", None); mapped.pop("output", None)
                 return self.call("operation.autocad.convert", mapped)
+            if name == "autocad_live":
+                action = str(mapped.get("action", "status")).lower()
+                if action == "status":
+                    return self.call("operation.autocad.status", {"config": mapped.get("config", {})})
+                raise ProtocolError(ErrorCode.BACKEND_UNAVAILABLE,
+                                    "LIVE_AUTOCAD_SESSION_UNAVAILABLE: configure a Windows AutoCAD live bridge",
+                                    details={"action": action, "requires": "Windows AutoCAD live bridge"})
             if name == "autocad_audit":
                 mapped["input_file"] = mapped.get("input_file") or mapped.get("document") or mapped.get("path")
                 mapped.pop("document", None); mapped.pop("path", None)

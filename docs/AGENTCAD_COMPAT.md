@@ -79,3 +79,5 @@ MCP compact façade 还提供 `run_script`、`standard_library`、`agentcad_stat
 `import_drawing` 和 `autocad_audit` 现在接入可选 AutoCAD Core Console backend。没有 Windows worker 或 AutoCAD 时返回明确 backend unavailable，保留 local validation 结果，不伪造 native import/audit 成功。
 
 `list_operations`、`tool_schema` 和 `call_tool` 现在兼容 AgentCAD 的轻量 MCP client helper，内部委托到 SimLoom 的分页 discovery、按需 schema 和 generic operation dispatcher。
+
+`autocad_live` 现在提供 status/open/reload/pull/zoom/command 兼容入口。status 始终返回 AutoCAD backend 能力，其他动作在未配置 Windows live bridge 时返回 `LIVE_AUTOCAD_SESSION_UNAVAILABLE` 和所需环境，保持调用契约明确。
