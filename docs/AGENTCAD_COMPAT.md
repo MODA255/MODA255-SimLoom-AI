@@ -77,3 +77,5 @@ MCP compact façade 还提供 `run_script`、`standard_library`、`agentcad_stat
 `preflight` 和 `action_preflight` 现在直接暴露四软件执行前检查，返回统一的 plan/action contract、缺失绑定、能力要求和下一步建议，不会启动 CATIA、Ansys、Adams 或 VI-grade。
 
 `import_drawing` 和 `autocad_audit` 现在接入可选 AutoCAD Core Console backend。没有 Windows worker 或 AutoCAD 时返回明确 backend unavailable，保留 local validation 结果，不伪造 native import/audit 成功。
+
+`list_operations`、`tool_schema` 和 `call_tool` 现在兼容 AgentCAD 的轻量 MCP client helper，内部委托到 SimLoom 的分页 discovery、按需 schema 和 generic operation dispatcher。

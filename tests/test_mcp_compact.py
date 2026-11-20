@@ -390,3 +390,19 @@ def test_agentcad_import_and_autocad_audit_facades_preserve_backend_truth(tmp_pa
     # Without AutoCAD Core Console the façade returns a structured backend error.
     assert imported["result"]["isError"] is True
     assert "Windows worker" in imported["result"]["structuredContent"]["error"]["message"] or "BACKEND_UNAVAILABLE" in imported["result"]["structuredContent"]["error"]["message"]
+
+
+def test_agentcad_discovery_helpers_delegate_to_compact_operation_protocol(tmp_path):
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="full", toolset="compact")
+    listed = _call(server, "list_operations", {"category": "cad", "detail": False, "limit": 5})
+    assert listed["result"].get("isError", False) is False
+    assert listed["result"]["structuredContent"]["operations"]
+    schema = _call(server, "tool_schema", {"name": "add_line"})
+    assert schema["result"].get("isError", False) is False
+    assert schema["result"]["structuredContent"]["schemas"][0]["name"] == "add_line"
+    write_dxf(tmp_path / "helper.dxf", lines=[])
+    called = _call(server, "call_tool", {"name": "add_line", "arguments": {
+        "project_dir": str(tmp_path), "input_file": "helper.dxf", "output_file": "helper.dxf",
+        "p1": {"x": 0, "y": 0}, "p2": {"x": 1, "y": 0},
+    }})
+    assert called["result"].get("isError", False) is False

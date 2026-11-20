@@ -469,6 +469,9 @@ class MCPServer:
             {"name": "standard_library", "description": "Read the built-in standard parts, holes, symbols and GD&T catalog", "inputSchema": {"type": "object", "properties": {"category": {"type": "string"}, "query": {"type": "string"}, "item": {"type": "string"}, "size": {"type": "string"}}}},
             {"name": "agentcad_status", "description": "Inspect the active CAD context and runtime connection state", "inputSchema": {"type": "object", "properties": {"label": {"type": "string"}}}},
             {"name": "search_tools", "description": "Search typed operations and AgentCAD-compatible tools by name or description", "inputSchema": {"type": "object", "required": ["query"], "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10}}}},
+            {"name": "list_operations", "description": "List operation names and descriptions with optional category and detail filters", "inputSchema": {"type": "object", "properties": {"category": {"type": "string"}, "detail": {"type": "boolean"}, "limit": {"type": "integer"}, "cursor": {"type": "string"}}}},
+            {"name": "tool_schema", "description": "Fetch the complete schema for one operation", "inputSchema": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}}}},
+            {"name": "call_tool", "description": "Call an operation by name with a structured arguments object", "inputSchema": {"type": "object", "required": ["name", "arguments"], "properties": {"name": {"type": "string"}, "arguments": {"type": "object"}}}},
             {"name": "get_metrics", "description": "Return MCP session call/error counts and operation inventory metrics", "inputSchema": {"type": "object"}},
             {"name": "preflight", "description": "Check a four-software plan and contracts without starting vendor software", "inputSchema": {"type": "object", "required": ["prompt"], "properties": {"prompt": {"type": "string"}, "project_dir": {"type": "string"}, "parameters": {"type": "object"}, "probe": {"type": "boolean"}}}},
             {"name": "action_preflight", "description": "Check one CATIA, Ansys, Adams or VI-grade action without starting software", "inputSchema": {"type": "object", "required": ["tool", "action"], "properties": {"tool": {"type": "string"}, "action": {"type": "string"}, "project_dir": {"type": "string"}, "parameters": {"type": "object"}, "inputs": {"type": "array"}, "outputs": {"type": "array"}, "probe": {"type": "boolean"}}}},
@@ -897,7 +900,7 @@ class MCPServer:
                 raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "arguments must be an object")
             target = operation if operation.startswith("operation.") else "operation." + operation
             return self.call(target, operation_arguments)
-        if name in {"apply_operations", "apply_batch", "export_drawing", "import_drawing", "autocad_audit", "run_script", "standard_library", "agentcad_status", "search_tools", "get_metrics", "preflight", "action_preflight", "extract_requirements", "revise_from_document", "history", "rollback", "list_checkpoints", "recover", "refine_drawing", "deliver_drawing", "read_drawing", "measure_entities", "verify_drawing", "get_diff", "create_drawing", "inspect_entities", "apply_constraints", "draw_from_spec", "revise_drawing", "validate_drawing"}:
+        if name in {"apply_operations", "apply_batch", "export_drawing", "import_drawing", "autocad_audit", "run_script", "standard_library", "agentcad_status", "search_tools", "list_operations", "tool_schema", "call_tool", "get_metrics", "preflight", "action_preflight", "extract_requirements", "revise_from_document", "history", "rollback", "list_checkpoints", "recover", "refine_drawing", "deliver_drawing", "read_drawing", "measure_entities", "verify_drawing", "get_diff", "create_drawing", "inspect_entities", "apply_constraints", "draw_from_spec", "revise_drawing", "validate_drawing"}:
             mapped = dict(arguments)
             if "input_file" not in mapped:
                 for key in ("document", "path"):
@@ -1039,6 +1042,20 @@ class MCPServer:
                 return self.call("operation.project.preflight", mapped)
             if name == "action_preflight":
                 return self.call("operation.project.action_preflight", mapped)
+            if name == "list_operations":
+                params = {key: mapped[key] for key in ("category", "detail", "limit", "cursor") if key in mapped}
+                return self.call("engineering_operations", params)
+            if name == "tool_schema":
+                operation_name = str(mapped.get("name", "")).strip()
+                if not operation_name:
+                    raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "name is required")
+                return self.call("engineering_operation_schema", {"operations": [operation_name]})
+            if name == "call_tool":
+                operation_name = str(mapped.get("name", "")).strip()
+                operation_arguments = mapped.get("arguments") or {}
+                if not operation_name or not isinstance(operation_arguments, dict):
+                    raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "name and arguments are required")
+                return self.call("engineering_operation", {"operation": operation_name, "arguments": operation_arguments})
             if name == "search_tools":
                 query = str(mapped.get("query", "")).strip().lower()
                 if not query:
