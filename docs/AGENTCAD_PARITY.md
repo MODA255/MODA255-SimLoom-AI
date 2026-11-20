@@ -86,7 +86,7 @@ bulge 弧段、SPLINE 采样段和 HATCH 多段线边界检查自交/重叠；�
 
 `cad.measure_entities` 现已补齐 AgentCAD 的解析几何测量入口。它对 LINE、CIRCLE、ARC、带 bulge 的 LWPOLYLINE/POLYLINE 和简单 HATCH 返回逐实体证据与汇总长度、周长、面积，支持与 `cad.query` 相同的选择器、严格模式和只读失败警告；详见 `CAD_MEASUREMENTS.md`。它增强 Agent-facing 的工程检查，不替代四款商业软件的原生结果读取。
 
-compact MCP toolset 现已补齐 AgentCAD 风格的 `create_drawing`、`draw_from_spec`、`revise_drawing`、`apply_batch`、`export_drawing`、`run_script`、`standard_library`、`agentcad_status`、`extract_requirements`、`revise_from_document`、`history`、`rollback`、`list_checkpoints`、`recover`、`read_drawing`、`inspect_entities`、`measure_entities`、`apply_constraints`、`validate_drawing`、`verify_drawing` 和 `get_diff` 入口；它们共享活动 CAD context、事务、error envelope 和 profile policy，批次内部的扁平 operation 名称会先归一到 SimLoom canonical operation。详见 `AGENTCAD_COMPAT.md`。
+compact MCP toolset 现已补齐 AgentCAD 风格的 `create_drawing`、`draw_from_spec`、`revise_drawing`、`apply_batch`、`export_drawing`、`run_script`、`standard_library`、`agentcad_status`、`extract_requirements`、`revise_from_document`、`history`、`rollback`、`list_checkpoints`、`recover`、`refine_drawing`、`deliver_drawing`、`read_drawing`、`inspect_entities`、`measure_entities`、`apply_constraints`、`validate_drawing`、`verify_drawing` 和 `get_diff` 入口；它们共享活动 CAD context、事务、error envelope 和 profile policy，批次内部的扁平 operation 名称会先归一到 SimLoom canonical operation。详见 `AGENTCAD_COMPAT.md`。
 
 ## 必须逐项证明的能力
 

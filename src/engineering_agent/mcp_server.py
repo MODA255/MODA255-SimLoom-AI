@@ -174,7 +174,7 @@ class MCPServer:
         elif tool_name.startswith("operation."):
             operation_name = tool_name[len("operation."):]
         mutating = (
-            tool_name in {"engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations", "apply_batch", "rollback", "recover"}
+            tool_name in {"engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations", "apply_batch", "rollback", "recover", "refine_drawing", "deliver_drawing"}
             or tool_name == "engineering_run" and not bool(arguments.get("dry_run", True))
             or tool_name == "engineering_workflow" and arguments.get("action") in {"resume", "repair"}
             or operation_name is not None and self.operations.get(operation_name).safety in {"write", "execute"}
@@ -369,7 +369,7 @@ class MCPServer:
         ]
         if include_profile and self.profile == "safe":
             tools = [tool for tool in tools if tool["name"] not in {
-                "engineering_run", "engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations", "apply_batch", "rollback", "recover", "create_drawing"}]
+                "engineering_run", "engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations", "apply_batch", "rollback", "recover", "refine_drawing", "deliver_drawing", "create_drawing"}]
         for tool in tools:
             if tool["name"] in {"engineering_plan", "engineering_preflight", "engineering_run"}:
                 tool["inputSchema"]["properties"]["parameters"] = {"type": "object", "description": "Explicit engineering parameters forwarded to software steps"}
@@ -468,6 +468,8 @@ class MCPServer:
             {"name": "rollback", "description": "Undo the latest committed CAD revision through the transaction history", "inputSchema": {"type": "object", "required": ["document"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}}}},
             {"name": "list_checkpoints", "description": "List durable CAD transaction checkpoints for a project", "inputSchema": {"type": "object", "properties": {"project_dir": {"type": "string"}, "run_id": {"type": "string"}}}},
             {"name": "recover", "description": "Recover stale interrupted CAD transactions", "inputSchema": {"type": "object", "properties": {"project_dir": {"type": "string"}, "max_age_seconds": {"type": "integer", "default": 3600}}}},
+            {"name": "refine_drawing", "description": "Validate a drawing and conservatively remove exact duplicate geometry", "inputSchema": {"type": "object", "required": ["document"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "max_iterations": {"type": "integer", "default": 3}}}},
+            {"name": "deliver_drawing", "description": "Create a validated delivery directory with source drawing and manifest", "inputSchema": {"type": "object", "required": ["document", "output_dir"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "output_dir": {"type": "string"}, "strict": {"type": "boolean", "default": True}}}},
                 {"name": "read_drawing", "description": "Read the active drawing into the canonical document model", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}}}},
                 {"name": "measure_entities", "description": "Measure selected drawing entities with analytic geometry", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "target": {}, "entity_ids": {"type": "array"}, "selection_set": {"type": "string"}, "entity_type": {"type": "string"}, "layer": {"type": "string"}, "window": {"type": "array"}, "strict": {"type": "boolean"}}}},
                 {"name": "verify_drawing", "description": "Run independent drawing validation and engineering requirements", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "requirements": {"type": "object"}}}},
@@ -864,7 +866,7 @@ class MCPServer:
     def call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         self._check_access(name)
         if self.profile == "safe":
-            mutating = name in {"engineering_run", "engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations", "apply_batch", "rollback", "recover"}
+            mutating = name in {"engineering_run", "engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations", "apply_batch", "rollback", "recover", "refine_drawing", "deliver_drawing"}
             if name.startswith("operation."):
                 mutating = self.operations.get(name[len("operation."):]).safety in {"write", "execute"}
             if mutating:
@@ -885,14 +887,14 @@ class MCPServer:
                 raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "arguments must be an object")
             target = operation if operation.startswith("operation.") else "operation." + operation
             return self.call(target, operation_arguments)
-        if name in {"apply_operations", "apply_batch", "export_drawing", "run_script", "standard_library", "agentcad_status", "extract_requirements", "revise_from_document", "history", "rollback", "list_checkpoints", "recover", "read_drawing", "measure_entities", "verify_drawing", "get_diff", "create_drawing", "inspect_entities", "apply_constraints", "draw_from_spec", "revise_drawing", "validate_drawing"}:
+        if name in {"apply_operations", "apply_batch", "export_drawing", "run_script", "standard_library", "agentcad_status", "extract_requirements", "revise_from_document", "history", "rollback", "list_checkpoints", "recover", "refine_drawing", "deliver_drawing", "read_drawing", "measure_entities", "verify_drawing", "get_diff", "create_drawing", "inspect_entities", "apply_constraints", "draw_from_spec", "revise_drawing", "validate_drawing"}:
             mapped = dict(arguments)
             if "input_file" not in mapped:
                 for key in ("document", "path"):
                     if mapped.get(key):
                         mapped["input_file"] = mapped[key]
                         break
-            if name not in {"extract_requirements", "revise_from_document", "history", "rollback"}:
+            if name not in {"extract_requirements", "revise_from_document", "history", "rollback", "refine_drawing", "deliver_drawing"}:
                 mapped.pop("document", None)
                 mapped.pop("path", None)
             if name == "draw_from_spec":
@@ -940,6 +942,52 @@ class MCPServer:
                 return {"requirements": facts_result, "revision": self.call("operation.cad.revise_drawing", {
                     "project_dir": project_dir, "input_file": drawing_path,
                     "output_file": mapped.get("output_file") or drawing_path, "changes": changes})}
+            if name == "refine_drawing":
+                document = mapped.get("document") or mapped.get("path")
+                project_dir = str(mapped.get("project_dir") or ".")
+                max_iterations = max(1, min(int(mapped.get("max_iterations", 3)), 10))
+                before = self.call("operation.cad.audit", {"project_dir": project_dir, "input_file": document})
+                iterations = []
+                current = before
+                for _ in range(max_iterations):
+                    duplicates = (current.get("validation") or {}).get("duplicate_geometry") or []
+                    if not duplicates:
+                        break
+                    edited = self.call("operation.cad.entity_remove_duplicates", {
+                        "project_dir": project_dir, "input_file": document, "output_file": document,
+                        "tolerance": 1e-7,
+                    })
+                    iterations.append(edited)
+                    current = self.call("operation.cad.audit", {"project_dir": project_dir, "input_file": document})
+                return {"schema_version": "simloom-ai/refine-drawing/v1", "initial_validation": before,
+                        "final_validation": current, "iterations": iterations,
+                        "changed": bool(iterations)}
+            if name == "deliver_drawing":
+                import hashlib, json, shutil
+                document = mapped.get("document") or mapped.get("path")
+                project_dir = Path(mapped.get("project_dir") or ".").resolve()
+                source = (project_dir / str(document)).resolve()
+                output_dir = (project_dir / str(mapped.get("output_dir"))).resolve()
+                if project_dir not in source.parents or project_dir not in output_dir.parents:
+                    raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "PATH_OUTSIDE_PROJECT")
+                if not source.is_file():
+                    raise FileNotFoundError(source)
+                if output_dir.exists() and any(output_dir.iterdir()):
+                    raise ProtocolError(ErrorCode.CONFLICT, "DELIVERY_DIRECTORY_NOT_EMPTY")
+                output_dir.mkdir(parents=True, exist_ok=True)
+                validation = self.call("operation.cad.audit", {"project_dir": project_dir, "input_file": str(source)})
+                valid = bool((validation.get("validation") or {}).get("valid"))
+                if mapped.get("strict", True) and not valid:
+                    raise ValueError("DELIVERY_VALIDATION_FAILED")
+                target = output_dir / source.name
+                shutil.copy2(source, target)
+                digest = hashlib.sha256(target.read_bytes()).hexdigest()
+                manifest = {"schema_version": "simloom-ai/delivery-manifest/v1", "source": str(source.relative_to(project_dir)),
+                            "output": target.name, "sha256": digest, "validation": validation,
+                            "strict": bool(mapped.get("strict", True))}
+                (output_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+                return {"schema_version": "simloom-ai/delivery-manifest/v1", "output_dir": str(output_dir),
+                        "manifest": manifest, "valid": valid}
             if name == "list_checkpoints":
                 import json
                 root = Path(mapped.get("project_dir") or ".").resolve()

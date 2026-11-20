@@ -69,3 +69,5 @@ MCP compact façade 还提供 `run_script`、`standard_library`、`agentcad_stat
 `history` 和 `rollback` 复用 durable CAD history。`history` 是只读观察，`rollback` 只回滚最新提交并受 full profile、外部编辑冲突检查和事务恢复保护。
 
 `list_checkpoints` 和 `recover` 现在暴露 durable transaction checkpoints 与 stale transaction recovery。`list_checkpoints` 只读，`recover` 受 full profile 保护并返回恢复的 run ID，底层仍使用同一套锁、before-image 和冲突保护。
+
+`refine_drawing` 和 `deliver_drawing` 现在补齐质量收敛与交付入口。前者复用独立 audit 和重复几何清理，后者生成项目内 delivery directory、DXF 副本和带源哈希/验证结果的 manifest。

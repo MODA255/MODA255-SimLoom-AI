@@ -338,3 +338,17 @@ def test_agentcad_checkpoint_and_recover_facades_expose_durable_transactions(tmp
     safe = MCPServer(EngineeringAgent({"tools": {}}), profile="safe", toolset="compact")
     denied = _call(safe, "recover", {"project_dir": str(tmp_path)})
     assert denied["result"]["isError"] is True
+
+
+def test_agentcad_refine_and_deliver_facades_close_quality_and_delivery_loop(tmp_path):
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="full", toolset="compact")
+    drawing = tmp_path / "deliver.dxf"
+    write_dxf(drawing, lines=[{"x1": 0, "y1": 0, "x2": 10, "y2": 0}])
+    refined = _call(server, "refine_drawing", {"project_dir": str(tmp_path), "document": drawing.name})
+    assert refined["result"].get("isError", False) is False
+    delivered = _call(server, "deliver_drawing", {
+        "project_dir": str(tmp_path), "document": drawing.name, "output_dir": "delivery",
+    })
+    assert delivered["result"].get("isError", False) is False
+    assert (tmp_path / "delivery" / "manifest.json").is_file()
+    assert (tmp_path / "delivery" / "deliver.dxf").is_file()
