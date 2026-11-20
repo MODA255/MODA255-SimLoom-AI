@@ -468,6 +468,8 @@ class MCPServer:
             {"name": "agentcad_status", "description": "Inspect the active CAD context and runtime connection state", "inputSchema": {"type": "object", "properties": {"label": {"type": "string"}}}},
             {"name": "search_tools", "description": "Search typed operations and AgentCAD-compatible tools by name or description", "inputSchema": {"type": "object", "required": ["query"], "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10}}}},
             {"name": "get_metrics", "description": "Return MCP session call/error counts and operation inventory metrics", "inputSchema": {"type": "object"}},
+            {"name": "preflight", "description": "Check a four-software plan and contracts without starting vendor software", "inputSchema": {"type": "object", "required": ["prompt"], "properties": {"prompt": {"type": "string"}, "project_dir": {"type": "string"}, "parameters": {"type": "object"}, "probe": {"type": "boolean"}}}},
+            {"name": "action_preflight", "description": "Check one CATIA, Ansys, Adams or VI-grade action without starting software", "inputSchema": {"type": "object", "required": ["tool", "action"], "properties": {"tool": {"type": "string"}, "action": {"type": "string"}, "project_dir": {"type": "string"}, "parameters": {"type": "object"}, "inputs": {"type": "array"}, "outputs": {"type": "array"}, "probe": {"type": "boolean"}}}},
             {"name": "extract_requirements", "description": "Conservatively extract drawing requirements from TXT, Markdown, JSON or PDF", "inputSchema": {"type": "object", "required": ["document"], "properties": {"document": {"type": "string"}, "project_dir": {"type": "string"}, "overrides": {"type": "object"}}}},
             {"name": "revise_from_document", "description": "Extract requirements from a document and revise a stored plate drawing specification", "inputSchema": {"type": "object", "required": ["document", "drawing"], "properties": {"document": {"type": "string"}, "drawing": {"type": "string"}, "project_dir": {"type": "string"}, "output_file": {"type": "string"}, "overrides": {"type": "object"}}}},
             {"name": "history", "description": "Read the durable CAD revision history for a drawing", "inputSchema": {"type": "object", "required": ["document"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}}}},
@@ -893,7 +895,7 @@ class MCPServer:
                 raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "arguments must be an object")
             target = operation if operation.startswith("operation.") else "operation." + operation
             return self.call(target, operation_arguments)
-        if name in {"apply_operations", "apply_batch", "export_drawing", "run_script", "standard_library", "agentcad_status", "search_tools", "get_metrics", "extract_requirements", "revise_from_document", "history", "rollback", "list_checkpoints", "recover", "refine_drawing", "deliver_drawing", "read_drawing", "measure_entities", "verify_drawing", "get_diff", "create_drawing", "inspect_entities", "apply_constraints", "draw_from_spec", "revise_drawing", "validate_drawing"}:
+        if name in {"apply_operations", "apply_batch", "export_drawing", "run_script", "standard_library", "agentcad_status", "search_tools", "get_metrics", "preflight", "action_preflight", "extract_requirements", "revise_from_document", "history", "rollback", "list_checkpoints", "recover", "refine_drawing", "deliver_drawing", "read_drawing", "measure_entities", "verify_drawing", "get_diff", "create_drawing", "inspect_entities", "apply_constraints", "draw_from_spec", "revise_drawing", "validate_drawing"}:
             mapped = dict(arguments)
             if "input_file" not in mapped:
                 for key in ("document", "path"):
@@ -1031,6 +1033,10 @@ class MCPServer:
             if name == "rollback":
                 mapped["input_file"] = mapped.get("input_file") or mapped.get("document") or mapped.get("path")
                 return self.call("operation.cad.undo", mapped)
+            if name == "preflight":
+                return self.call("operation.project.preflight", mapped)
+            if name == "action_preflight":
+                return self.call("operation.project.action_preflight", mapped)
             if name == "search_tools":
                 query = str(mapped.get("query", "")).strip().lower()
                 if not query:

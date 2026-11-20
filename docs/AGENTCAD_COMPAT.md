@@ -73,3 +73,5 @@ MCP compact façade 还提供 `run_script`、`standard_library`、`agentcad_stat
 `refine_drawing` 和 `deliver_drawing` 现在补齐质量收敛与交付入口。前者复用独立 audit 和重复几何清理，后者生成项目内 delivery directory、DXF 副本和带源哈希/验证结果的 manifest。
 
 `search_tools` 和 `get_metrics` 现在补齐 compact MCP 的发现/观测能力。搜索按名称和描述评分返回 operation，metrics 返回会话调用数、错误数和 operation inventory，不需要加载完整 schema。
+
+`preflight` 和 `action_preflight` 现在直接暴露四软件执行前检查，返回统一的 plan/action contract、缺失绑定、能力要求和下一步建议，不会启动 CATIA、Ansys、Adams 或 VI-grade。

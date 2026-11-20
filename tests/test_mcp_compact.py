@@ -365,3 +365,13 @@ def test_agentcad_search_and_metrics_facades_improve_tool_discovery(tmp_path):
     payload = metrics["result"]["structuredContent"]
     assert payload["tool_calls"] >= 2
     assert payload["operation_count"] >= 160
+
+
+def test_agentcad_preflight_facades_check_plan_and_single_action(tmp_path):
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="full", toolset="compact")
+    plan = _call(server, "preflight", {"project_dir": str(tmp_path), "prompt": "create a CATIA model"})
+    assert plan["result"].get("isError", False) is False
+    assert plan["result"]["structuredContent"]["schema_version"] == "simloom-ai/software-preflight/v1"
+    action = _call(server, "action_preflight", {"project_dir": str(tmp_path), "tool": "catia", "action": "create_or_update_model"})
+    assert action["result"].get("isError", False) is False
+    assert action["result"]["structuredContent"]["schema_version"] == "simloom-ai/action-preflight/v1"
