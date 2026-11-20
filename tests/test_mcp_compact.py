@@ -352,3 +352,16 @@ def test_agentcad_refine_and_deliver_facades_close_quality_and_delivery_loop(tmp
     assert delivered["result"].get("isError", False) is False
     assert (tmp_path / "delivery" / "manifest.json").is_file()
     assert (tmp_path / "delivery" / "deliver.dxf").is_file()
+
+
+def test_agentcad_search_and_metrics_facades_improve_tool_discovery(tmp_path):
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="full", toolset="compact")
+    searched = _call(server, "search_tools", {"query": "constraint", "limit": 5})
+    assert searched["result"].get("isError", False) is False
+    results = searched["result"]["structuredContent"]["results"]
+    assert results and any("constraint" in item["name"] for item in results)
+    metrics = _call(server, "get_metrics")
+    assert metrics["result"].get("isError", False) is False
+    payload = metrics["result"]["structuredContent"]
+    assert payload["tool_calls"] >= 2
+    assert payload["operation_count"] >= 160

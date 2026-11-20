@@ -134,6 +134,8 @@ class MCPServer:
         # Scope the active CAD document to this MCP session.  It is never
         # persisted as project state and disappears when the stdio server exits.
         self._cad_context: dict[str, str] | None = None
+        self._session_calls = 0
+        self._session_failures = 0
 
     def drain_notifications(self) -> list[dict[str, Any]]:
         """Return queued MCP notifications for a stdio host or test client."""
@@ -261,6 +263,7 @@ class MCPServer:
         if method == "tools/call":
             params = request.get("params", {})
             tool_name = str(params.get("name", ""))
+            self._session_calls += 1
             try:
                 if not tool_name:
                     raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "tool name is required")
@@ -275,6 +278,7 @@ class MCPServer:
                         "result": {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}],
                                    "structuredContent": structured}}
             except Exception as exc:
+                self._session_failures += 1
                 # A discovered tool that rejects or cannot complete its input
                 # reports a tool execution error in the MCP result.  JSON-RPC
                 # errors remain reserved for transport/protocol failures and
@@ -462,6 +466,8 @@ class MCPServer:
             {"name": "run_script", "description": "Run an explicitly enabled controlled CAD helper script", "inputSchema": {"type": "object", "required": ["document", "output", "code"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "output": {"type": "string"}, "code": {"type": "string"}, "allow_scripts": {"type": "boolean"}, "parameters": {"type": "object"}}}},
             {"name": "standard_library", "description": "Read the built-in standard parts, holes, symbols and GD&T catalog", "inputSchema": {"type": "object", "properties": {"category": {"type": "string"}, "query": {"type": "string"}, "item": {"type": "string"}, "size": {"type": "string"}}}},
             {"name": "agentcad_status", "description": "Inspect the active CAD context and runtime connection state", "inputSchema": {"type": "object", "properties": {"label": {"type": "string"}}}},
+            {"name": "search_tools", "description": "Search typed operations and AgentCAD-compatible tools by name or description", "inputSchema": {"type": "object", "required": ["query"], "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10}}}},
+            {"name": "get_metrics", "description": "Return MCP session call/error counts and operation inventory metrics", "inputSchema": {"type": "object"}},
             {"name": "extract_requirements", "description": "Conservatively extract drawing requirements from TXT, Markdown, JSON or PDF", "inputSchema": {"type": "object", "required": ["document"], "properties": {"document": {"type": "string"}, "project_dir": {"type": "string"}, "overrides": {"type": "object"}}}},
             {"name": "revise_from_document", "description": "Extract requirements from a document and revise a stored plate drawing specification", "inputSchema": {"type": "object", "required": ["document", "drawing"], "properties": {"document": {"type": "string"}, "drawing": {"type": "string"}, "project_dir": {"type": "string"}, "output_file": {"type": "string"}, "overrides": {"type": "object"}}}},
             {"name": "history", "description": "Read the durable CAD revision history for a drawing", "inputSchema": {"type": "object", "required": ["document"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}}}},
@@ -887,7 +893,7 @@ class MCPServer:
                 raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "arguments must be an object")
             target = operation if operation.startswith("operation.") else "operation." + operation
             return self.call(target, operation_arguments)
-        if name in {"apply_operations", "apply_batch", "export_drawing", "run_script", "standard_library", "agentcad_status", "extract_requirements", "revise_from_document", "history", "rollback", "list_checkpoints", "recover", "refine_drawing", "deliver_drawing", "read_drawing", "measure_entities", "verify_drawing", "get_diff", "create_drawing", "inspect_entities", "apply_constraints", "draw_from_spec", "revise_drawing", "validate_drawing"}:
+        if name in {"apply_operations", "apply_batch", "export_drawing", "run_script", "standard_library", "agentcad_status", "search_tools", "get_metrics", "extract_requirements", "revise_from_document", "history", "rollback", "list_checkpoints", "recover", "refine_drawing", "deliver_drawing", "read_drawing", "measure_entities", "verify_drawing", "get_diff", "create_drawing", "inspect_entities", "apply_constraints", "draw_from_spec", "revise_drawing", "validate_drawing"}:
             mapped = dict(arguments)
             if "input_file" not in mapped:
                 for key in ("document", "path"):
@@ -1025,6 +1031,26 @@ class MCPServer:
             if name == "rollback":
                 mapped["input_file"] = mapped.get("input_file") or mapped.get("document") or mapped.get("path")
                 return self.call("operation.cad.undo", mapped)
+            if name == "search_tools":
+                query = str(mapped.get("query", "")).strip().lower()
+                if not query:
+                    raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "query is required")
+                limit = max(1, min(int(mapped.get("limit", 10)), 50))
+                tokens = [token for token in query.split() if token]
+                candidates = []
+                for item in self._operation_tools_for_discovery():
+                    haystack = (str(item.get("name", "")) + " " + str(item.get("description", ""))).lower()
+                    score = sum((4 if token in str(item.get("name", "")).lower() else 2 if token in haystack else 0) for token in tokens)
+                    if score:
+                        candidates.append((score, str(item.get("name", "")), item))
+                candidates.sort(key=lambda row: (-row[0], row[1]))
+                return {"schema_version": "simloom-ai/tool-search/v1", "query": query,
+                        "results": [{"score": score, "name": item.get("name"), "description": item.get("description", ""),
+                                     "tool": item.get("tool"), "safety": item.get("safety", "safe")} for score, _, item in candidates[:limit]]}
+            if name == "get_metrics":
+                return {"schema_version": "simloom-ai/mcp-session-metrics/v1", "tool_calls": self._session_calls,
+                        "failures": self._session_failures, "operation_count": len(self.operations.list()),
+                        "cad_operation_count": sum(str(spec.name).startswith("cad.") for spec in self.operations.specs.values())}
             if name == "agentcad_status":
                 return {"ok": True, "connected": True, "app": "simloom-ai", "label": mapped.get("label"),
                         "workspace": mapped.get("project_dir"), "cad_context": dict(self._cad_context) if self._cad_context else None,
