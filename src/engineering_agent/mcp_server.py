@@ -963,7 +963,7 @@ class MCPServer:
                         "final_validation": current, "iterations": iterations,
                         "changed": bool(iterations)}
             if name == "deliver_drawing":
-                import hashlib, json, shutil
+                import hashlib, json as jsonlib, shutil
                 document = mapped.get("document") or mapped.get("path")
                 project_dir = Path(mapped.get("project_dir") or ".").resolve()
                 source = (project_dir / str(document)).resolve()
@@ -985,11 +985,11 @@ class MCPServer:
                 manifest = {"schema_version": "simloom-ai/delivery-manifest/v1", "source": str(source.relative_to(project_dir)),
                             "output": target.name, "sha256": digest, "validation": validation,
                             "strict": bool(mapped.get("strict", True))}
-                (output_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+                (output_dir / "manifest.json").write_text(jsonlib.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
                 return {"schema_version": "simloom-ai/delivery-manifest/v1", "output_dir": str(output_dir),
                         "manifest": manifest, "valid": valid}
             if name == "list_checkpoints":
-                import json
+                import json as jsonlib
                 root = Path(mapped.get("project_dir") or ".").resolve()
                 run_id = mapped.get("run_id")
                 runs_root = root / "artifacts" / "runs"
@@ -1005,7 +1005,7 @@ class MCPServer:
                             payload = {}
                             if state_path.is_file():
                                 try:
-                                    value = json.loads(state_path.read_text(encoding="utf-8"))
+                                    value = jsonlib.loads(state_path.read_text(encoding="utf-8"))
                                     if isinstance(value, dict): payload = value
                                 except (OSError, ValueError):
                                     payload = {"invalid": True}
