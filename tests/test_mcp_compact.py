@@ -406,3 +406,18 @@ def test_agentcad_discovery_helpers_delegate_to_compact_operation_protocol(tmp_p
         "p1": {"x": 0, "y": 0}, "p2": {"x": 1, "y": 0},
     }})
     assert called["result"].get("isError", False) is False
+
+
+def test_deliver_drawing_facade_exports_requested_plot_formats_into_manifest(tmp_path):
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="full", toolset="compact")
+    drawing = tmp_path / "multi-delivery.dxf"
+    write_dxf(drawing, lines=[{"x1": 0, "y1": 0, "x2": 10, "y2": 0}])
+    result = _call(server, "deliver_drawing", {
+        "project_dir": str(tmp_path), "document": drawing.name, "output_dir": "multi-delivery",
+        "formats": ["dxf", "svg"],
+    })
+    assert result["result"].get("isError", False) is False
+    manifest = result["result"]["structuredContent"]["manifest"]
+    assert manifest["formats"] == ["dxf", "svg"]
+    assert (tmp_path / "multi-delivery" / "multi-delivery.svg").is_file()
+    assert len(manifest["artifacts"]) == 2

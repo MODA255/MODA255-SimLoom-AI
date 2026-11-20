@@ -482,7 +482,7 @@ class MCPServer:
             {"name": "list_checkpoints", "description": "List durable CAD transaction checkpoints for a project", "inputSchema": {"type": "object", "properties": {"project_dir": {"type": "string"}, "run_id": {"type": "string"}}}},
             {"name": "recover", "description": "Recover stale interrupted CAD transactions", "inputSchema": {"type": "object", "properties": {"project_dir": {"type": "string"}, "max_age_seconds": {"type": "integer", "default": 3600}}}},
             {"name": "refine_drawing", "description": "Validate a drawing and conservatively remove exact duplicate geometry", "inputSchema": {"type": "object", "required": ["document"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "max_iterations": {"type": "integer", "default": 3}}}},
-            {"name": "deliver_drawing", "description": "Create a validated delivery directory with source drawing and manifest", "inputSchema": {"type": "object", "required": ["document", "output_dir"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "output_dir": {"type": "string"}, "strict": {"type": "boolean", "default": True}}}},
+            {"name": "deliver_drawing", "description": "Create a validated delivery directory with source drawing, optional plot formats and manifest", "inputSchema": {"type": "object", "required": ["document", "output_dir"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "output_dir": {"type": "string"}, "formats": {"type": "array", "items": {"type": "string", "enum": ["dxf", "svg", "png", "pdf"]}}, "strict": {"type": "boolean", "default": True}}}},
                 {"name": "read_drawing", "description": "Read the active drawing into the canonical document model", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}}}},
                 {"name": "measure_entities", "description": "Measure selected drawing entities with analytic geometry", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "target": {}, "entity_ids": {"type": "array"}, "selection_set": {"type": "string"}, "entity_type": {"type": "string"}, "layer": {"type": "string"}, "window": {"type": "array"}, "strict": {"type": "boolean"}}}},
                 {"name": "verify_drawing", "description": "Run independent drawing validation and engineering requirements", "inputSchema": {"type": "object", "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "requirements": {"type": "object"}}}},
@@ -992,12 +992,35 @@ class MCPServer:
                 valid = bool((validation.get("validation") or {}).get("valid"))
                 if mapped.get("strict", True) and not valid:
                     raise ValueError("DELIVERY_VALIDATION_FAILED")
+                formats = [str(item).lower().lstrip(".") for item in (mapped.get("formats") or ["dxf"])]
+                allowed_formats = {"dxf", "svg", "png", "pdf"}
+                if not formats or any(item not in allowed_formats for item in formats):
+                    raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "formats must contain dxf, svg, png or pdf")
+                if len(set(formats)) != len(formats):
+                    raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "formats must be unique")
+                artifacts = []
                 target = output_dir / source.name
-                shutil.copy2(source, target)
-                digest = hashlib.sha256(target.read_bytes()).hexdigest()
-                manifest = {"schema_version": "simloom-ai/delivery-manifest/v1", "source": str(source.relative_to(project_dir)),
-                            "output": target.name, "sha256": digest, "validation": validation,
-                            "strict": bool(mapped.get("strict", True))}
+                if "dxf" in formats:
+                    shutil.copy2(source, target)
+                    artifacts.append({"format": "dxf", "path": target.name,
+                                      "sha256": hashlib.sha256(target.read_bytes()).hexdigest()})
+                source_relative = source.relative_to(project_dir).as_posix()
+                output_relative_dir = output_dir.relative_to(project_dir).as_posix()
+                for fmt in formats:
+                    if fmt == "dxf":
+                        continue
+                    relative_output = f"{output_relative_dir}/{source.stem}.{fmt}"
+                    plotted = self.call("operation.cad.plot", {"project_dir": str(project_dir),
+                                                                  "input_file": source_relative,
+                                                                  "output_file": relative_output,
+                                                                  "overwrite": True})
+                    artifact_path = project_dir / relative_output
+                    artifacts.append({"format": fmt, "path": relative_output,
+                                      "sha256": hashlib.sha256(artifact_path.read_bytes()).hexdigest(),
+                                      "plot_validation": plotted.get("validation")})
+                manifest = {"schema_version": "simloom-ai/delivery-manifest/v1", "source": source_relative,
+                            "artifacts": artifacts, "validation": validation,
+                            "strict": bool(mapped.get("strict", True)), "formats": formats}
                 (output_dir / "manifest.json").write_text(jsonlib.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
                 return {"schema_version": "simloom-ai/delivery-manifest/v1", "output_dir": str(output_dir),
                         "manifest": manifest, "valid": valid}

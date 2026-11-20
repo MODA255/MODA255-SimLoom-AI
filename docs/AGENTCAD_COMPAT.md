@@ -70,7 +70,7 @@ MCP compact façade 还提供 `run_script`、`standard_library`、`agentcad_stat
 
 `list_checkpoints` 和 `recover` 现在暴露 durable transaction checkpoints 与 stale transaction recovery。`list_checkpoints` 只读，`recover` 受 full profile 保护并返回恢复的 run ID，底层仍使用同一套锁、before-image 和冲突保护。
 
-`refine_drawing` 和 `deliver_drawing` 现在补齐质量收敛与交付入口。前者复用独立 audit 和重复几何清理，后者生成项目内 delivery directory、DXF 副本和带源哈希/验证结果的 manifest。
+`refine_drawing` 和 `deliver_drawing` 现在补齐质量收敛与交付入口。前者复用独立 audit 和重复几何清理，后者支持 dxf/svg/png/pdf 输出，生成项目内 delivery directory 和带源哈希/验证结果的 manifest。
 
 `search_tools` 和 `get_metrics` 现在补齐 compact MCP 的发现/观测能力。搜索按名称和描述评分返回 operation，metrics 返回会话调用数、错误数和 operation inventory，不需要加载完整 schema。
 
