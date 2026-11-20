@@ -75,3 +75,5 @@ MCP compact façade 还提供 `run_script`、`standard_library`、`agentcad_stat
 `search_tools` 和 `get_metrics` 现在补齐 compact MCP 的发现/观测能力。搜索按名称和描述评分返回 operation，metrics 返回会话调用数、错误数和 operation inventory，不需要加载完整 schema。
 
 `preflight` 和 `action_preflight` 现在直接暴露四软件执行前检查，返回统一的 plan/action contract、缺失绑定、能力要求和下一步建议，不会启动 CATIA、Ansys、Adams 或 VI-grade。
+
+`import_drawing` 和 `autocad_audit` 现在接入可选 AutoCAD Core Console backend。没有 Windows worker 或 AutoCAD 时返回明确 backend unavailable，保留 local validation 结果，不伪造 native import/audit 成功。

@@ -176,7 +176,7 @@ class MCPServer:
         elif tool_name.startswith("operation."):
             operation_name = tool_name[len("operation."):]
         mutating = (
-            tool_name in {"engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations", "apply_batch", "rollback", "recover", "refine_drawing", "deliver_drawing"}
+            tool_name in {"engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations", "apply_batch", "rollback", "recover", "refine_drawing", "deliver_drawing", "import_drawing"}
             or tool_name == "engineering_run" and not bool(arguments.get("dry_run", True))
             or tool_name == "engineering_workflow" and arguments.get("action") in {"resume", "repair"}
             or operation_name is not None and self.operations.get(operation_name).safety in {"write", "execute"}
@@ -373,7 +373,7 @@ class MCPServer:
         ]
         if include_profile and self.profile == "safe":
             tools = [tool for tool in tools if tool["name"] not in {
-                "engineering_run", "engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations", "apply_batch", "rollback", "recover", "refine_drawing", "deliver_drawing", "create_drawing"}]
+                "engineering_run", "engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations", "apply_batch", "rollback", "recover", "refine_drawing", "deliver_drawing", "import_drawing", "create_drawing"}]
         for tool in tools:
             if tool["name"] in {"engineering_plan", "engineering_preflight", "engineering_run"}:
                 tool["inputSchema"]["properties"]["parameters"] = {"type": "object", "description": "Explicit engineering parameters forwarded to software steps"}
@@ -463,6 +463,8 @@ class MCPServer:
                 {"name": "apply_operations", "description": "Apply an AgentCAD-compatible atomic operation batch to the active drawing", "inputSchema": {"type": "object", "required": ["operations"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "output_file": {"type": "string"}, "operations": {"type": "array", "items": {"type": "object"}}, "requirements": {"type": "object"}, "auto_repair": {"type": "boolean", "default": True}}}},
             {"name": "apply_batch", "description": "Apply independent operation batches to multiple drawings", "inputSchema": {"type": "object", "required": ["jobs"], "properties": {"jobs": {"type": "array", "items": {"type": "object"}}, "stop_on_error": {"type": "boolean", "default": True}}}},
             {"name": "export_drawing", "description": "Export a drawing to PDF, PNG or SVG through the audited plot pipeline", "inputSchema": {"type": "object", "required": ["document", "output"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "output": {"type": "string"}, "format": {"type": "string", "enum": ["pdf", "png", "svg"]}, "layout": {"type": "string"}, "scale": {"type": "string"}, "overwrite": {"type": "boolean"}}}},
+            {"name": "import_drawing", "description": "Import or round-trip a DWG/DXF through optional AutoCAD Core Console", "inputSchema": {"type": "object", "required": ["source", "output"], "properties": {"source": {"type": "string"}, "output": {"type": "string"}, "project_dir": {"type": "string"}, "audit": {"type": "boolean", "default": True}, "timeout_seconds": {"type": "integer"}}}},
+            {"name": "autocad_audit", "description": "Run local and optional native AutoCAD AUDIT evidence", "inputSchema": {"type": "object", "required": ["document"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "native": {"type": "boolean"}, "timeout_seconds": {"type": "integer"}}}},
             {"name": "run_script", "description": "Run an explicitly enabled controlled CAD helper script", "inputSchema": {"type": "object", "required": ["document", "output", "code"], "properties": {"document": {"type": "string"}, "path": {"type": "string"}, "project_dir": {"type": "string"}, "output": {"type": "string"}, "code": {"type": "string"}, "allow_scripts": {"type": "boolean"}, "parameters": {"type": "object"}}}},
             {"name": "standard_library", "description": "Read the built-in standard parts, holes, symbols and GD&T catalog", "inputSchema": {"type": "object", "properties": {"category": {"type": "string"}, "query": {"type": "string"}, "item": {"type": "string"}, "size": {"type": "string"}}}},
             {"name": "agentcad_status", "description": "Inspect the active CAD context and runtime connection state", "inputSchema": {"type": "object", "properties": {"label": {"type": "string"}}}},
@@ -874,7 +876,7 @@ class MCPServer:
     def call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         self._check_access(name)
         if self.profile == "safe":
-            mutating = name in {"engineering_run", "engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations", "apply_batch", "rollback", "recover", "refine_drawing", "deliver_drawing"}
+            mutating = name in {"engineering_run", "engineering_generate", "engineering_offline_run", "engineering_version", "apply_operations", "apply_batch", "rollback", "recover", "refine_drawing", "deliver_drawing", "import_drawing"}
             if name.startswith("operation."):
                 mutating = self.operations.get(name[len("operation."):]).safety in {"write", "execute"}
             if mutating:
@@ -895,7 +897,7 @@ class MCPServer:
                 raise ProtocolError(ErrorCode.INVALID_ARGUMENTS, "arguments must be an object")
             target = operation if operation.startswith("operation.") else "operation." + operation
             return self.call(target, operation_arguments)
-        if name in {"apply_operations", "apply_batch", "export_drawing", "run_script", "standard_library", "agentcad_status", "search_tools", "get_metrics", "preflight", "action_preflight", "extract_requirements", "revise_from_document", "history", "rollback", "list_checkpoints", "recover", "refine_drawing", "deliver_drawing", "read_drawing", "measure_entities", "verify_drawing", "get_diff", "create_drawing", "inspect_entities", "apply_constraints", "draw_from_spec", "revise_drawing", "validate_drawing"}:
+        if name in {"apply_operations", "apply_batch", "export_drawing", "import_drawing", "autocad_audit", "run_script", "standard_library", "agentcad_status", "search_tools", "get_metrics", "preflight", "action_preflight", "extract_requirements", "revise_from_document", "history", "rollback", "list_checkpoints", "recover", "refine_drawing", "deliver_drawing", "read_drawing", "measure_entities", "verify_drawing", "get_diff", "create_drawing", "inspect_entities", "apply_constraints", "draw_from_spec", "revise_drawing", "validate_drawing"}:
             mapped = dict(arguments)
             if "input_file" not in mapped:
                 for key in ("document", "path"):
@@ -1077,6 +1079,16 @@ class MCPServer:
                 mapped["script"] = mapped.get("script") or mapped.get("code")
                 mapped.pop("document", None); mapped.pop("path", None); mapped.pop("output", None); mapped.pop("code", None)
                 return self.call("operation.cad.script_apply", mapped)
+            if name == "import_drawing":
+                mapped["input_file"] = mapped.get("input_file") or mapped.get("source")
+                mapped["output_file"] = mapped.get("output_file") or mapped.get("output")
+                mapped["dry_run"] = False
+                mapped.pop("source", None); mapped.pop("output", None)
+                return self.call("operation.autocad.convert", mapped)
+            if name == "autocad_audit":
+                mapped["input_file"] = mapped.get("input_file") or mapped.get("document") or mapped.get("path")
+                mapped.pop("document", None); mapped.pop("path", None)
+                return self.call("operation.autocad.audit", mapped)
             if name == "export_drawing":
                 output = mapped.get("output") or mapped.get("output_file")
                 if not output:

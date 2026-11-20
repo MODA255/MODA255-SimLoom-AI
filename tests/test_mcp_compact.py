@@ -375,3 +375,18 @@ def test_agentcad_preflight_facades_check_plan_and_single_action(tmp_path):
     action = _call(server, "action_preflight", {"project_dir": str(tmp_path), "tool": "catia", "action": "create_or_update_model"})
     assert action["result"].get("isError", False) is False
     assert action["result"]["structuredContent"]["schema_version"] == "simloom-ai/action-preflight/v1"
+
+
+def test_agentcad_import_and_autocad_audit_facades_preserve_backend_truth(tmp_path):
+    server = MCPServer(EngineeringAgent({"tools": {}}), profile="full", toolset="compact")
+    drawing = tmp_path / "source.dxf"
+    write_dxf(drawing, lines=[])
+    audit = _call(server, "autocad_audit", {"project_dir": str(tmp_path), "document": drawing.name})
+    assert audit["result"].get("isError", False) is False
+    assert "local_validation" in audit["result"]["structuredContent"]
+    imported = _call(server, "import_drawing", {
+        "project_dir": str(tmp_path), "source": drawing.name, "output": "roundtrip.dxf",
+    })
+    # Without AutoCAD Core Console the façade returns a structured backend error.
+    assert imported["result"]["isError"] is True
+    assert "Windows worker" in imported["result"]["structuredContent"]["error"]["message"] or "BACKEND_UNAVAILABLE" in imported["result"]["structuredContent"]["error"]["message"]
